@@ -16,4 +16,4 @@ COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 
-CMD ["mcp-server-starrocks", "--mode", "streamable-http", "--port", "8000"]
+CMD ["mcp-server-starrocks", "--mode", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
