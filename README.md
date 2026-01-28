@@ -4,7 +4,7 @@ A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
 
 ## Overview
 
-This Docker image packages the [mcp-server-starrocks](https://github.com/StarRocks/mcp-server-starrocks) Python package in a multi-stage build for production deployment. It runs in **streamable-http** mode, exposing an HTTP endpoint for MCP clients.
+This Docker image packages the [mcp-server-starrocks](https://github.com/StarRocks/mcp-server-starrocks) Python package with a custom wrapper that adds health check endpoints. It runs in **streamable-http** mode, exposing an HTTP endpoint for MCP clients.
 
 ## Quick Start
 
@@ -15,10 +15,30 @@ docker run -d \
   -e STARROCKS_PORT=9030 \
   -e STARROCKS_USER=root \
   -e STARROCKS_PASSWORD=your-password \
-  mcp-server-starrocks:latest
+  ghcr.io/radiant-network/radiant-mcp:latest
 ```
 
-The MCP endpoint will be available at `http://localhost:8000/mcp`
+## Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/mcp` | POST | MCP protocol endpoint (JSON-RPC over HTTP) |
+| `/health` | GET | Health check - returns database connection status |
+| `/ready` | GET | Readiness check - returns server status |
+
+### Health Check Response
+
+```json
+{"status": "healthy", "database": "connected"}
+```
+
+Returns HTTP 200 when healthy, HTTP 503 when database is disconnected.
+
+### Readiness Check Response
+
+```json
+{"status": "ready"}
+```
 
 ## Environment Variables
 
@@ -39,57 +59,54 @@ Instead of individual variables, you can use a single connection URL:
 docker run -d \
   -p 8000:8000 \
   -e STARROCKS_URL="user:password@host:9030/database" \
-  mcp-server-starrocks:latest
+  ghcr.io/radiant-network/radiant-mcp:latest
 ```
 
 ## Building the Image
 
 ```bash
-docker build -t mcp-server-starrocks:latest .
+docker build -t radiant-mcp:latest .
 ```
 
-## Running Modes
+## Container Configuration
 
-### HTTP Mode (Default)
+### Port Mapping
 
-The container runs in `streamable-http` mode by default on port 8000:
+The server listens on port 8000 inside the container.
+
+### Health Check
+
+For container orchestration (Docker Compose, Kubernetes, ECS):
 
 ```bash
-docker run -d -p 8000:8000 \
-  -e STARROCKS_HOST=localhost \
-  -e STARROCKS_USER=root \
-  -e STARROCKS_PASSWORD=secret \
-  mcp-server-starrocks:latest
+curl -f http://localhost:8000/health
 ```
 
-### Custom Port
+### Example Docker Compose
 
-```bash
-docker run -d -p 3000:3000 \
-  -e STARROCKS_HOST=localhost \
-  -e STARROCKS_USER=root \
-  -e STARROCKS_PASSWORD=secret \
-  mcp-server-starrocks:latest \
-  mcp-server-starrocks --mode streamable-http --port 3000
+```yaml
+services:
+  radiant-mcp:
+    image: ghcr.io/radiant-network/radiant-mcp:latest
+    ports:
+      - "8000:8000"
+    environment:
+      STARROCKS_HOST: starrocks-fe
+      STARROCKS_PORT: 9030
+      STARROCKS_USER: root
+      STARROCKS_PASSWORD: ${STARROCKS_PASSWORD}
+      STARROCKS_DB: my_database
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 ```
 
-### Stdio Mode (for local MCP hosts)
+### Deployment Considerations
 
-```bash
-docker run -i \
-  -e STARROCKS_HOST=localhost \
-  -e STARROCKS_USER=root \
-  -e STARROCKS_PASSWORD=secret \
-  mcp-server-starrocks:latest \
-  mcp-server-starrocks --mode stdio
-```
-
-### Task Definition Considerations
-
-- **Port mapping**: Container port 8000
-- **Health check**: `curl -f http://localhost:8000/mcp || exit 1`
-- **Secrets**: Store `STARROCKS_PASSWORD` in AWS Secrets Manager
 - **Memory**: Recommend at least 1GB due to pandas/pyarrow dependencies
+- **Secrets**: Store `STARROCKS_PASSWORD` securely (e.g., AWS Secrets Manager, Kubernetes Secrets)
 
 ## MCP Client Configuration
 
@@ -107,11 +124,14 @@ Configure your MCP client to connect to the server:
 
 ## Available MCP Tools
 
-The server exposes tools for:
-- Executing SQL queries against StarRocks
-- Listing databases and tables
-- Describing table schemas
-- Getting database overview and statistics
+| Tool | Description |
+|------|-------------|
+| `read_query` | Execute SELECT queries |
+| `write_query` | Execute DDL/DML commands |
+| `analyze_query` | Analyze query performance |
+| `table_overview` | Get table schema and sample data |
+| `db_summary` | Get database summary with table schemas |
+| `query_and_plotly_chart` | Execute query and generate Plotly chart |
 
 ## License
 

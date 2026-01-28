@@ -12,8 +12,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
+COPY server.py .
 
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 
-CMD ["mcp-server-starrocks", "--mode", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "server.py"]
