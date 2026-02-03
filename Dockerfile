@@ -5,7 +5,10 @@ RUN pip install uv
 
 WORKDIR /app
 RUN uv venv /app/.venv
-RUN uv pip install --python /app/.venv/bin/python mcp-server-starrocks
+RUN uv pip install --python /app/.venv/bin/python \
+    mcp-server-starrocks \
+    fastmcp \
+    httpx
 
 # Runtime stage - minimal image
 FROM python:3.11-slim
@@ -13,6 +16,7 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY server.py .
+COPY cube_mcp/ ./cube_mcp/
 
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000

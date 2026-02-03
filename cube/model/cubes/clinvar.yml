@@ -1,0 +1,189 @@
+# ClinVar Cube Model
+# Clinical variant data from NCBI ClinVar database
+#
+# This cube enables semantic queries over genomic variant data
+# for clinical significance analysis and variant exploration.
+
+cubes:
+  - name: clinvar
+    sql_table: clinvar
+    title: "ClinVar Variants"
+    description: "Clinical variant annotations from NCBI ClinVar database"
+
+    measures:
+      - name: count
+        type: count
+        title: "Variant Count"
+        description: "Total number of variants"
+
+      - name: unique_loci
+        type: count_distinct
+        sql: locus_id
+        title: "Unique Loci"
+        description: "Number of distinct genomic loci"
+
+      - name: unique_alleles
+        type: count_distinct
+        sql: alleleid
+        title: "Unique Allele IDs"
+        description: "Number of distinct ClinVar allele IDs"
+
+      - name: avg_exac_frequency
+        type: avg
+        sql: af_exac
+        title: "Avg ExAC Frequency"
+        description: "Average allele frequency in ExAC database"
+
+      - name: avg_tgp_frequency
+        type: avg
+        sql: af_tgp
+        title: "Avg 1000 Genomes Frequency"
+        description: "Average allele frequency in 1000 Genomes Project"
+
+      - name: avg_esp_frequency
+        type: avg
+        sql: af_esp
+        title: "Avg ESP Frequency"
+        description: "Average allele frequency in NHLBI ESP database"
+
+      - name: max_exac_frequency
+        type: max
+        sql: af_exac
+        title: "Max ExAC Frequency"
+        description: "Maximum allele frequency in ExAC"
+
+      - name: avg_variant_length
+        type: avg
+        sql: "`end` - `start`"
+        title: "Avg Variant Length"
+        description: "Average length of variants in base pairs"
+
+    dimensions:
+      - name: locus_id
+        sql: locus_id
+        type: number
+        primary_key: true
+        title: "Locus ID"
+        description: "Unique identifier for the genomic locus"
+
+      - name: chromosome
+        sql: chromosome
+        type: string
+        title: "Chromosome"
+        description: "Chromosome number or letter (1-22, X, Y, MT)"
+
+      - name: start_position
+        sql: "`start`"
+        type: number
+        title: "Start Position"
+        description: "Genomic start position (0-based)"
+
+      - name: end_position
+        sql: "`end`"
+        type: number
+        title: "End Position"
+        description: "Genomic end position"
+
+      - name: reference_allele
+        sql: reference
+        type: string
+        title: "Reference Allele"
+        description: "Reference allele sequence"
+
+      - name: alternate_allele
+        sql: alternate
+        type: string
+        title: "Alternate Allele"
+        description: "Alternate/variant allele sequence"
+
+      - name: variant_name
+        sql: name
+        type: string
+        title: "Variant Name"
+        description: "ClinVar variant name"
+
+      - name: variant_class
+        sql: clnvc
+        type: string
+        title: "Variant Class"
+        description: "Type of variant (SNV, deletion, insertion, etc.)"
+
+      - name: variant_class_so
+        sql: clnvcso
+        type: string
+        title: "Variant Class (SO)"
+        description: "Sequence Ontology term for variant class"
+
+      - name: gene_info
+        sql: geneinfo
+        type: string
+        title: "Gene Info"
+        description: "Gene symbol and ID (format: GENE:ID)"
+
+      - name: locus
+        sql: locus
+        type: string
+        title: "Locus"
+        description: "Genomic locus representation"
+
+      - name: locus_hash
+        sql: locus_hash
+        type: string
+        title: "Locus Hash"
+        description: "Hash identifier for the locus"
+
+      - name: allele_id
+        sql: alleleid
+        type: number
+        title: "Allele ID"
+        description: "ClinVar allele identifier"
+
+      - name: exac_frequency
+        sql: af_exac
+        type: number
+        title: "ExAC Frequency"
+        description: "Allele frequency in ExAC database"
+
+      - name: tgp_frequency
+        sql: af_tgp
+        type: number
+        title: "1000 Genomes Frequency"
+        description: "Allele frequency in 1000 Genomes Project"
+
+      - name: esp_frequency
+        sql: af_esp
+        type: number
+        title: "ESP Frequency"
+        description: "Allele frequency in NHLBI ESP database"
+
+    # Segments for common filtering patterns
+    segments:
+      - name: pathogenic
+        sql: "array_contains(clin_sig, 'Pathogenic')"
+        title: "Pathogenic Variants"
+        description: "Variants with Pathogenic clinical significance"
+
+      - name: likely_pathogenic
+        sql: "array_contains(clin_sig, 'Likely_pathogenic')"
+        title: "Likely Pathogenic Variants"
+        description: "Variants with Likely Pathogenic clinical significance"
+
+      - name: benign
+        sql: "array_contains(clin_sig, 'Benign')"
+        title: "Benign Variants"
+        description: "Variants with Benign clinical significance"
+
+      - name: uncertain_significance
+        sql: "array_contains(clin_sig, 'Uncertain_significance')"
+        title: "Variants of Uncertain Significance"
+        description: "VUS - variants with uncertain clinical significance"
+
+      - name: rare_variants
+        sql: "(af_exac < 0.01 OR af_exac IS NULL)"
+        title: "Rare Variants"
+        description: "Variants with ExAC frequency < 1% or unknown"
+
+      - name: common_variants
+        sql: "af_exac >= 0.01"
+        title: "Common Variants"
+        description: "Variants with ExAC frequency >= 1%"

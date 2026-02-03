@@ -1,0 +1,84 @@
+services:
+  # Cube.dev API - Semantic Layer
+  cube:
+    image: cubejs/cube:latest
+    ports:
+      - "4000:4000"
+      - "15432:15432"  # SQL API (optional)
+    environment:
+      - CUBEJS_DEV_MODE=true
+      - CUBEJS_DB_TYPE=mysql
+      - CUBEJS_DB_HOST=${STARROCKS_HOST:-starrocks-fe}
+      - CUBEJS_DB_PORT=${STARROCKS_PORT:-9030}
+      - CUBEJS_DB_NAME=${STARROCKS_DB:-}
+      - CUBEJS_DB_USER=${STARROCKS_USER:-root}
+      - CUBEJS_DB_PASS=${STARROCKS_PASSWORD:-}
+      - CUBEJS_API_SECRET=${CUBE_API_SECRET:-your-secret-key-change-in-production}
+    volumes:
+      - ./cube/model:/cube/conf/model:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4000/readyz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Radiant MCP Server (both /mcp and /mcp2 endpoints)
+  radiant-mcp:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # StarRocks connection (for /mcp - direct SQL)
+      - STARROCKS_HOST=${STARROCKS_HOST:-starrocks-fe}
+      - STARROCKS_PORT=${STARROCKS_PORT:-9030}
+      - STARROCKS_USER=${STARROCKS_USER:-root}
+      - STARROCKS_PASSWORD=${STARROCKS_PASSWORD:-}
+      - STARROCKS_DB=${STARROCKS_DB:-}
+      # Cube.dev connection (for /mcp2 - semantic layer)
+      - CUBE_API_URL=http://cube:4000/cubejs-api/v1
+      - CUBE_API_TOKEN=${CUBE_API_TOKEN:-}
+    depends_on:
+      cube:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # StarRocks Frontend (optional - for local development)
+  starrocks-fe:
+    image: starrocks/fe-ubuntu:latest
+    profiles:
+      - starrocks  # Only start with --profile starrocks
+    ports:
+      - "8030:8030"  # HTTP port
+      - "9030:9030"  # MySQL port
+    environment:
+      - FE_CONF=mysql_service_nio_enabled=true
+    volumes:
+      - starrocks-fe-data:/opt/starrocks/fe/meta
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8030/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # StarRocks Backend (optional - for local development)
+  starrocks-be:
+    image: starrocks/be-ubuntu:latest
+    profiles:
+      - starrocks  # Only start with --profile starrocks
+    ports:
+      - "8040:8040"
+    depends_on:
+      starrocks-fe:
+        condition: service_healthy
+    volumes:
+      - starrocks-be-data:/opt/starrocks/be/storage
+
+volumes:
+  starrocks-fe-data:
+  starrocks-be-data:
