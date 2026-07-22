@@ -17,9 +17,20 @@ def create_app(mcp_app):
         # RFC 9728 + RFC 8414: serve OAuth metadata at root-level paths.
         # The MCP framework serves these under /mcp/.well-known/... but
         # clients expect the RFC canonical paths at the root.
+        #
+        # Register BOTH the slashless and trailing-slash variants explicitly.
+        # fastmcp's WWW-Authenticate header advertises the resource-metadata
+        # URL *with* a trailing slash (".../mcp/"); if only the slashless route
+        # exists, Starlette 307-redirects the slashed request, and strict MCP
+        # clients (e.g. Claude Desktop) that don't follow redirects on the
+        # metadata fetch fail OAuth discovery ("not a valid MCP server").
         Route("/.well-known/oauth-protected-resource/mcp",
               protected_resource_metadata, methods=["GET"]),
+        Route("/.well-known/oauth-protected-resource/mcp/",
+              protected_resource_metadata, methods=["GET"]),
         Route("/.well-known/oauth-authorization-server/mcp",
+              auth_server_metadata, methods=["GET"]),
+        Route("/.well-known/oauth-authorization-server/mcp/",
               auth_server_metadata, methods=["GET"]),
         # Also override the mount-relative path (trailing-slash fix).
         Route("/mcp/.well-known/oauth-protected-resource",
