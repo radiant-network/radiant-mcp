@@ -4,7 +4,13 @@ A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
 
 ## Overview
 
-This Docker image packages the [mcp-server-starrocks](https://github.com/StarRocks/mcp-server-starrocks) Python package with a custom wrapper that adds health check endpoints. It runs in **streamable-http** mode, exposing an HTTP endpoint for MCP clients.
+This Docker image packages the [mcp-server-starrocks](https://github.com/StarRocks/mcp-server-starrocks) Python package with a custom wrapper that adds:
+
+- **Health check endpoints** (`/health`, `/ready`) for container orchestration.
+- **Optional OAuth 2.1 authentication** via Keycloak (OIDC), in front of the MCP endpoint.
+- **Per-request JWT pass-through** — each MCP tool call runs its StarRocks queries under the authenticated user's identity instead of a shared static credential.
+
+It runs in **streamable-http** mode, exposing an HTTP endpoint for MCP clients. With no OAuth environment variables set, it behaves exactly like the upstream package with static credentials.
 
 ## Quick Start
 
@@ -61,6 +67,26 @@ docker run -d \
   -e STARROCKS_URL="user:password@host:9030/database" \
   ghcr.io/radiant-network/radiant-mcp:latest
 ```
+
+## Authentication (OAuth 2.1 + Keycloak)
+
+Authentication is **optional and opt-in**: it activates only when `KEYCLOAK_OIDC_CONFIG_URL` is set. When enabled, the server supports two kinds of clients simultaneously:
+
+- **Self-discovering MCP clients** (e.g. Claude Desktop) — complete the full OAuth 2.1 + PKCE flow, with dynamic client registration, discovered automatically from the server's `.well-known` metadata.
+- **Clients that already hold a Keycloak token** (e.g. a web portal) — present the existing token directly as a `Bearer` header.
+
+In both cases the user's Keycloak JWT is forwarded to StarRocks, which validates it against Keycloak's JWKS (the `authentication_jwt` plugin, v3.5.0+) and executes queries under that user's identity. The static `STARROCKS_*` credentials are used only for health checks and as a fallback when no token is present. The `STARROCKS_USER` referenced by a JWT must exist in StarRocks as a user `IDENTIFIED WITH authentication_jwt`, and StarRocks must have SSL enabled (JWT auth requires it).
+
+### OAuth Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `KEYCLOAK_OIDC_CONFIG_URL` | Yes (to enable auth) | - | Keycloak OIDC discovery URL, e.g. `https://kc.example.com/realms/radiant/.well-known/openid-configuration` |
+| `KEYCLOAK_CLIENT_ID` | Yes | - | OAuth client ID registered in Keycloak |
+| `KEYCLOAK_CLIENT_SECRET` | Yes | - | OAuth client secret |
+| `KEYCLOAK_AUDIENCE` | No | - | Expected JWT `aud` claim |
+| `MCP_BASE_URL` | No | `http://localhost:8000/mcp` | Public URL of the MCP endpoint (used in OAuth metadata) |
+| `OAUTH_REQUIRED_SCOPES` | No | `openid` | Comma-separated scopes required on tokens |
 
 ## Building the Image
 
@@ -132,6 +158,26 @@ Configure your MCP client to connect to the server:
 | `table_overview` | Get table schema and sample data |
 | `db_summary` | Get database summary with table schemas |
 | `query_and_plotly_chart` | Execute query and generate Plotly chart |
+
+## Local Development
+
+A `docker-compose.yml` brings up a full local stack — Keycloak (IdP), StarRocks (with TLS + a JWT-authenticated `testuser`), and `radiant-mcp` wired to both:
+
+```bash
+docker compose up --build
+```
+
+The MCP server is then at `http://localhost:8000/mcp` and Keycloak at `http://localhost:8080` (realm `radiant`).
+
+### Integration Tests
+
+An end-to-end test exercises the OAuth 2.1 + JWT → StarRocks flow (health, OAuth metadata, token issuance, authenticated `read_query`, and the unauthenticated → 401 case):
+
+```bash
+docker compose --profile test run --rm test-runner
+```
+
+> Use `run --rm test-runner`, not `up --abort-on-container-exit` — the one-shot `starrocks-init` container exits 0 on success, which would abort the whole stack before the test runs.
 
 ## License
 
