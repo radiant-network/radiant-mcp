@@ -1,0 +1,104 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start-dev --import-realm  --http-enabled=true
+    environment:
+      KC_HEALTH_ENABLED: "true"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: keycloak
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak-import:/opt/keycloak/data/import:ro
+    # The keycloak:26 image has bash (with /dev/tcp) but no curl/wget, so probe
+    # the management health port over a raw socket and match the HTTP 200 status.
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  starrocks:
+    image: starrocks/allin1-ubuntu:3.5.12
+    ports:
+      - "9030:9030"
+      - "8030:8030"
+    volumes:
+      - ./tests/integration/tls/starrocks.jks:/data/deploy/starrocks/fe/conf/starrocks.jks:ro
+      - ./tests/integration/fe-ssl.conf:/fe-ssl.conf:ro
+    # Append SSL config to fe.conf before the entrypoint runs
+    entrypoint:
+      - bash
+      - -c
+      - |
+        cat /fe-ssl.conf >> /data/deploy/starrocks/fe/conf/fe.conf
+        exec /bin/sh -c ./entrypoint.sh
+    healthcheck:
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-P", "9030", "-u", "root", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  starrocks-init:
+    image: starrocks/allin1-ubuntu:3.5.12
+    depends_on:
+      starrocks:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+#        condition: service_healthy
+    volumes:
+      - ./tests/integration/init-starrocks.sh:/init-starrocks.sh:ro
+    entrypoint: ["bash", "/init-starrocks.sh"]
+    restart: "no"
+
+  radiant-mcp:
+    build: .
+    depends_on:
+      starrocks-init:
+        condition: service_completed_successfully
+      # fastmcp 3.x OIDCProxy fetches the OIDC discovery doc at startup,
+      # so Keycloak must be serving before this container boots.
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      # StarRocks connection (root for health-check / fallback)
+      STARROCKS_HOST: starrocks
+      STARROCKS_PORT: "9030"
+      STARROCKS_USER: root
+      STARROCKS_PASSWORD: ""
+      STARROCKS_DB: test_db
+      # OAuth 2.1 / Keycloak
+      KEYCLOAK_OIDC_CONFIG_URL: http://keycloak:8080/realms/radiant/.well-known/openid-configuration
+      KEYCLOAK_CLIENT_ID: radiant-mcp-server
+      KEYCLOAK_CLIENT_SECRET: test-client-secret
+      KEYCLOAK_AUDIENCE: radiant-mcp-server
+      MCP_BASE_URL: http://localhost:8000/mcp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  test-runner:
+    image: python:3.11-slim
+    depends_on:
+      radiant-mcp:
+        condition: service_healthy
+    volumes:
+      - ./tests/integration/test-oauth-flow.sh:/test-oauth-flow.sh:ro
+    entrypoint: ["bash", "-c", "apt-get update -qq && apt-get install -y -qq curl > /dev/null 2>&1 && bash /test-oauth-flow.sh"]
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      MCP_URL: http://radiant-mcp:8000
+    profiles:
+      - test
