@@ -65,6 +65,17 @@ async def main():
             required_scopes=required_scopes,
         )
 
+        # Advertise the OIDC scopes Keycloak grants as *valid* for dynamic client
+        # registration, without making them *required* on every token. External
+        # clients (e.g. Claude Desktop) request "openid profile email" during DCR;
+        # if those aren't in the advertised scope set, registration is rejected
+        # with invalid_client_metadata ("Requested scopes are not valid"). Tokens
+        # still only need `required_scopes` (openid) to validate.
+        valid_scopes = os.getenv(
+            "OAUTH_VALID_SCOPES", "openid,profile,email,offline_access"
+        ).split(",")
+        oidc.update_default_scopes(valid_scopes)
+
         # fastmcp 3.x OIDCProxy only accepts tokens minted through its own
         # OAuth/DCR flow (external self-discovering clients like Claude Desktop).
         # Portal clients already hold a Keycloak token and present it directly,
