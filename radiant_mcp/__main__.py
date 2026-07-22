@@ -95,12 +95,19 @@ async def main():
         # Create combined app
         app = create_app(mcp_app)
 
-        # Run with uvicorn
+        # Run with uvicorn.
+        # proxy_headers + forwarded_allow_ips let uvicorn honour the
+        # X-Forwarded-Proto/-For headers set by the TLS-terminating proxy
+        # (e.g. AWS ALB). Without this, uvicorn assumes http and Starlette's
+        # trailing-slash redirects (and OAuth metadata URLs) are emitted as
+        # http:// — which breaks HTTPS clients and the OAuth discovery flow.
         config = uvicorn.Config(
             app,
             host=args.host,
             port=args.port,
-            log_level="info"
+            log_level="info",
+            proxy_headers=True,
+            forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "*"),
         )
         server = uvicorn.Server(config)
         await server.serve()
