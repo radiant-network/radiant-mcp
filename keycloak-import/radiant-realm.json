@@ -67,12 +67,27 @@
             "claim.name": "preferred_username",
             "jsonType.label": "String"
           }
+        },
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "id",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "sub",
+            "jsonType.label": "String"
+          }
         }
       ]
     }
   ],
   "users": [
     {
+      "id": "11111111-1111-1111-1111-111111111111",
       "username": "testuser",
       "enabled": true,
       "emailVerified": true,

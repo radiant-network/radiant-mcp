@@ -44,14 +44,15 @@ class JWTDBClient:
     @staticmethod
     def _extract_username(token_str: str) -> str:
         """Decode the JWT payload (without verification — already verified by
-        OIDCProxy) and return the ``preferred_username`` or ``sub`` claim."""
+        OIDCProxy) and return the ``sub`` claim, which is the StarRocks
+        username (matched against the user's ``principal_field: sub``)."""
         import base64
         # JWT = header.payload.signature
         payload_b64 = token_str.split('.')[1]
         # Fix padding
         payload_b64 += '=' * (-len(payload_b64) % 4)
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        return payload.get('preferred_username') or payload.get('sub', 'unknown')
+        return payload.get('sub', 'unknown')
 
     def _create_jwt_connection(self, token_str: str):
         """Create a one-shot MySQL connection authenticated with a JWT.

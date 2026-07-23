@@ -20,7 +20,7 @@ The MCP tools themselves (`read_query`, `write_query`, `table_overview`, etc.) c
 - **Two client auth paths, one `MultiAuth`.** External self-discovering clients (Claude Desktop) use the full OIDCProxy OAuth/DCR flow; the portal presents an existing Keycloak token directly. fastmcp 3's OIDCProxy alone rejects the latter (it only accepts tokens it minted), so `__main__.py` wraps it in `MultiAuth(server=oidc, verifiers=[direct_verifier])`. Don't drop the fallback verifier — the portal path breaks silently (401) if you do.
 - **fastmcp 3.x OIDCProxy contacts Keycloak at startup.** Construction eagerly fetches the OIDC discovery doc, so the server hard-fails to boot if Keycloak isn't reachable. In compose, `radiant-mcp` therefore depends on `keycloak: service_healthy` (see the healthcheck note below).
 - **JWTDBClient depends on upstream internals** (`_original._execute`, `db_client.ResultSet`, `remove_ansi_codes`). Floating deps (no lockfile) mean an upstream bump can silently break these.
-- **StarRocks re-validates the JWT itself.** A working token isn't enough — the `preferred_username` user must exist in StarRocks as `IDENTIFIED WITH authentication_jwt`, and StarRocks needs SSL enabled for JWT auth.
+- **StarRocks re-validates the JWT itself.** A working token isn't enough — a StarRocks user whose name is the token's `sub` (UUID) must exist as `IDENTIFIED WITH authentication_jwt` (with `principal_field: sub`), and StarRocks needs SSL enabled for JWT auth.
 - **No unit tests / linter.** Only the shell integration suite exists; CI builds the image but does not run it.
 
 ## Commands
@@ -77,7 +77,7 @@ Keycloak is the IdP for **both** hops: it issues the token to the client, and St
 Key constraints when editing this file:
 - `__getattr__` forwards everything not explicitly overridden to `self._original` — attributes read directly by upstream tools (`default_database`, `enable_arrow_flight_sql`, etc.) are copied in `__init__`.
 - It reuses upstream internals: `self._original._execute(conn, ...)` and `mcp_server_starrocks.db_client.ResultSet` / `remove_ansi_codes`. These are imported lazily inside methods. Upstream version bumps can break these — pinned indirectly by the Dockerfile.
-- The username sent to StarRocks is decoded from the JWT's `preferred_username` (falling back to `sub`) **without signature verification** — verification already happened in OIDCProxy. That StarRocks user must exist and be `IDENTIFIED WITH authentication_jwt`.
+- The username sent to StarRocks is decoded from the JWT's `sub` claim **without signature verification** — verification already happened in OIDCProxy. A StarRocks user named that `sub` (UUID) must exist and be `IDENTIFIED WITH authentication_jwt` (`principal_field: sub`).
 
 ### OAuth is optional and gated on one env var
 

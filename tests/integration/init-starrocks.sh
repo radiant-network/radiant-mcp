@@ -32,13 +32,16 @@ PROPERTIES("replication_num" = "1");
 INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');
 SQL
 
-echo "==> Creating JWT-authenticated user 'testuser'..."
+# The StarRocks username is the Keycloak 'sub' claim (a UUID), matched via
+# principal_field=sub. The testuser's id is pinned in radiant-realm.json so
+# this UUID is deterministic.
+echo "==> Creating JWT-authenticated user (keyed by sub)..."
 mysql -h starrocks -P 9030 -u root <<'SQL'
-CREATE USER IF NOT EXISTS 'testuser' IDENTIFIED WITH authentication_jwt AS
-'{"jwks_url":"http://keycloak:8080/realms/radiant/protocol/openid-connect/certs","principal_field":"preferred_username","required_issuer":"http://keycloak:8080/realms/radiant","required_audience":"radiant-mcp-server"}';
+CREATE USER IF NOT EXISTS '11111111-1111-1111-1111-111111111111' IDENTIFIED WITH authentication_jwt AS
+'{"jwks_url":"http://keycloak:8080/realms/radiant/protocol/openid-connect/certs","principal_field":"sub","required_issuer":"http://keycloak:8080/realms/radiant","required_audience":"radiant-mcp-server"}';
 
-GRANT ALL ON ALL DATABASES TO testuser;
-GRANT ALL ON ALL TABLES IN ALL DATABASES TO testuser;
+GRANT ALL ON ALL DATABASES TO '11111111-1111-1111-1111-111111111111';
+GRANT ALL ON ALL TABLES IN ALL DATABASES TO '11111111-1111-1111-1111-111111111111';
 SQL
 
 echo "==> StarRocks initialisation complete."

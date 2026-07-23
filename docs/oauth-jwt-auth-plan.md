@@ -93,7 +93,7 @@ from fastmcp.server.dependencies import get_access_token
 - Wraps the original `DBClient`
 - In `execute()`: calls `get_access_token()` to retrieve the JWT
 - If a token is present: creates a direct MySQL connection (not from the pool) with:
-  - `user` = JWT claim `preferred_username` (or `sub`)
+  - `user` = JWT claim `sub`
   - `auth_plugin` = `authentication_openid_connect_client`
   - `openid_token_file` = temporary file containing the JWT
 - If no token (health check, startup): delegates to the original `DBClient`
@@ -146,18 +146,21 @@ New variables (optional — if absent, auth is disabled = backward compatible):
 - Create a realm (e.g., `radiant`)
 - Create a client `radiant-mcp-server` (Confidential, Authorization Code + PKCE)
 - Redirect URI: `{MCP_BASE_URL}/auth/callback`
-- Map the `preferred_username` claim in tokens
+- The StarRocks username is taken from the token's `sub` claim (a stable user UUID)
 
 ### Step 6: StarRocks Configuration (Setup Guide)
 
+The StarRocks username must equal the Keycloak user's `sub` (UUID), matched via
+`principal_field: sub`:
+
 ```sql
-CREATE USER 'alice' IDENTIFIED WITH authentication_jwt AS '{
+CREATE USER '<keycloak-user-sub-uuid>' IDENTIFIED WITH authentication_jwt AS '{
   "jwks_url": "https://keycloak.example.com/realms/radiant/protocol/openid-connect/certs",
-  "principal_field": "preferred_username",
+  "principal_field": "sub",
   "required_issuer": "https://keycloak.example.com/realms/radiant",
   "required_audience": "radiant-mcp-server"
 }';
-GRANT SELECT ON *.* TO 'alice';
+GRANT SELECT ON *.* TO '<keycloak-user-sub-uuid>';
 ```
 
 ## Security Considerations
