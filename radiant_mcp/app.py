@@ -14,24 +14,15 @@ def create_app(mcp_app):
     routes = [
         Route("/health", health_check, methods=["GET"]),
         Route("/ready", ready_check, methods=["GET"]),
-        # RFC 9728: serve protected-resource metadata at the root-level paths.
-        # The MCP framework serves this under /mcp/.well-known/... but clients
-        # expect the RFC canonical path at the root. Authorization-server
-        # metadata is NOT served here — the native KeycloakAuthProvider points
-        # clients directly at Keycloak's realm for that.
+        # RFC 9728 protected-resource metadata. AS metadata is NOT served here —
+        # the native KeycloakAuthProvider points clients at Keycloak's realm.
         #
-        # Register BOTH the slashless and trailing-slash variants explicitly.
-        # fastmcp's WWW-Authenticate header advertises the resource-metadata
-        # URL *with* a trailing slash (".../mcp/"); if only the slashless route
-        # exists, Starlette 307-redirects the slashed request, and strict MCP
-        # clients (e.g. Claude Desktop) that don't follow redirects on the
-        # metadata fetch fail OAuth discovery ("not a valid MCP server").
-        Route("/.well-known/oauth-protected-resource/mcp",
-              protected_resource_metadata, methods=["GET"]),
-        Route("/.well-known/oauth-protected-resource/mcp/",
-              protected_resource_metadata, methods=["GET"]),
-        # Also override the mount-relative path (trailing-slash fix).
-        Route("/mcp/.well-known/oauth-protected-resource",
+        # MCP_BASE_URL is the server root and the MCP app is mounted at /mcp, so
+        # the provider advertises this metadata (in its 401 WWW-Authenticate) at
+        # the BARE root path. That's the URL clients fetch; serve it there. If it
+        # 404s, the client can't find the authorization server and falls back to
+        # <origin>/authorize → 404.
+        Route("/.well-known/oauth-protected-resource",
               protected_resource_metadata, methods=["GET"]),
         Mount("/mcp", app=mcp_app),
     ]
