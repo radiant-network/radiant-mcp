@@ -4,14 +4,19 @@ Radiant MCP Server — main entrypoint.
 Wrapper for mcp-server-starrocks that adds a /health endpoint
 and optional OAuth 2.1 authentication via Keycloak (OIDC).
 
-When KEYCLOAK_OIDC_CONFIG_URL is set, the server:
-  1. Configures OIDCProxy for OAuth 2.1 + PKCE flow via Keycloak
+When KEYCLOAK_REALM_URL is set, the server:
+  1. Configures the native fastmcp KeycloakAuthProvider — a pure JWT
+     resource server that validates incoming Bearer tokens against
+     Keycloak's JWKS. Self-discovering clients (Claude Desktop) obtain
+     tokens via Keycloak's own Dynamic Client Registration + PKCE;
+     portal clients (LibreChat) present a raw Keycloak token directly.
+     Both are accepted by the same verifier.
   2. Wraps the DB client so each MCP tool call executes queries
      under the authenticated user's identity (JWT → StarRocks)
   3. Falls back to the original static-credential client when no
      token is present (health checks, startup, etc.)
 
-Without KEYCLOAK_OIDC_CONFIG_URL, the server behaves exactly as before.
+Without KEYCLOAK_REALM_URL, the server behaves exactly as before.
 """
 
 import argparse
@@ -31,7 +36,7 @@ from mcp_server_starrocks.db_summary_manager import DatabaseSummaryManager
 from .app import create_app
 from .jwt_db_client import JWTDBClient
 
-OAUTH_ENABLED = bool(os.getenv('KEYCLOAK_OIDC_CONFIG_URL'))
+OAUTH_ENABLED = bool(os.getenv('KEYCLOAK_REALM_URL'))
 
 
 async def main():
@@ -50,43 +55,28 @@ async def main():
 
     # ---- OAuth 2.1 configuration (optional) ----
     if OAUTH_ENABLED:
-        from fastmcp.server.auth import MultiAuth
-        from fastmcp.server.auth.oidc_proxy import OIDCProxy
+        from fastmcp.server.auth.providers.keycloak import KeycloakAuthProvider
 
+        # audience is optional: StarRocks' authentication_jwt only checks `aud`
+        # when its user is created with `required_audience`, which we don't set.
+        # Leaving this None lets DCR-registered clients (each with their own
+        # client_id and no per-client audience mapper) validate too.
         audience = os.getenv("KEYCLOAK_AUDIENCE", None)
         required_scopes = os.getenv("OAUTH_REQUIRED_SCOPES", "openid").split(",")
 
-        oidc = OIDCProxy(
-            config_url=os.getenv("KEYCLOAK_OIDC_CONFIG_URL"),
-            client_id=os.getenv("KEYCLOAK_CLIENT_ID"),
-            client_secret=os.getenv("KEYCLOAK_CLIENT_SECRET"),
-            audience=audience,
-            base_url=os.getenv("MCP_BASE_URL", "http://localhost:8000/mcp"),
-            required_scopes=required_scopes,
-        )
-
-        # Advertise the OIDC scopes Keycloak grants as *valid* for dynamic client
-        # registration, without making them *required* on every token. External
-        # clients (e.g. Claude Desktop) request "openid profile email" during DCR;
-        # if those aren't in the advertised scope set, registration is rejected
-        # with invalid_client_metadata ("Requested scopes are not valid"). Tokens
-        # still only need `required_scopes` (openid) to validate.
-        valid_scopes = os.getenv(
-            "OAUTH_VALID_SCOPES", "openid,profile,email,offline_access"
-        ).split(",")
-        oidc.update_default_scopes(valid_scopes)
-
-        # fastmcp 3.x OIDCProxy only accepts tokens minted through its own
-        # OAuth/DCR flow (external self-discovering clients like Claude Desktop).
-        # Portal clients already hold a Keycloak token and present it directly,
-        # so add a JWKS verifier as a fallback source. MultiAuth tries the proxy
-        # first, then this verifier; routes/metadata still come from the proxy.
-        direct_verifier = oidc.get_token_verifier(
+        # Native fastmcp Keycloak provider: a pure JWT resource server. It holds
+        # no client secret and mints no tokens — it only validates incoming
+        # Bearer JWTs against Keycloak's JWKS (RS256, issuer, exp, scopes, and
+        # optionally aud). Self-discovering clients (Claude Desktop) get tokens
+        # via Keycloak's own DCR + PKCE; portal clients (LibreChat) present a raw
+        # Keycloak token. Both hit the same verifier, so no MultiAuth is needed.
+        mcp.auth = KeycloakAuthProvider(
+            realm_url=os.getenv("KEYCLOAK_REALM_URL"),
+            base_url=os.getenv("MCP_BASE_URL", "http://localhost:8000"),
             audience=audience,
             required_scopes=required_scopes,
         )
-        mcp.auth = MultiAuth(server=oidc, verifiers=[direct_verifier])
-        print("OAuth 2.1 enabled (Keycloak OIDC) + direct-JWT fallback for portal clients")
+        print("OAuth 2.1 enabled (Keycloak native provider — JWT verifier + DCR)")
 
         # Monkey-patch: wrap DB client with JWT-aware version
         jwt_client = JWTDBClient(db_client)
@@ -94,7 +84,7 @@ async def main():
         sr_server.db_summary_manager = DatabaseSummaryManager(jwt_client)
         print("JWTDBClient installed — queries will run under user identity")
     else:
-        print("OAuth disabled (no KEYCLOAK_OIDC_CONFIG_URL set)")
+        print("OAuth disabled (no KEYCLOAK_REALM_URL set)")
 
     # Start connection health checker
     start_connection_health_checker()

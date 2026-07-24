@@ -38,7 +38,7 @@ SQL
 echo "==> Creating JWT-authenticated user (keyed by sub)..."
 mysql -h starrocks -P 9030 -u root <<'SQL'
 CREATE USER IF NOT EXISTS '11111111-1111-1111-1111-111111111111' IDENTIFIED WITH authentication_jwt AS
-'{"jwks_url":"http://keycloak:8080/realms/radiant/protocol/openid-connect/certs","principal_field":"sub","required_issuer":"http://keycloak:8080/realms/radiant","required_audience":"radiant-mcp-server"}';
+'{"jwks_url":"http://keycloak:8080/realms/radiant/protocol/openid-connect/certs","principal_field":"sub","required_issuer":"http://keycloak:8080/realms/radiant"}';
 
 GRANT ALL ON ALL DATABASES TO '11111111-1111-1111-1111-111111111111';
 GRANT ALL ON ALL TABLES IN ALL DATABASES TO '11111111-1111-1111-1111-111111111111';

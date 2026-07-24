@@ -44,8 +44,9 @@ class JWTDBClient:
     @staticmethod
     def _extract_username(token_str: str) -> str:
         """Decode the JWT payload (without verification — already verified by
-        OIDCProxy) and return the ``sub`` claim, which is the StarRocks
-        username (matched against the user's ``principal_field: sub``)."""
+        the KeycloakAuthProvider against Keycloak's JWKS) and return the ``sub``
+        claim, which is the StarRocks username (matched against the user's
+        ``principal_field: sub``)."""
         import base64
         # JWT = header.payload.signature
         payload_b64 = token_str.split('.')[1]
