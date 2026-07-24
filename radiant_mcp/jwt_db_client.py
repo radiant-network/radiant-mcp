@@ -14,10 +14,10 @@ class JWTDBClient:
     """Wrapper around DBClient that uses the caller's JWT token to authenticate
     against StarRocks via the ``authentication_openid_connect_client`` plugin.
 
-    When a JWT is available (from the MCP auth context), a direct MySQL
-    connection is opened with the token — bypassing the pool. When no token
-    is present (startup, health-checks), calls are delegated to the original
-    pool-based client.
+    Every query runs under the authenticated user's identity: a direct,
+    one-shot MySQL connection is opened with the caller's JWT (bypassing the
+    pool). There is no static-credential fallback — a call with no JWT in the
+    request context fails rather than running as a shared user.
     """
 
     def __init__(self, original_client):
@@ -109,9 +109,12 @@ class JWTDBClient:
         return_format: Literal["raw", "pandas"] = "raw",
     ):
         token = self._get_jwt_token()
-        if token is None or self.enable_arrow_flight_sql:
-            # No auth context or Arrow Flight — delegate to original client
-            return self._original.execute(statement, db=db, return_format=return_format)
+        if token is None:
+            from mcp_server_starrocks.db_client import ResultSet
+            return ResultSet(
+                success=False,
+                error_message="Authentication required: no JWT in request context",
+            )
 
         conn = None
         try:
@@ -152,8 +155,8 @@ class JWTDBClient:
 
     def collect_perf_analysis_input(self, query: str, db: Optional[str] = None):
         token = self._get_jwt_token()
-        if token is None or self.enable_arrow_flight_sql:
-            return self._original.collect_perf_analysis_input(query, db=db)
+        if token is None:
+            return {"error_message": "Authentication required: no JWT in request context"}
 
         conn = None
         try:

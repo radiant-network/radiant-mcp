@@ -72,11 +72,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # StarRocks connection (root for health-check / fallback)
+      # StarRocks connection target only — NO credentials. Every query runs
+      # under the caller's JWT identity; this component holds no StarRocks user.
       STARROCKS_HOST: starrocks
       STARROCKS_PORT: "9030"
-      STARROCKS_USER: root
-      STARROCKS_PASSWORD: ""
       STARROCKS_DB: test_db
       # OAuth 2.1 / Keycloak — native KeycloakAuthProvider (pure JWT verifier).
       # The server holds no client id/secret; it only validates tokens against

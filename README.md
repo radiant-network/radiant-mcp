@@ -7,10 +7,10 @@ A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
 This Docker image packages the [mcp-server-starrocks](https://github.com/StarRocks/mcp-server-starrocks) Python package with a custom wrapper that adds:
 
 - **Health check endpoints** (`/health`, `/ready`) for container orchestration.
-- **Optional OAuth 2.1 authentication** via Keycloak (OIDC), in front of the MCP endpoint.
-- **Per-request JWT pass-through** — each MCP tool call runs its StarRocks queries under the authenticated user's identity instead of a shared static credential.
+- **Mandatory OAuth 2.1 authentication** via Keycloak (OIDC), in front of the MCP endpoint.
+- **Per-request JWT pass-through** — each MCP tool call runs its StarRocks queries under the authenticated user's identity. This component holds **no** StarRocks credentials.
 
-It runs in **streamable-http** mode, exposing an HTTP endpoint for MCP clients. With no OAuth environment variables set, it behaves exactly like the upstream package with static credentials.
+It runs in **streamable-http** mode, exposing an HTTP endpoint for MCP clients. `KEYCLOAK_REALM_URL` is required — the server refuses to boot without it.
 
 ## Quick Start
 
@@ -19,8 +19,9 @@ docker run -d \
   -p 8000:8000 \
   -e STARROCKS_HOST=your-starrocks-host \
   -e STARROCKS_PORT=9030 \
-  -e STARROCKS_USER=root \
-  -e STARROCKS_PASSWORD=your-password \
+  -e STARROCKS_DB=your-database \
+  -e KEYCLOAK_REALM_URL=https://kc.example.com/realms/radiant \
+  -e MCP_BASE_URL=https://mcp.example.com \
   ghcr.io/radiant-network/radiant-mcp:latest
 ```
 
@@ -29,16 +30,17 @@ docker run -d \
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/mcp` | POST | MCP protocol endpoint (JSON-RPC over HTTP) |
-| `/health` | GET | Health check - returns database connection status |
+| `/health` | GET | Liveness check — the process is up (does not touch StarRocks) |
 | `/ready` | GET | Readiness check - returns server status |
 
 ### Health Check Response
 
 ```json
-{"status": "healthy", "database": "connected"}
+{"status": "healthy"}
 ```
 
-Returns HTTP 200 when healthy, HTTP 503 when database is disconnected.
+Returns HTTP 200 while the process is running. It does **not** probe StarRocks —
+this component holds no StarRocks credentials.
 
 ### Readiness Check Response
 
@@ -50,43 +52,34 @@ Returns HTTP 200 when healthy, HTTP 503 when database is disconnected.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `STARROCKS_HOST` | Yes | - | StarRocks FE (Frontend) hostname or IP |
+| `STARROCKS_HOST` | Yes | - | StarRocks FE (Frontend) hostname or IP (connection target only) |
 | `STARROCKS_PORT` | No | `9030` | StarRocks FE query port |
-| `STARROCKS_USER` | Yes | - | Database username |
-| `STARROCKS_PASSWORD` | Yes | - | Database password |
 | `STARROCKS_DB` | No | - | Default database to use |
 | `STARROCKS_OVERVIEW_LIMIT` | No | - | Limit for overview queries (memory management) |
 
-### Alternative: Connection URL
-
-Instead of individual variables, you can use a single connection URL:
-
-```bash
-docker run -d \
-  -p 8000:8000 \
-  -e STARROCKS_URL="user:password@host:9030/database" \
-  ghcr.io/radiant-network/radiant-mcp:latest
-```
+> No `STARROCKS_USER` / `STARROCKS_PASSWORD`: this component authenticates to
+> StarRocks with each caller's JWT, never a static credential. `STARROCKS_HOST`
+> and `STARROCKS_PORT` only tell it *where* to connect.
 
 ## Authentication (OAuth 2.1 + Keycloak)
 
-Authentication is **optional and opt-in**: it activates only when `KEYCLOAK_OIDC_CONFIG_URL` is set. When enabled, the server supports two kinds of clients simultaneously:
+Authentication is **mandatory**: the server requires `KEYCLOAK_REALM_URL` and refuses to boot without it. It supports two kinds of clients simultaneously:
 
 - **Self-discovering MCP clients** (e.g. Claude Desktop) — complete the full OAuth 2.1 + PKCE flow, with dynamic client registration, discovered automatically from the server's `.well-known` metadata.
 - **Clients that already hold a Keycloak token** (e.g. a web portal) — present the existing token directly as a `Bearer` header.
 
-In both cases the user's Keycloak JWT is forwarded to StarRocks, which validates it against Keycloak's JWKS (the `authentication_jwt` plugin, v3.5.0+) and executes queries under that user's identity. The static `STARROCKS_*` credentials are used only for health checks and as a fallback when no token is present. The `STARROCKS_USER` referenced by a JWT must exist in StarRocks as a user `IDENTIFIED WITH authentication_jwt`, and StarRocks must have SSL enabled (JWT auth requires it).
+In both cases the user's Keycloak JWT is forwarded to StarRocks, which validates it against Keycloak's JWKS (the `authentication_jwt` plugin, v3.5.0+) and executes queries under that user's identity. There is no static-credential fallback: a request without a valid JWT is rejected. The user (the JWT `sub`) must exist in StarRocks as `IDENTIFIED WITH authentication_jwt` (`principal_field: sub`), and StarRocks must have SSL enabled (JWT auth requires it).
+
+The server uses fastmcp's native `KeycloakAuthProvider` — a pure JWT resource server. It holds no client id/secret and mints no tokens; it only validates incoming Bearer JWTs against the realm's JWKS. Requires Keycloak ≥ 26.6.0 for the DCR path.
 
 ### OAuth Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `KEYCLOAK_OIDC_CONFIG_URL` | Yes (to enable auth) | - | Keycloak OIDC discovery URL, e.g. `https://kc.example.com/realms/radiant/.well-known/openid-configuration` |
-| `KEYCLOAK_CLIENT_ID` | Yes | - | OAuth client ID registered in Keycloak |
-| `KEYCLOAK_CLIENT_SECRET` | Yes | - | OAuth client secret |
-| `KEYCLOAK_AUDIENCE` | No | - | Expected JWT `aud` claim |
-| `MCP_BASE_URL` | No | `http://localhost:8000/mcp` | Public URL of the MCP endpoint (used in OAuth metadata) |
+| `KEYCLOAK_REALM_URL` | Yes | - | Bare realm URL, e.g. `https://kc.example.com/realms/radiant` |
+| `MCP_BASE_URL` | No | `http://localhost:8000` | Server **root** URL (not `/mcp`); the provider derives the resource + metadata URLs from it |
 | `OAUTH_REQUIRED_SCOPES` | No | `openid` | Comma-separated scopes required on tokens |
+| `KEYCLOAK_AUDIENCE` | No | - | Expected JWT `aud` claim (leave unset unless you add a matching audience mapper) |
 
 ## Building the Image
 
@@ -119,9 +112,9 @@ services:
     environment:
       STARROCKS_HOST: starrocks-fe
       STARROCKS_PORT: 9030
-      STARROCKS_USER: root
-      STARROCKS_PASSWORD: ${STARROCKS_PASSWORD}
       STARROCKS_DB: my_database
+      KEYCLOAK_REALM_URL: https://kc.example.com/realms/radiant
+      MCP_BASE_URL: https://mcp.example.com
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -132,7 +125,7 @@ services:
 ### Deployment Considerations
 
 - **Memory**: Recommend at least 1GB due to pandas/pyarrow dependencies
-- **Secrets**: Store `STARROCKS_PASSWORD` securely (e.g., AWS Secrets Manager, Kubernetes Secrets)
+- **Credentials**: None to store — the component holds no StarRocks user/password. Access is governed entirely by the caller's Keycloak JWT and the matching StarRocks JWT user.
 
 ## MCP Client Configuration
 

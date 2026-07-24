@@ -2,19 +2,11 @@
 
 from starlette.responses import JSONResponse
 
-from mcp_server_starrocks.connection_health_checker import check_connection_health
-
 
 async def health_check(request):
-    """Health check endpoint that verifies database connectivity."""
-    db_healthy = check_connection_health()
-    status = "healthy" if db_healthy else "unhealthy"
-    status_code = 200 if db_healthy else 503
-
-    return JSONResponse(
-        {"status": status, "database": "connected" if db_healthy else "disconnected"},
-        status_code=status_code
-    )
+    """Liveness check — the process is up. Does not touch StarRocks (this
+    component holds no StarRocks credentials; DB access is per-user via JWT)."""
+    return JSONResponse({"status": "healthy"})
 
 
 async def ready_check(request):

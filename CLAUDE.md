@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A containerized wrapper around the upstream [`mcp-server-starrocks`](https://github.com/StarRocks/mcp-server-starrocks) PyPI package. The wrapper adds three things the upstream package lacks:
 
-1. `/health` + `/ready` HTTP endpoints for container orchestration.
-2. Optional OAuth 2.1 (Keycloak/OIDC) authentication in front of the MCP endpoint.
-3. Per-request JWT pass-through so each MCP tool call executes StarRocks queries **under the authenticated user's identity** instead of a shared static credential.
+1. `/health` + `/ready` HTTP endpoints for container orchestration (liveness only — no StarRocks probe).
+2. Mandatory OAuth 2.1 (Keycloak/OIDC) authentication in front of the MCP endpoint.
+3. Per-request JWT pass-through so each MCP tool call executes StarRocks queries **under the authenticated user's identity**. This component holds **no** StarRocks credentials — there is no static-credential fallback.
 
 The MCP tools themselves (`read_query`, `write_query`, `table_overview`, etc.) come entirely from the upstream package — this repo does **not** define them. We only intercept how the DB connection is created.
 
@@ -16,7 +16,7 @@ The MCP tools themselves (`read_query`, `write_query`, `table_overview`, etc.) c
 
 - **MCP tools are not defined in this repo.** `read_query`, `write_query`, etc. come from the upstream `mcp-server-starrocks` package. Don't search here for them.
 - **Injection is via monkey-patch.** `__main__.py` overwrites `sr_server.db_client` (a module-level global the upstream tools read). Replacing that global is the only seam — there's no dependency-injection hook.
-- **OAuth is gated on one env var.** Unset `KEYCLOAK_REALM_URL` = plain upstream behavior, no auth code runs. Preserve this backward-compat path.
+- **OAuth is mandatory.** `KEYCLOAK_REALM_URL` is required — `__main__.py` raises `SystemExit` at startup if it is unset. There is no non-OAuth / plain-upstream path anymore (removed 2026-07-24), and the container is never given StarRocks credentials.
 - **One provider, both client paths.** `__main__.py` uses fastmcp's native `KeycloakAuthProvider` — a pure JWT resource server (holds no client secret, mints no tokens). It just validates incoming Bearer JWTs against Keycloak's JWKS. Self-discovering clients (Claude Desktop) get tokens via Keycloak's own DCR + PKCE; portal clients (LibreChat) present a raw Keycloak token directly. Both hit the same verifier, so there is **no** `MultiAuth`/fallback-verifier and no server-side token swap. (This replaced an earlier `OIDCProxy` + `MultiAuth` hand-rolled setup — see git history if you need the rationale.)
 - **`KeycloakAuthProvider` needs Keycloak ≥ 26.6.0** for the DCR path (keycloak PR #45309). The portal/direct-token path works on any version. It fetches Keycloak's JWKS at startup, so the server hard-fails to boot if Keycloak isn't reachable — hence `radiant-mcp` depends on `keycloak: service_healthy` (see the healthcheck note below).
 - **Audience is optional and intentionally unset.** StarRocks' `authentication_jwt` only checks `aud` when the user is created `WITH ... required_audience`, which we don't do. Setting `KEYCLOAK_AUDIENCE` would make the provider *require* that `aud` on every token — which DCR-registered clients (their own client_id, no audience mapper) don't carry — so leave it unset unless you also add a matching audience mapper on a default client scope.
@@ -48,7 +48,7 @@ There is no unit-test suite, linter, or `pyproject.toml` — the only tests are 
 
 ## Architecture
 
-### Request flow (OAuth enabled)
+### Request flow
 
 ```
 MCP client → KeycloakAuthProvider (validates JWT via Keycloak JWKS) → MCP tool
@@ -56,35 +56,33 @@ MCP client → KeycloakAuthProvider (validates JWT via Keycloak JWKS) → MCP to
 StarRocks re-validates the same JWT against Keycloak's JWKS and runs the query as that user.
 ```
 
-Keycloak is the IdP for **both** hops: it issues the token to the client, and StarRocks independently verifies that same token. The `radiant-mcp` service holds a static `root` credential too, but that is used **only** for health checks and the no-token fallback path.
+Keycloak is the IdP for **both** hops: it issues the token to the client, and StarRocks independently verifies that same token. The `radiant-mcp` service holds **no** StarRocks credential — a tool call without a JWT is rejected, not run as a shared user. `/health` is liveness-only and never touches StarRocks.
 
 ### Module layout (`radiant_mcp/`)
 
-- `__main__.py` — entrypoint. Parses args, optionally configures `KeycloakAuthProvider` (set as `mcp.auth`), and (critically) **monkey-patches** the upstream module: `sr_server.db_client = JWTDBClient(...)` and rebuilds `sr_server.db_summary_manager`. This is how our client gets injected — the upstream tools read `db_client` as a module-level global, so replacing that global is the only injection seam. Then starts uvicorn.
+- `__main__.py` — entrypoint. Parses args, **requires** `KEYCLOAK_REALM_URL` (raises `SystemExit` if unset), configures `KeycloakAuthProvider` (set as `mcp.auth`), and (critically) **monkey-patches** the upstream module: `sr_server.db_client = JWTDBClient(...)` and rebuilds `sr_server.db_summary_manager`. This is how our client gets injected — the upstream tools read `db_client` as a module-level global, so replacing that global is the only injection seam. Then starts uvicorn.
 - `app.py` — Starlette factory. Mounts the upstream MCP ASGI app at `/mcp`, adds `/health`, `/ready`, and the `.well-known` OAuth routes; wide-open CORS. Uses the MCP app's own `lifespan`.
 - `jwt_db_client.py` — `JWTDBClient`, a drop-in wrapper for the upstream `DBClient`. See below.
 - `oauth.py` — hand-rolled RFC 9728 protected-resource metadata endpoint (workaround, see below). Advertises the Keycloak realm as the authorization server.
-- `health.py` — unauthenticated health/ready handlers.
-- `server.py` (repo root) — thin shim (`asyncio.run(main())`) kept as the Docker `CMD` and for backward compat.
+- `health.py` — unauthenticated liveness/readiness handlers (no StarRocks probe).
+- `server.py` (repo root) — thin shim (`asyncio.run(main())`) kept as the Docker `CMD`.
 
 ### JWTDBClient — the core mechanism
 
 `jwt_db_client.py` wraps the upstream client and overrides `execute()` and `collect_perf_analysis_input()`. On each call it:
 
 1. Pulls the raw JWT from the MCP auth context via `fastmcp.server.dependencies.get_access_token()`.
-2. If **no token** (startup, health checks) OR Arrow Flight SQL is enabled → delegates to the original pooled client unchanged. This is the backward-compat path.
-3. If a token exists → writes it to a `0o600` temp file, opens a **one-shot, non-pooled** `mysql.connector` connection using `auth_plugin='authentication_openid_connect_client'` + `openid_token_file`, runs the statement via the original client's private `_execute(conn, ...)`, then closes the connection and deletes the temp file in `finally`.
+2. If **no token** → returns a failed `ResultSet` / error dict (`"Authentication required: no JWT in request context"`). There is **no** static-credential fallback — the wrapper never delegates back to the pooled client.
+3. If a token exists → writes it to a `0o600` temp file, opens a **one-shot, non-pooled** `mysql.connector` connection using `auth_plugin='authentication_openid_connect_client'` + `openid_token_file`, runs the statement via the original client's private `_execute(conn, ...)`, then closes the connection and deletes the temp file in `finally`. Host/port/db/timeouts still come from `self._original.connection_params` (`STARROCKS_HOST`/`PORT`/`DB` — connection targets, not credentials).
 
 Key constraints when editing this file:
 - `__getattr__` forwards everything not explicitly overridden to `self._original` — attributes read directly by upstream tools (`default_database`, `enable_arrow_flight_sql`, etc.) are copied in `__init__`.
 - It reuses upstream internals: `self._original._execute(conn, ...)` and `mcp_server_starrocks.db_client.ResultSet` / `remove_ansi_codes`. These are imported lazily inside methods. Upstream version bumps can break these — pinned indirectly by the Dockerfile.
 - The username sent to StarRocks is decoded from the JWT's `sub` claim **without signature verification** — verification already happened in `KeycloakAuthProvider`. A StarRocks user named that `sub` (UUID) must exist and be `IDENTIFIED WITH authentication_jwt` (`principal_field: sub`).
 
-### OAuth is optional and gated on one env var
+### OAuth is mandatory
 
-`OAUTH_ENABLED = bool(os.getenv('KEYCLOAK_REALM_URL'))`. With it unset, none of the auth code runs and the server behaves exactly like plain upstream `mcp-server-starrocks`. Preserve this backward-compat guarantee when changing `__main__.py`.
-
-When enabled, `mcp.auth` is a single `KeycloakAuthProvider(realm_url=..., base_url=..., audience=None, required_scopes=[...])`. It is a `RemoteAuthProvider` subclass that builds a JWKS `JWTVerifier` internally (issuer = `realm_url`, `jwks_uri = {realm_url}/protocol/openid-connect/certs`, RS256). It validates any valid Keycloak JWT regardless of how the client obtained it:
+`__main__.py` requires `KEYCLOAK_REALM_URL` and raises `SystemExit("KEYCLOAK_REALM_URL is required")` if it is unset — there is no plain-upstream / static-credential path. `mcp.auth` is always a single `KeycloakAuthProvider(realm_url=..., base_url=..., audience=None, required_scopes=[...])`. It is a `RemoteAuthProvider` subclass that builds a JWKS `JWTVerifier` internally (issuer = `realm_url`, `jwks_uri = {realm_url}/protocol/openid-connect/certs`, RS256). It validates any valid Keycloak JWT regardless of how the client obtained it:
 - **Self-discovering clients** (Claude Desktop) run OIDC discovery, register via Keycloak's DCR, and do the auth-code + PKCE browser flow — all against Keycloak directly. The server only advertises Keycloak as the authorization server.
 - **Portal clients** (LibreChat) already hold a Keycloak token and present it as a Bearer.
 
@@ -104,9 +102,9 @@ FastMCP serves protected-resource metadata under `/mcp/.well-known/...` and Pyda
 
 ## Environment variables
 
-Static-credential connection (always): `STARROCKS_HOST`, `STARROCKS_PORT` (9030), `STARROCKS_USER`, `STARROCKS_PASSWORD`, `STARROCKS_DB`, or a single `STARROCKS_URL`.
+Connection **target** (no credentials): `STARROCKS_HOST`, `STARROCKS_PORT` (9030), `STARROCKS_DB`. There is intentionally **no** `STARROCKS_USER` / `STARROCKS_PASSWORD` / `STARROCKS_URL` — access is per-user via JWT. (Upstream `DBClient` still defaults user→`root`, password→`""`, but with no fallback and no health checker, the pooled connection is never opened, so those defaults are never used.)
 
-OAuth (presence of `KEYCLOAK_REALM_URL` enables OAuth): `KEYCLOAK_REALM_URL` (bare realm URL, e.g. `http://keycloak:8080/realms/radiant`), `MCP_BASE_URL` (server **root**, not `/mcp`), `OAUTH_REQUIRED_SCOPES` (comma-separated, default `openid`), `KEYCLOAK_AUDIENCE` (optional; leave unset — see the audience gotcha above). The server no longer needs a client id/secret.
+OAuth (required): `KEYCLOAK_REALM_URL` (bare realm URL, e.g. `http://keycloak:8080/realms/radiant`) — the server refuses to boot without it; `MCP_BASE_URL` (server **root**, not `/mcp`), `OAUTH_REQUIRED_SCOPES` (comma-separated, default `openid`), `KEYCLOAK_AUDIENCE` (optional; leave unset — see the audience gotcha above). The server needs no client id/secret.
 
 ## Other
 
