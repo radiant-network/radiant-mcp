@@ -10,11 +10,13 @@ A containerized wrapper around the upstream [`mcp-server-starrocks`](https://git
 2. Mandatory OAuth 2.1 (Keycloak/OIDC) authentication in front of the MCP endpoint.
 3. Per-request JWT pass-through so each MCP tool call executes StarRocks queries **under the authenticated user's identity**. This component holds **no** StarRocks credentials — there is no static-credential fallback.
 
-The MCP tools themselves (`read_query`, `write_query`, `table_overview`, etc.) come entirely from the upstream package — this repo does **not** define them. We only intercept how the DB connection is created.
+The StarRocks MCP tools themselves (`read_query`, `write_query`, `table_overview`, etc.) come entirely from the upstream package — this repo does **not** define them. We only intercept how the DB connection is created.
+
+The only tools defined here are the optional **Radiant API tools** (`radiant_mcp/radiant_api_tools.py`: `get_case_context`, `list_tenants`), registered on the upstream FastMCP instance only when `RADIANT_API_URL` is set. They call the Radiant portal API through the generated `radiant_python` client, forwarding the caller's JWT as a Bearer token.
 
 ## Gotchas (read first)
 
-- **MCP tools are not defined in this repo.** `read_query`, `write_query`, etc. come from the upstream `mcp-server-starrocks` package. Don't search here for them.
+- **StarRocks MCP tools are not defined in this repo.** `read_query`, `write_query`, etc. come from the upstream `mcp-server-starrocks` package. Don't search here for them.
 - **Injection is via monkey-patch.** `__main__.py` overwrites `sr_server.db_client` (a module-level global the upstream tools read). Replacing that global is the only seam — there's no dependency-injection hook.
 - **OAuth is mandatory.** `KEYCLOAK_REALM_URL` is required — `__main__.py` raises `SystemExit` at startup if it is unset. There is no non-OAuth / plain-upstream path anymore (removed 2026-07-24), and the container is never given StarRocks credentials.
 - **One provider, both client paths.** `__main__.py` uses fastmcp's native `KeycloakAuthProvider` — a pure JWT resource server (holds no client secret, mints no tokens). It just validates incoming Bearer JWTs against Keycloak's JWKS. Self-discovering clients (Claude Desktop) get tokens via Keycloak's own DCR + PKCE; portal clients (LibreChat) present a raw Keycloak token directly. Both hit the same verifier, so there is **no** `MultiAuth`/fallback-verifier and no server-side token swap. (This replaced an earlier `OIDCProxy` + `MultiAuth` hand-rolled setup — see git history if you need the rationale.)
@@ -22,6 +24,7 @@ The MCP tools themselves (`read_query`, `write_query`, `table_overview`, etc.) c
 - **Audience is optional and intentionally unset.** StarRocks' `authentication_jwt` only checks `aud` when the user is created `WITH ... required_audience`, which we don't do. Setting `KEYCLOAK_AUDIENCE` would make the provider *require* that `aud` on every token — which DCR-registered clients (their own client_id, no audience mapper) don't carry — so leave it unset unless you also add a matching audience mapper on a default client scope.
 - **JWTDBClient depends on upstream internals** (`_original._execute`, `db_client.ResultSet`, `remove_ansi_codes`). Floating deps (no lockfile) mean an upstream bump can silently break these.
 - **StarRocks re-validates the JWT itself.** A working token isn't enough — a StarRocks user whose name is the token's `sub` (UUID) must exist as `IDENTIFIED WITH authentication_jwt` (with `principal_field: sub`), and StarRocks needs SSL enabled for JWT auth.
+- **Radiant API tools are opt-in.** `register_tools()` is a no-op unless `RADIANT_API_URL` is set, so the compose stack (which has no Radiant API) still boots. The `radiant_python` client is a generated OpenAPI package installed from git and pinned to a commit SHA (`RADIANT_PORTAL_SHA` build arg in the Dockerfile) — bumping it can change model fields/method names. It is a sync urllib3 client, so tool bodies run in `anyio.to_thread.run_sync`; the JWT is read from the contextvar *before* hopping threads.
 - **No unit tests / linter.** Only the shell integration suite exists; CI builds the image but does not run it.
 
 ## Commands
@@ -65,6 +68,7 @@ Keycloak is the IdP for **both** hops: it issues the token to the client, and St
 - `jwt_db_client.py` — `JWTDBClient`, a drop-in wrapper for the upstream `DBClient`. See below.
 - `oauth.py` — hand-rolled RFC 9728 protected-resource metadata endpoint (workaround, see below). Advertises the Keycloak realm as the authorization server.
 - `health.py` — unauthenticated liveness/readiness handlers (no StarRocks probe).
+- `radiant_api_tools.py` — optional tools backed by the Radiant portal API. `get_case_context(case_id, tenant=None)` composes `CasesApi.case_entity` + `case_tasks_with_occurrences` (one call per non-deprecated `data_type`, chosen from `case_type`) into a single payload ending with `occurrence_keys` = `(case_id, seq_id, task_id, data_type)` tuples for follow-up variant queries. Tenant discovery uses `AuthApi.get_me()`: one membership → auto-selected, several → error listing them. `list_tenants` exposes the same list.
 - `server.py` (repo root) — thin shim (`asyncio.run(main())`) kept as the Docker `CMD`.
 
 ### JWTDBClient — the core mechanism
@@ -103,6 +107,8 @@ FastMCP serves protected-resource metadata under `/mcp/.well-known/...` and Pyda
 ## Environment variables
 
 Connection **target** (no credentials): `STARROCKS_HOST`, `STARROCKS_PORT` (9030), `STARROCKS_DB`. There is intentionally **no** `STARROCKS_USER` / `STARROCKS_PASSWORD` / `STARROCKS_URL` — access is per-user via JWT. (Upstream `DBClient` still defaults user→`root`, password→`""`, but with no fallback and no health checker, the pooled connection is never opened, so those defaults are never used.)
+
+Radiant API (optional): `RADIANT_API_URL` — base URL of the Radiant portal API; enables `get_case_context` / `list_tenants`. No API credential: the caller's JWT is forwarded.
 
 OAuth (required): `KEYCLOAK_REALM_URL` (bare realm URL, e.g. `http://keycloak:8080/realms/radiant`) — the server refuses to boot without it; `MCP_BASE_URL` (server **root**, not `/mcp`), `OAUTH_REQUIRED_SCOPES` (comma-separated, default `openid`), `KEYCLOAK_AUDIENCE` (optional; leave unset — see the audience gotcha above). The server needs no client id/secret.
 

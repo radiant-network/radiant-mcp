@@ -86,6 +86,10 @@ services:
       # base_url is the server ROOT (not /mcp) — the provider derives the
       # /mcp resource + metadata URLs from it.
       MCP_BASE_URL: http://localhost:8000
+      # Optional: Radiant portal API base URL. When set, the get_case_context
+      # and list_tenants tools are registered; the caller's JWT is forwarded
+      # as a Bearer token. Unset here because the compose stack has no API.
+      # RADIANT_API_URL: http://radiant-api:8090
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
       interval: 10s

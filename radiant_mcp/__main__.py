@@ -14,6 +14,9 @@ startup it:
      Both are accepted by the same verifier.
   2. Wraps the DB client so each MCP tool call executes queries
      under the authenticated user's identity (JWT → StarRocks).
+  3. If RADIANT_API_URL is set, registers extra tools backed by the Radiant
+     portal API (case context, tenants) that forward the same JWT as a
+     Bearer token.
 
 The component holds no StarRocks credentials: there is no static-credential
 fallback and no DB-connection health check.
@@ -31,6 +34,7 @@ from mcp_server_starrocks.db_summary_manager import DatabaseSummaryManager
 
 from .app import create_app
 from .jwt_db_client import JWTDBClient
+from .radiant_api_tools import register_tools as register_radiant_api_tools
 
 
 async def main():
@@ -81,6 +85,13 @@ async def main():
     sr_server.db_client = jwt_client
     sr_server.db_summary_manager = DatabaseSummaryManager(jwt_client)
     print("JWTDBClient installed — queries will run under user identity")
+
+    # Optional Radiant API tools (get_case_context, list_tenants). They
+    # forward the caller's JWT to the Radiant API — no server-held credential.
+    if register_radiant_api_tools(mcp):
+        print(f"Radiant API tools registered (RADIANT_API_URL={os.getenv('RADIANT_API_URL')})")
+    else:
+        print("RADIANT_API_URL unset — Radiant API tools not registered")
 
     # Get the MCP ASGI app for streamable-http transport
     mcp_app = mcp.http_app(path="/")
