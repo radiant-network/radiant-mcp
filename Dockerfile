@@ -5,15 +5,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 RUN pip install uv
 
 WORKDIR /app
-RUN uv venv /app/.venv
-# fastmcp 3.x bundles OAuth/OIDC support (authlib) by default — the old
-# [auth] extra was removed. mcp-server-starrocks pulls in mysql-connector-python.
-RUN uv pip install --python /app/.venv/bin/python mcp-server-starrocks fastmcp
-# Radiant portal API client (generated, not on PyPI) — pinned to a commit SHA
-# because the generated code floats with the upstream OpenAPI spec.
-ARG RADIANT_PORTAL_SHA=3fe07d86bbfe1539c6e2f9db21cdd0969c1eaf48
-RUN uv pip install --python /app/.venv/bin/python \
-    "radiant-python-cli @ git+https://github.com/radiant-network/radiant-portal.git@${RADIANT_PORTAL_SHA}#subdirectory=cli/python"
+# All dependencies (including version-pin rationale and the radiant-portal git
+# SHA) live in pyproject.toml; uv.lock makes every image build reproducible —
+# versions only change when someone runs `uv lock` and commits the diff.
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
 
 # Runtime stage - minimal image
 FROM python:3.11-slim

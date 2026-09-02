@@ -1,0 +1,19 @@
+[project]
+name = "radiant-mcp"
+version = "0.1.0"
+description = "Radiant MCP server — mcp-server-starrocks wrapped with Keycloak OAuth and Radiant portal API tools"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp-server-starrocks==0.4.0",
+    # fastmcp must stay <4: mcp-server-starrocks (<=0.4.0) imports fastmcp.tools.tool,
+    # which fastmcp 4.0.0 removed (verified: 3.4.7 has it and KeycloakAuthProvider).
+    "fastmcp>=3,<4",
+    # Radiant portal API client (generated, not on PyPI) — pinned to a commit SHA
+    # because the generated code floats with the upstream OpenAPI spec.
+    "radiant-python-cli @ git+https://github.com/radiant-network/radiant-portal.git@3fe07d86bbfe1539c6e2f9db21cdd0969c1eaf48#subdirectory=cli/python",
+]
+
+# Deps-only project: radiant_mcp/ is COPY'd into the image and run from the
+# working directory, not installed as a distribution.
+[tool.uv]
+package = false
