@@ -24,6 +24,40 @@ _GERMLINE_DATA_TYPES = ("germline_snv", "germline_cnv")
 _SOMATIC_DATA_TYPES = ("somatic_snv_tn", "somatic_snv_to", "somatic_cnv")
 _ALL_DATA_TYPES = _GERMLINE_DATA_TYPES + _SOMATIC_DATA_TYPES
 
+# Field aliases accepted as `search_criteria[].field` by POST /{tenant}/cases/search
+# (backend/internal/types/case.go: CasesFields entries with CanBeFiltered).
+# Kept explicit so the model gets a clear error instead of an opaque API 500.
+CASE_SEARCH_FILTER_FIELDS = (
+    "case_id", "submitter_case_id", "patient_id", "mrn", "sequencing_experiment_id",
+    "case_type_code", "status_code", "resolution_status_code", "priority_code",
+    "case_category_code", "analysis_catalog_code", "panel_code", "project_code",
+    "primary_condition_id", "primary_condition_name", "prescriber",
+    "ordering_organization_code", "diagnosis_lab_code", "organization_code",
+    "proband_life_status_code", "created_on", "updated_on",
+)
+CASE_SEARCH_SORT_FIELDS = (
+    "case_id", "proband_id", "submitter_proband_id", "priority_code", "status_code",
+    "resolution_status_code", "case_type_code", "case_category_code",
+    "analysis_catalog_code", "panel_code", "project_code", "primary_condition_id",
+    "primary_condition_name", "prescriber", "ordering_organization_code",
+    "diagnosis_lab_code", "created_on", "updated_on",
+)
+_SEARCH_MAX_LIMIT = 100
+
+# StarRocks database holding the shared (non per-tenant) Radiant tables, in
+# particular `staging_sequencing_experiment`, which is the only place that
+# currently maps (case_id, seq_id, task_id) -> `part`. The occurrence tables
+# (germline/somatic snv/cnv, exomiser, snv__consequence_filter_partitioned)
+# are PARTITION BY (part), and snv__variant_partitioned by
+# part // _VARIANT_PART_DIVISOR — so every efficient occurrence query needs it.
+# TEMPORARY: the Radiant API will eventually return `part` with each task, at
+# which point `_lookup_parts` goes away.
+_SHARED_DB_ENV = "RADIANT_SHARED_DB"
+_SHARED_DB_DEFAULT = "radiant"
+# Mirrors `_magic` in radiant-portal-pipeline/radiant/dags/import_part.py
+# (compute_part): variant_part = part // 10.
+_VARIANT_PART_DIVISOR = 10
+
 
 # -- helpers -----------------------------------------------------------------
 
@@ -107,6 +141,54 @@ def _resolve_tenant(token: str, tenant: Optional[str]) -> tuple[Optional[str], O
     }
 
 
+def _lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], Optional[str]]:
+    """Map every (seq_id, task_id) of ``case_id`` to its StarRocks ``part``.
+
+    Reads the shared ``staging_sequencing_experiment`` table through the
+    JWT-authenticated DB client installed by ``__main__`` (so the query runs
+    under the caller's identity, like every other StarRocks access). Returns
+    ``(mapping, warning)``; on any failure the mapping is empty and the
+    warning explains why, so the case context is still returned.
+    """
+    try:
+        import mcp_server_starrocks.server as sr_server
+        client = sr_server.db_client
+    except Exception as exc:  # noqa: BLE001
+        return {}, f"part lookup skipped: StarRocks client unavailable ({exc})"
+
+    db = os.getenv(_SHARED_DB_ENV, _SHARED_DB_DEFAULT)
+    sql = (
+        "SELECT seq_id, task_id, part "
+        f"FROM `{db}`.staging_sequencing_experiment "
+        f"WHERE case_id = {int(case_id)} AND deleted = false"
+    )
+    try:
+        # JWTDBClient: pass the token explicitly (we may be on a worker
+        # thread). Fall back to plain execute() for any other client.
+        if hasattr(client, "execute_with_token"):
+            result = client.execute_with_token(token, sql)
+        else:
+            result = client.execute(sql)
+    except Exception as exc:  # noqa: BLE001
+        return {}, f"part lookup failed: {type(exc).__name__}: {exc}"
+
+    if not getattr(result, "success", False):
+        return {}, f"part lookup failed: {getattr(result, 'error_message', 'unknown error')}"
+
+    cols = result.column_names or []
+    try:
+        i_seq, i_task, i_part = cols.index("seq_id"), cols.index("task_id"), cols.index("part")
+    except ValueError:
+        return {}, f"part lookup failed: unexpected columns {cols}"
+
+    mapping: dict[tuple[int, int], int] = {}
+    for row in result.rows or []:
+        if row[i_part] is None:
+            continue
+        mapping[(int(row[i_seq]), int(row[i_task]))] = int(row[i_part])
+    return mapping, None
+
+
 def _get_case_context_sync(token: str, case_id: int, tenant: Optional[str]) -> dict:
     import radiant_python
 
@@ -167,6 +249,25 @@ def _get_case_context_sync(token: str, case_id: int, tenant: Optional[str]) -> d
                         occurrence_keys.append(entry)
             seq["occurrence_tasks"] = seq_tasks
 
+    # Attach the StarRocks partition of every task. `entry` dicts are shared
+    # between `occurrence_keys` and `seq["occurrence_tasks"]`, so mutating
+    # them in place updates both views.
+    if occurrence_keys:
+        parts, part_warning = _lookup_parts(token, case_id)
+        if part_warning:
+            warnings.append(part_warning)
+        for entry in occurrence_keys:
+            part = parts.get((entry["seq_id"], entry["task_id"]))
+            if part is None:
+                if not part_warning:
+                    warnings.append(
+                        f"seq_id={entry['seq_id']} task_id={entry['task_id']}: "
+                        "no `part` found in staging_sequencing_experiment"
+                    )
+                continue
+            entry["part"] = part
+            entry["variant_part"] = part // _VARIANT_PART_DIVISOR
+
     result = {
         "tenant": tenant_code,
         "case": case,
@@ -177,6 +278,118 @@ def _get_case_context_sync(token: str, case_id: int, tenant: Optional[str]) -> d
     if warnings:
         result["warnings"] = warnings
     return result
+
+
+def _search_cases_sync(
+    token: str,
+    tenant: Optional[str],
+    filters: Optional[dict],
+    query: Optional[str],
+    limit: int,
+    offset: int,
+    sort_by: str,
+    sort_order: str,
+) -> dict:
+    import radiant_python
+    from radiant_python.models.list_body_with_criteria import ListBodyWithCriteria
+    from radiant_python.models.search_criterion import SearchCriterion
+    from radiant_python.models.sort_body import SortBody
+
+    tenant_code, err = _resolve_tenant(token, tenant)
+    if err:
+        return err
+
+    # -- validate inputs up front (clear errors beat opaque API 500s) --------
+    filters = dict(filters or {})
+    bad = sorted(set(filters) - set(CASE_SEARCH_FILTER_FIELDS))
+    if bad:
+        return {
+            "error": f"Unknown filter field(s): {', '.join(bad)}",
+            "allowed_filter_fields": list(CASE_SEARCH_FILTER_FIELDS),
+        }
+    if sort_by not in CASE_SEARCH_SORT_FIELDS:
+        return {
+            "error": f"Unknown sort field: {sort_by}",
+            "allowed_sort_fields": list(CASE_SEARCH_SORT_FIELDS),
+        }
+    sort_order = (sort_order or "desc").lower()
+    if sort_order not in ("asc", "desc"):
+        return {"error": "sort_order must be 'asc' or 'desc'"}
+    limit = max(1, min(int(limit), _SEARCH_MAX_LIMIT))
+    offset = max(0, int(offset))
+
+    def _criteria(extra: dict) -> list:
+        merged = {**filters, **extra}
+        out = []
+        for field, value in merged.items():
+            values = value if isinstance(value, (list, tuple)) else [value]
+            out.append(SearchCriterion(field=field, value=list(values)))  # default op: in
+        return out
+
+    def _search(cases_api, extra: dict):
+        body = ListBodyWithCriteria(
+            search_criteria=_criteria(extra),
+            limit=limit,
+            offset=offset,
+            sort=[SortBody(field=sort_by, order=sort_order)],
+        )
+        return cases_api.search_cases(tenant=tenant_code, list_body_with_criteria=body)
+
+    with _api_client(token) as api:
+        cases_api = radiant_python.CasesApi(api)
+
+        if not query:
+            resp = _dump(_search(cases_api, {}))
+            return {
+                "tenant": tenant_code,
+                "count": resp.get("count", 0),
+                "returned": len(resp.get("list", [])),
+                "offset": offset,
+                "cases": resp.get("list", []),
+            }
+
+        # Free-text lookup: resolve the prefix through the autocomplete
+        # endpoint (matches case IDs and patient identifiers), then run one
+        # criteria search per matched identifier type and merge. Criteria are
+        # AND-ed by the API, so case_id and patient_id matches can't share a
+        # single request.
+        matches = _dump(cases_api.autocomplete_cases(
+            tenant=tenant_code, prefix=query, limit=str(_SEARCH_MAX_LIMIT)
+        )) or []
+        by_type: dict[str, list] = {}
+        for m in matches:
+            value = m.get("value")
+            # case_id / patient_id are integer columns; autocomplete returns
+            # every value as a string, so coerce numeric ones back.
+            if isinstance(value, str) and value.isdigit():
+                value = int(value)
+            by_type.setdefault(m.get("type"), []).append(value)
+
+        merged: dict[int, dict] = {}
+        total = 0
+        for id_type in ("case_id", "patient_id"):
+            values = by_type.get(id_type)
+            if not values:
+                continue
+            resp = _dump(_search(cases_api, {id_type: values}))
+            total += resp.get("count", 0)
+            for c in resp.get("list", []):
+                merged.setdefault(c["case_id"], c)
+
+        result = {
+            "tenant": tenant_code,
+            "query": query,
+            "autocomplete_matches": matches,
+            "count": total,
+            "returned": len(merged),
+            "cases": list(merged.values())[:limit],
+        }
+        unhandled = sorted(t for t in by_type if t not in ("case_id", "patient_id"))
+        if unhandled:
+            result["warnings"] = [
+                f"autocomplete returned unhandled match type(s): {', '.join(unhandled)}"
+            ]
+        return result
 
 
 # -- tools -------------------------------------------------------------------
@@ -219,6 +432,14 @@ async def get_case_context(case_id: int, tenant: Optional[str] = None) -> dict:
       occurrences for this case, both through the Radiant occurrence
       endpoints and through the StarRocks occurrence tables (filter on
       ``case_id``, ``seq_id``, ``task_id``).
+    - Each key also carries the StarRocks partitions: ``part`` (the
+      occurrence tables — germline/somatic snv/cnv occurrence, exomiser —
+      and the shared ``snv__consequence_filter_partitioned`` are
+      ``PARTITION BY (part)``; always add ``AND part = <part>``), and
+      ``variant_part`` (the partition of ``<tenant>_tenant.snv__variant_partitioned``;
+      join it with ``v.locus_id = o.locus_id AND v.part = <variant_part>``).
+      A key without ``part`` means the partition could not be resolved —
+      see ``warnings``.
 
     Args:
         case_id: Numeric Radiant case ID.
@@ -237,6 +458,67 @@ async def get_case_context(case_id: int, tenant: Optional[str] = None) -> dict:
         return _api_error(exc)
 
 
+async def search_cases(
+    filters: Optional[dict[str, Any]] = None,
+    query: Optional[str] = None,
+    tenant: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    sort_by: str = "updated_on",
+    sort_order: str = "desc",
+) -> dict:
+    """Search Radiant cases by exact-match filters and/or a free-text identifier.
+
+    Use this to find a case ID before calling ``get_case_context``, or to list
+    cases matching criteria ("active prenatal cases", "cases for panel RGDI",
+    "the case for patient MRN 12345").
+
+    Args:
+        filters: Mapping of field → value or list of values. Several fields are
+            AND-ed; several values for one field are OR-ed (``in``). Allowed
+            fields: case_id, submitter_case_id, patient_id, mrn (submitter
+            patient id), sequencing_experiment_id, case_type_code
+            (germline/somatic), status_code, resolution_status_code,
+            priority_code, case_category_code, analysis_catalog_code,
+            panel_code, project_code, primary_condition_id,
+            primary_condition_name, prescriber, ordering_organization_code,
+            diagnosis_lab_code, organization_code, proband_life_status_code,
+            created_on, updated_on.
+        query: Free-text prefix matched against case and patient identifiers
+            (case id, submitter/MRN ids). Resolved via autocomplete, then the
+            matching cases are returned. Combine with ``filters`` to narrow.
+        tenant: Tenant code. Optional — auto-resolved when the user belongs to
+            a single tenant; otherwise the response lists the choices.
+        limit: Max cases to return (1–100, default 20).
+        offset: Pagination offset (default 0).
+        sort_by: Sort field (default ``updated_on``). Allowed: case_id,
+            proband_id, submitter_proband_id, priority_code, status_code,
+            resolution_status_code, case_type_code, case_category_code,
+            analysis_catalog_code, panel_code, project_code,
+            primary_condition_id, primary_condition_name, prescriber,
+            ordering_organization_code, diagnosis_lab_code, created_on,
+            updated_on.
+        sort_order: ``asc`` or ``desc`` (default ``desc``).
+
+    Returns ``count`` (total matches), ``cases`` (one summary per case:
+    case_id, case_type, status, priority, panel, primary condition, project,
+    proband identifiers, has_variants, ...) and, for a ``query``, the raw
+    ``autocomplete_matches``.
+    """
+    token = _get_jwt_token()
+    if not token:
+        return {"error": "Authentication required: no JWT in request context"}
+    if not filters and not query:
+        return {"error": "Provide at least one of `filters` or `query`."}
+    try:
+        return await anyio.to_thread.run_sync(
+            _search_cases_sync, token, tenant, filters, query,
+            limit, offset, sort_by, sort_order,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(exc)
+
+
 def register_tools(mcp) -> bool:
     """Register the Radiant API tools on the FastMCP instance.
 
@@ -249,5 +531,6 @@ def register_tools(mcp) -> bool:
     import radiant_python  # noqa: F401
 
     mcp.tool(list_tenants)
+    mcp.tool(search_cases)
     mcp.tool(get_case_context)
     return True

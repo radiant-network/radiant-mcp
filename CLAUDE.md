@@ -12,7 +12,7 @@ A containerized wrapper around the upstream [`mcp-server-starrocks`](https://git
 
 The StarRocks MCP tools themselves (`read_query`, `write_query`, `table_overview`, etc.) come entirely from the upstream package — this repo does **not** define them. We only intercept how the DB connection is created.
 
-The only tools defined here are the optional **Radiant API tools** (`radiant_mcp/radiant_api_tools.py`: `get_case_context`, `list_tenants`), registered on the upstream FastMCP instance only when `RADIANT_API_URL` is set. They call the Radiant portal API through the generated `radiant_python` client, forwarding the caller's JWT as a Bearer token.
+The only tools defined here are the optional **Radiant API tools** (`radiant_mcp/radiant_api_tools.py`: `search_cases`, `get_case_context`, `list_tenants`), registered on the upstream FastMCP instance only when `RADIANT_API_URL` is set. They call the Radiant portal API through the generated `radiant_python` client, forwarding the caller's JWT as a Bearer token.
 
 ## Gotchas (read first)
 
@@ -65,10 +65,10 @@ Keycloak is the IdP for **both** hops: it issues the token to the client, and St
 
 - `__main__.py` — entrypoint. Parses args, **requires** `KEYCLOAK_REALM_URL` (raises `SystemExit` if unset), configures `KeycloakAuthProvider` (set as `mcp.auth`), and (critically) **monkey-patches** the upstream module: `sr_server.db_client = JWTDBClient(...)` and rebuilds `sr_server.db_summary_manager`. This is how our client gets injected — the upstream tools read `db_client` as a module-level global, so replacing that global is the only injection seam. Then starts uvicorn.
 - `app.py` — Starlette factory. Mounts the upstream MCP ASGI app at `/mcp`, adds `/health`, `/ready`, and the `.well-known` OAuth routes; wide-open CORS. Uses the MCP app's own `lifespan`.
-- `jwt_db_client.py` — `JWTDBClient`, a drop-in wrapper for the upstream `DBClient`. See below.
+- `jwt_db_client.py` — `JWTDBClient`, a drop-in wrapper for the upstream `DBClient`. See below. Also exposes `execute_with_token(token, sql, ...)` for callers that already hold the JWT (used by `radiant_api_tools`).
 - `oauth.py` — hand-rolled RFC 9728 protected-resource metadata endpoint (workaround, see below). Advertises the Keycloak realm as the authorization server.
 - `health.py` — unauthenticated liveness/readiness handlers (no StarRocks probe).
-- `radiant_api_tools.py` — optional tools backed by the Radiant portal API. `get_case_context(case_id, tenant=None)` composes `CasesApi.case_entity` + `case_tasks_with_occurrences` (one call per non-deprecated `data_type`, chosen from `case_type`) into a single payload ending with `occurrence_keys` = `(case_id, seq_id, task_id, data_type)` tuples for follow-up variant queries. Tenant discovery uses `AuthApi.get_me()`: one membership → auto-selected, several → error listing them. `list_tenants` exposes the same list.
+- `radiant_api_tools.py` — optional tools backed by the Radiant portal API. `get_case_context(case_id, tenant=None)` composes `CasesApi.case_entity` + `case_tasks_with_occurrences` (one call per non-deprecated `data_type`, chosen from `case_type`) into a single payload ending with `occurrence_keys` = `(case_id, seq_id, task_id, data_type)` tuples for follow-up variant queries. Each key also carries `part` / `variant_part` (= `part // 10`, mirroring `compute_part` in the pipeline's `import_part.py`): the StarRocks occurrence tables, `exomiser` and `radiant.snv__consequence_filter_partitioned` are `PARTITION BY (part)`, `snv__variant_partitioned` by `variant_part`. **Temporary:** `part` is resolved by `_lookup_parts()` with a StarRocks query on `<RADIANT_SHARED_DB>.staging_sequencing_experiment` through `sr_server.db_client.execute_with_token(token, sql)` (the caller's JWT, passed explicitly because the body runs on a worker thread) — to be removed once the Radiant API returns `part` per task. A failed lookup adds a `warnings` entry, it never fails the tool. Tenant discovery uses `AuthApi.get_me()`: one membership → auto-selected, several → error listing them. `list_tenants` exposes the same list. `search_cases(filters, query, ...)` wraps `CasesApi.search_cases` (criteria are AND-ed, default operator `in`; the filterable/sortable aliases are hard-coded in `CASE_SEARCH_FILTER_FIELDS` / `CASE_SEARCH_SORT_FIELDS`, mirroring `CanBeFiltered`/`CanBeSorted` in the backend's `CasesFields`) and, for `query`, resolves the prefix via `autocomplete_cases` then runs one search per matched id type (`case_id`, `patient_id`) and merges — the API has no OR across fields.
 - `server.py` (repo root) — thin shim (`asyncio.run(main())`) kept as the Docker `CMD`.
 
 ### JWTDBClient — the core mechanism
@@ -108,7 +108,7 @@ FastMCP serves protected-resource metadata under `/mcp/.well-known/...` and Pyda
 
 Connection **target** (no credentials): `STARROCKS_HOST`, `STARROCKS_PORT` (9030), `STARROCKS_DB`. There is intentionally **no** `STARROCKS_USER` / `STARROCKS_PASSWORD` / `STARROCKS_URL` — access is per-user via JWT. (Upstream `DBClient` still defaults user→`root`, password→`""`, but with no fallback and no health checker, the pooled connection is never opened, so those defaults are never used.)
 
-Radiant API (optional): `RADIANT_API_URL` — base URL of the Radiant portal API; enables `get_case_context` / `list_tenants`. No API credential: the caller's JWT is forwarded.
+Radiant API (optional): `RADIANT_API_URL` — base URL of the Radiant portal API; enables `search_cases` / `get_case_context` / `list_tenants`. No API credential: the caller's JWT is forwarded. `RADIANT_SHARED_DB` (default `radiant`) — StarRocks database holding the shared tables, used by `get_case_context` to read `staging_sequencing_experiment` for the per-task `part`.
 
 OAuth (required): `KEYCLOAK_REALM_URL` (bare realm URL, e.g. `http://keycloak:8080/realms/radiant`) — the server refuses to boot without it; `MCP_BASE_URL` (server **root**, not `/mcp`), `OAUTH_REQUIRED_SCOPES` (comma-separated, default `openid`), `KEYCLOAK_AUDIENCE` (optional; leave unset — see the audience gotcha above). The server needs no client id/secret.
 

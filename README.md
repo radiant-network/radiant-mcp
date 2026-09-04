@@ -56,7 +56,7 @@ this component holds no StarRocks credentials.
 | `STARROCKS_PORT` | No | `9030` | StarRocks FE query port |
 | `STARROCKS_DB` | No | - | Default database to use |
 | `STARROCKS_OVERVIEW_LIMIT` | No | - | Limit for overview queries (memory management) |
-| `RADIANT_API_URL` | No | - | Radiant portal API base URL. When set, registers the `get_case_context` and `list_tenants` tools (the caller's JWT is forwarded as a Bearer token) |
+| `RADIANT_API_URL` | No | - | Radiant portal API base URL. When set, registers the `search_cases`, `get_case_context` and `list_tenants` tools (the caller's JWT is forwarded as a Bearer token) |
 
 > No `STARROCKS_USER` / `STARROCKS_PASSWORD`: this component authenticates to
 > StarRocks with each caller's JWT, never a static credential. `STARROCKS_HOST`
@@ -159,6 +159,7 @@ so the API applies its own per-user authorization:
 
 | Tool | Description |
 |------|-------------|
+| `search_cases` | Find cases by exact-match filters (status, type, panel, project, MRN, patient id, ...) and/or a free-text identifier prefix (resolved through the cases autocomplete endpoint). Returns case summaries and total count |
 | `get_case_context` | Full clinical context of a case: metadata, patients with phenotypes, tasks, sequencing experiments, and the `(case_id, seq_id, task_id, data_type)` keys needed to query its variant occurrences. `tenant` is optional and auto-resolved when the user belongs to a single tenant |
 | `list_tenants` | Tenants the authenticated user belongs to (codes to pass as `tenant`) |
 

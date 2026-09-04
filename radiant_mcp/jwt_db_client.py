@@ -108,7 +108,24 @@ class JWTDBClient:
         db: Optional[str] = None,
         return_format: Literal["raw", "pandas"] = "raw",
     ):
-        token = self._get_jwt_token()
+        return self.execute_with_token(
+            self._get_jwt_token(), statement, db=db, return_format=return_format
+        )
+
+    def execute_with_token(
+        self,
+        token: Optional[str],
+        statement: str,
+        db: Optional[str] = None,
+        return_format: Literal["raw", "pandas"] = "raw",
+    ):
+        """Same as ``execute`` but with an explicitly supplied JWT.
+
+        Use this from code that already pulled the token out of the MCP auth
+        context before hopping to a worker thread (e.g. the Radiant API tools,
+        which run their sync bodies in ``anyio.to_thread.run_sync``), so the
+        query does not depend on contextvar propagation across threads.
+        """
         if token is None:
             from mcp_server_starrocks.db_client import ResultSet
             return ResultSet(

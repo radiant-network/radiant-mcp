@@ -17,6 +17,17 @@ endpoints:
         fetch: true                           # auto-list installed Ollama models
       title: true
 
+  # AWS Bedrock (Claude). Credentials, region and the model list come from .env
+  # (BEDROCK_AWS_BEARER_TOKEN / _DEFAULT_REGION / _MODELS); this block only tunes
+  # the UI and title generation. No `models:` here on purpose — pinning them in
+  # .env keeps one source of truth (a `models:` list here would override it).
+  bedrock:
+    availableRegions:
+      - "ca-central-1"
+    # Cheapest model in the list, so titling doesn't burn Sonnet/Opus tokens.
+    titleModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    streamRate: 35
+
 # Recent LibreChat versions default-deny MCP server domains; allowlist ours.
 # Strict whitelist: when set, ONLY these domains are reachable by MCP servers.
 mcpSettings:
