@@ -43,6 +43,8 @@ CASE_SEARCH_SORT_FIELDS = (
     "diagnosis_lab_code", "created_on", "updated_on",
 )
 _SEARCH_MAX_LIMIT = 100
+# Autocomplete match types that are integer ids AND directly filterable fields.
+_AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
 
 # StarRocks database holding the shared (non per-tenant) Radiant tables, in
 # particular `staging_sequencing_experiment`, which is the only place that
@@ -349,34 +351,40 @@ def _search_cases_sync(
             }
 
         # Free-text lookup: resolve the prefix through the autocomplete
-        # endpoint (matches case IDs and patient identifiers), then run one
-        # criteria search per matched identifier type and merge. Criteria are
-        # AND-ed by the API, so case_id and patient_id matches can't share a
-        # single request.
+        # endpoint, then run one criteria search per matched identifier type
+        # and merge. Criteria are AND-ed by the API, so matches of different
+        # types can't share a single request.
+        #
+        # Autocomplete match types (backend CasesRepository.SearchById):
+        #   case_id, patient_id, sequencing_experiment_id (internal integer
+        #   ids) and the patient's submitter_patient_id_type (e.g. "mrn")
+        #   for submitter patient ids. Anything else in that last group is
+        #   still a submitter patient id, so it goes through the `mrn` filter
+        #   (alias of patient.submitter_patient_id). Sample identifiers
+        #   (submitter_sample_id, aliquot) are NOT covered by the API.
         matches = _dump(cases_api.autocomplete_cases(
             tenant=tenant_code, prefix=query, limit=str(_SEARCH_MAX_LIMIT)
         )) or []
-        by_type: dict[str, list] = {}
+        by_field: dict[str, list] = {}
         for m in matches:
-            value = m.get("value")
-            # case_id / patient_id are integer columns; autocomplete returns
-            # every value as a string, so coerce numeric ones back.
-            if isinstance(value, str) and value.isdigit():
-                value = int(value)
-            by_type.setdefault(m.get("type"), []).append(value)
+            match_type, value = m.get("type"), m.get("value")
+            if match_type in _AUTOCOMPLETE_INT_FIELDS:
+                # integer columns; autocomplete returns every value as a string
+                if isinstance(value, str) and value.isdigit():
+                    value = int(value)
+                by_field.setdefault(match_type, []).append(value)
+            else:
+                by_field.setdefault("mrn", []).append(value)
 
         merged: dict[int, dict] = {}
         total = 0
-        for id_type in ("case_id", "patient_id"):
-            values = by_type.get(id_type)
-            if not values:
-                continue
-            resp = _dump(_search(cases_api, {id_type: values}))
+        for field, values in by_field.items():
+            resp = _dump(_search(cases_api, {field: values}))
             total += resp.get("count", 0)
             for c in resp.get("list", []):
                 merged.setdefault(c["case_id"], c)
 
-        result = {
+        return {
             "tenant": tenant_code,
             "query": query,
             "autocomplete_matches": matches,
@@ -384,12 +392,6 @@ def _search_cases_sync(
             "returned": len(merged),
             "cases": list(merged.values())[:limit],
         }
-        unhandled = sorted(t for t in by_type if t not in ("case_id", "patient_id"))
-        if unhandled:
-            result["warnings"] = [
-                f"autocomplete returned unhandled match type(s): {', '.join(unhandled)}"
-            ]
-        return result
 
 
 # -- tools -------------------------------------------------------------------
@@ -484,9 +486,12 @@ async def search_cases(
             primary_condition_name, prescriber, ordering_organization_code,
             diagnosis_lab_code, organization_code, proband_life_status_code,
             created_on, updated_on.
-        query: Free-text prefix matched against case and patient identifiers
-            (case id, submitter/MRN ids). Resolved via autocomplete, then the
-            matching cases are returned. Combine with ``filters`` to narrow.
+        query: Free-text prefix matched against case id, internal patient id,
+            submitter patient id (MRN) and internal sequencing experiment id
+            (seq_id). Resolved via autocomplete, then the matching cases are
+            returned. Combine with ``filters`` to narrow. NOT matched: sample
+            identifiers (submitter_sample_id, aliquot) — resolve those to a
+            seq_id first, then filter on ``sequencing_experiment_id``.
         tenant: Tenant code. Optional — auto-resolved when the user belongs to
             a single tenant; otherwise the response lists the choices.
         limit: Max cases to return (1–100, default 20).
