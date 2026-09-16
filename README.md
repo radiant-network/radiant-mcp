@@ -173,6 +173,52 @@ docker compose up --build
 
 The MCP server is then at `http://localhost:8000/mcp` and Keycloak at `http://localhost:8080` (realm `radiant`).
 
+### Querying StarRocks directly with a JWT
+
+The local stack ships a Keycloak user (`testuser` / `testpass`, in realm `radiant`) and a matching StarRocks user authenticated with `authentication_jwt`. You can use the same token the MCP server forwards to query StarRocks yourself with the `mysql` CLI.
+
+**1. Get an access token** (the compose realm's `radiant-mcp-server` client allows the password grant) and save it to a file — the `mysql` client reads the token from a file:
+
+```bash
+TOKEN=$(curl -sf -X POST http://localhost:8080/realms/radiant/protocol/openid-connect/token \
+  -d grant_type=password \
+  -d client_id=radiant-mcp-server \
+  -d client_secret=test-client-secret \
+  -d username=testuser \
+  -d password=testpass \
+  -d scope=openid \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+printf '%s' "$TOKEN" > /tmp/token.jwt
+chmod 600 /tmp/token.jwt
+```
+
+To inspect the claims (notably `sub`):
+
+```bash
+echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | python3 -m json.tool
+```
+
+**2. Connect with the `mysql` CLI.** The StarRocks username is the token's `sub` claim (a UUID), **not** the Keycloak login name. For `testuser` the `sub` is pinned in `keycloak-import/radiant-realm.json` and created by `starrocks-init`:
+
+```bash
+mysql -h127.0.0.1 -P9030 \
+  -u 11111111-1111-1111-1111-111111111111 \
+  --authentication-openid-connect-client-id-token-file=/tmp/token.jwt
+```
+
+```sql
+SELECT current_user();
+SELECT * FROM test_db.users;
+```
+
+Notes:
+
+- `--authentication-openid-connect-client-id-token-file` requires a MySQL client that ships the `authentication_openid_connect_client` plugin (MySQL client ≥ 9.1, e.g. Homebrew `mysql-client`). The 8.0 client bundled in the StarRocks image does not have it — run this from the host.
+- Passing the token as a password (`--enable-cleartext-plugin -p"$TOKEN"`) does **not** work; StarRocks answers `The path to ID token file is not set`.
+- Keycloak access tokens are short-lived (5 minutes by default). On an authentication error, fetch a new token and reconnect.
+- The FE has TLS enabled; the client negotiates SSL automatically (`--ssl-mode=REQUIRED` also works).
+
 ### Integration Tests
 
 An end-to-end test exercises the OAuth 2.1 + JWT → StarRocks flow (health, OAuth metadata, token issuance, authenticated `read_query`, and the unauthenticated → 401 case):

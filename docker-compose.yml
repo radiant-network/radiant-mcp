@@ -26,7 +26,7 @@ services:
       start_period: 30s
 
   starrocks:
-    image: starrocks/allin1-ubuntu:3.5.12
+    image: starrocks/allin1-ubuntu:4.0.14
     ports:
       - "9030:9030"
       - "8030:8030"
@@ -48,7 +48,7 @@ services:
       start_period: 30s
 
   starrocks-init:
-    image: starrocks/allin1-ubuntu:3.5.12
+    image: starrocks/allin1-ubuntu:4.0.14
     depends_on:
       starrocks:
         condition: service_healthy
