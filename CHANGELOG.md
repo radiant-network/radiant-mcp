@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/radiant-network/radiant-mcp/compare/v0.2.0...v0.2.1) (2026-10-30)
+
+
+### Documentation
+
+* refresh CLAUDE.md for pyproject, uv.lock and release-please ([#3](https://github.com/radiant-network/radiant-mcp/issues/3)) ([77ec2a0](https://github.com/radiant-network/radiant-mcp/commit/77ec2a03f46a2f98bbd3f9e57de0fbd685a1c670))
+
 ## [0.2.0](https://github.com/radiant-network/radiant-mcp/compare/v0.1.0...v0.2.0) (2026-10-30)
 
 
