@@ -24,7 +24,7 @@ The only tools defined here are the optional **Radiant API tools** (`radiant_mcp
 - **Audience is optional and intentionally unset.** StarRocks' `authentication_jwt` only checks `aud` when the user is created `WITH ... required_audience`, which we don't do. Setting `KEYCLOAK_AUDIENCE` would make the provider *require* that `aud` on every token — which DCR-registered clients (their own client_id, no audience mapper) don't carry — so leave it unset unless you also add a matching audience mapper on a default client scope.
 - **JWTDBClient depends on upstream internals** (`_original._execute`, `db_client.ResultSet`, `remove_ansi_codes`). Floating deps (no lockfile) mean an upstream bump can silently break these.
 - **StarRocks re-validates the JWT itself.** A working token isn't enough — a StarRocks user whose name is the token's `sub` (UUID) must exist as `IDENTIFIED WITH authentication_jwt` (with `principal_field: sub`), and StarRocks needs SSL enabled for JWT auth.
-- **Radiant API tools are opt-in.** `register_tools()` is a no-op unless `RADIANT_API_URL` is set, so the compose stack (which has no Radiant API) still boots. The `radiant_python` client is a generated OpenAPI package installed from git and pinned to a commit SHA (`RADIANT_PORTAL_SHA` build arg in the Dockerfile) — bumping it can change model fields/method names. It is a sync urllib3 client, so tool bodies run in `anyio.to_thread.run_sync`; the JWT is read from the contextvar *before* hopping threads.
+- **Radiant API tools are opt-in.** `register_tools()` is a no-op unless `RADIANT_API_URL` is set, so the compose stack (which has no Radiant API) still boots. The `radiant_python` client is a generated OpenAPI package installed from git and pinned to a commit SHA (the `radiant-python-cli` git URL in `pyproject.toml`) — bumping it can change model fields/method names. It is a sync urllib3 client, so tool bodies run in `anyio.to_thread.run_sync`; the JWT is read from the contextvar *before* hopping threads.
 - **No unit tests / linter.** Only the shell integration suite exists; CI builds the image but does not run it.
 
 ## Commands
@@ -47,7 +47,7 @@ KEYCLOAK_URL=http://localhost:8080 MCP_URL=http://localhost:8000 \
 ./tests/integration/gen-starrocks-keystore.sh
 ```
 
-There is no unit-test suite, linter, or `pyproject.toml` — the only tests are the shell-based integration tests. To run a single assertion, edit/comment blocks in `tests/integration/test-oauth-flow.sh` (tests are numbered sequential `curl` blocks, not independently selectable).
+There is no unit-test suite or linter — the only tests are the shell-based integration tests. To run a single assertion, edit/comment blocks in `tests/integration/test-oauth-flow.sh` (tests are numbered sequential `curl` blocks, not independently selectable).
 
 ## Architecture
 
@@ -98,7 +98,7 @@ FastMCP serves protected-resource metadata under `/mcp/.well-known/...` and Pyda
 
 ## Docker notes
 
-- Multi-stage build: `uv`-built venv in the builder stage is copied into a slim runtime; deps are `mcp-server-starrocks` + `fastmcp[auth]`. No local `requirements`/lockfile — versions float at build time.
+- Multi-stage build: `uv`-built venv in the builder stage is copied into a slim runtime; deps are declared in `pyproject.toml` and installed with `uv sync --frozen` from `uv.lock`, so versions only change when someone runs `uv lock` and commits the diff.
 - `COPY src/ dest/` with multiple sources flattens files. Copy files and directories on **separate** `COPY` lines (see `Dockerfile`).
 - The compose `starrocks` service appends `fe-ssl.conf` to `fe.conf` before boot and mounts a JKS keystore to enable TLS — required because StarRocks JWT auth needs SSL. `starrocks-init` then seeds `test_db` and creates the `testuser` JWT user.
 - `keycloak` has a healthcheck that probes `:9000/health/ready` over a raw bash `/dev/tcp` socket (the keycloak:26 image has bash but no curl/wget) and matches the HTTP `200` status line. `radiant-mcp` waits on `keycloak: service_healthy` because OIDCProxy contacts Keycloak at startup (above).
@@ -116,3 +116,4 @@ OAuth (required): `KEYCLOAK_REALM_URL` (bare realm URL, e.g. `http://keycloak:80
 
 - `docs/oauth-jwt-auth-plan.md` is the original design doc for the OAuth/JWT work; useful background but predates the `radiant_mcp/` package refactor (it references a monolithic `server.py`).
 - CI (`.github/workflows/build_and_push.yml`) only builds and pushes the image to `ghcr.io/radiant-network/radiant-mcp` on push to `main` / `v*` tags — it does **not** run the integration tests.
+- Releases are automated by release-please (`.github/workflows/release-please.yml`, `release-please-config.json`). Each push to `main` updates a single Release PR from the Conventional Commits (`fix:` → patch, `feat:` → minor, `!` → major); merging it bumps `pyproject.toml` / `uv.lock`, updates `CHANGELOG.md` and tags `vX.Y.Z`, which triggers the image build. Never close the Release PR without merging it. The workflow needs the `RELEASE_PLEASE_TOKEN` secret: a tag pushed with `GITHUB_TOKEN` would not trigger `build_and_push.yml`.
