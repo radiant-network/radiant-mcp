@@ -1,6 +1,6 @@
 [project]
 name = "radiant-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Radiant MCP server — mcp-server-starrocks wrapped with Keycloak OAuth and Radiant portal API tools"
 requires-python = ">=3.11"
 dependencies = [
