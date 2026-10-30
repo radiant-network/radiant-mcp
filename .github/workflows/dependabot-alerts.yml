@@ -27,7 +27,7 @@ jobs:
       # The GITHUB_TOKEN cannot read Dependabot alerts: use a GitHub App with "Dependabot alerts: read"
       - name: Get a token to read the alerts
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.DEPENDABOT_APP_ID }}
           private-key: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY }}
@@ -91,6 +91,12 @@ jobs:
             echo "::warning::SLACK_SECURITY_WEBHOOK is not set, no Slack message sent"
             exit 0
           fi
+          # A secret pasted from the clipboard can carry a trailing newline, which curl rejects
+          SLACK_WEBHOOK=$(printf '%s' "$SLACK_WEBHOOK" | tr -d '[:space:]')
+          case "$SLACK_WEBHOOK" in
+            https://hooks.slack.com/services/*) ;;
+            *) echo "::error::SLACK_SECURITY_WEBHOOK is not a Slack webhook URL (${#SLACK_WEBHOOK} chars, starts with '${SLACK_WEBHOOK:0:8}')"; exit 1 ;;
+          esac
           PAYLOAD=$(jq -n \
             --arg title "Radiant MCP - ${COUNT} open Dependabot alert(s) 🚨" \
             --arg text "Vulnerabilities at or above the threshold (${THRESHOLDS}) on main: <${URL}|tracking issue>" \
