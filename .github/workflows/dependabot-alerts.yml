@@ -22,13 +22,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
-      security-events: read
 
     steps:
+      # The GITHUB_TOKEN cannot read Dependabot alerts: use a GitHub App with "Dependabot alerts: read"
+      - name: Get a token to read the alerts
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DEPENDABOT_APP_ID }}
+          private-key: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY }}
+
       - name: List open alerts above the threshold
         id: alerts
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           : > alerts.md
