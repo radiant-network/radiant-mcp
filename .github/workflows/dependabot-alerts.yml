@@ -1,0 +1,91 @@
+# Reports the open Dependabot alerts of main at or above the threshold: keeps one
+# issue labelled `dependabot-gate` up to date (closed when none is left) and posts
+# a Slack message while some remain.
+name: Dependabot Alerts
+
+on:
+  schedule:
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch:
+
+env:
+  # Space-separated `ecosystem=severities` pairs, as accepted by the Dependabot alerts API
+  THRESHOLDS: pip=high,critical
+  LABEL: dependabot-gate
+
+concurrency:
+  group: dependabot-alerts
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      security-events: read
+
+    steps:
+      - name: List open alerts above the threshold
+        id: alerts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          : > alerts.md
+          for t in $THRESHOLDS; do
+            gh api --paginate "repos/$GH_REPO/dependabot/alerts?state=open&ecosystem=${t%%=*}&severity=${t#*=}&per_page=100" \
+              --jq '.[] | "- **\(.security_advisory.severity)** `\(.dependency.package.ecosystem)/\(.dependency.package.name)` in `\(.dependency.manifest_path)`: \(.security_advisory.summary) ([#\(.number)](\(.html_url)))"' \
+              >> alerts.md
+          done
+          echo "count=$(grep -c '^- ' alerts.md || true)" >> "$GITHUB_OUTPUT"
+          cat alerts.md
+
+      - name: Update the tracking issue
+        id: issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          COUNT: ${{ steps.alerts.outputs.count }}
+        run: |
+          gh label create "$LABEL" --color B60205 --description "Open Dependabot alerts above the CI threshold" --force
+          ISSUE=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number // empty')
+
+          if [ "$COUNT" -eq 0 ]; then
+            if [ -n "$ISSUE" ]; then
+              gh issue close "$ISSUE" --comment "No open Dependabot alert above the threshold (\`$THRESHOLDS\`)."
+            fi
+            exit 0
+          fi
+
+          {
+            echo "$COUNT open Dependabot alert(s) on the default branch at or above the threshold (\`$THRESHOLDS\`)."
+            echo
+            cat alerts.md
+            echo
+            echo "_Updated by the [Dependabot Alerts workflow]($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID). This issue closes itself once no alert is left._"
+          } > body.md
+
+          if [ -n "$ISSUE" ]; then
+            gh issue edit "$ISSUE" --body-file body.md
+            URL=$(gh issue view "$ISSUE" --json url --jq .url)
+          else
+            URL=$(gh issue create --title "Dependabot: open vulnerabilities above the CI threshold" --label "$LABEL" --body-file body.md)
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Slack
+        if: steps.alerts.outputs.count != '0'
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
+          COUNT: ${{ steps.alerts.outputs.count }}
+          URL: ${{ steps.issue.outputs.url }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK" ]; then
+            echo "::warning::SLACK_SECURITY_WEBHOOK is not set, no Slack message sent"
+            exit 0
+          fi
+          PAYLOAD=$(jq -n \
+            --arg title "Radiant MCP - ${COUNT} open Dependabot alert(s) 🚨" \
+            --arg text "Vulnerabilities at or above the threshold (${THRESHOLDS}) on main: <${URL}|tracking issue>" \
+            '{attachments:[{title:$title,text:$text,color:"danger"}]}')
+          curl -sf -X POST "$SLACK_WEBHOOK" -H 'Content-Type: application/json' -d "$PAYLOAD"
