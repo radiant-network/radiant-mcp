@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/radiant-network/radiant-mcp/compare/v0.2.0...v0.2.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* bump vulnerable dependencies and run the image as a non-root user ([#13](https://github.com/radiant-network/radiant-mcp/issues/13)) ([7fe61b6](https://github.com/radiant-network/radiant-mcp/commit/7fe61b6898f08ba5baa5cc7d331468d91efecd4d))
+
 ## [0.2.0](https://github.com/radiant-network/radiant-mcp/compare/v0.1.0...v0.2.0) (2026-10-30)
 
 
