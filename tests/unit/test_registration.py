@@ -11,6 +11,7 @@ from radiant_mcp.upstream import HIDDEN_UPSTREAM_TOOLS, hide_upstream_tools
 API_TOOLS = {
     "list_tenants", "search_cases", "get_case_context", "search_patients", "get_patient_context",
     "prioritize_snv", "case_cnv", "variant_details", "variant_carriers",
+    "second_hit", "gene_info", "lookup_terms", "cohort_carriers", "genotype_phenotype",
 }
 
 

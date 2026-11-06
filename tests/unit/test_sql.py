@@ -1,0 +1,74 @@
+import re
+
+import pytest
+
+from radiant_mcp.tools import _sql
+
+
+@pytest.mark.parametrize("value", ["SCN1A", "C9orf72", "HLA-A", "IGH@", "ENSG00000144285"])
+def test_symbols_accepted(value):
+    assert _sql.symbol(value) == value
+
+
+@pytest.mark.parametrize("value", ["", "A'; DROP TABLE x; --", "SCN1A OR 1=1", "a b", None, 3, "x" * 41])
+def test_symbols_rejected(value):
+    with pytest.raises(_sql.InvalidInput):
+        _sql.symbol(value)
+
+
+@pytest.mark.parametrize("call, value", [
+    (_sql.tenant_db, "Demo"), (_sql.tenant_db, "demo; DROP"), (_sql.hpo_id, "HP:123"),
+    (_sql.integer, "1 OR 1"), (_sql.integer, True), (_sql.number, "nan"), (_sql.number, "inf"),
+])
+def test_other_validators_reject(call, value):
+    with pytest.raises(_sql.InvalidInput):
+        call(value)
+
+
+def test_tenant_db_and_shared_db(monkeypatch):
+    assert _sql.tenant_db("pragmatiq") == "pragmatiq_tenant"
+    monkeypatch.setenv("RADIANT_SHARED_DB", "radiant; DROP")
+    with pytest.raises(_sql.InvalidInput):
+        _sql.shared_db()
+
+
+def test_params_are_named_so_build_order_does_not_matter():
+    p = _sql.Params()
+    later = f"tenant_code = {p('demo')}"
+    sql = f"symbol = {p('SCN1A')} AND {later} AND x IN ({p.list([1, 2])})"
+    assert sql == "symbol = %(p1)s AND tenant_code = %(p0)s AND x IN (%(p2)s, %(p3)s)"
+    assert p.values == {"p0": "demo", "p1": "SCN1A", "p2": 1, "p3": 2}
+    with pytest.raises(_sql.InvalidInput):
+        p.list([])
+
+
+def test_as_list_reads_starrocks_arrays():
+    assert _sql.as_list('["a", "b"]') == ["a", "b"]
+    assert _sql.as_list(None) == []
+    assert _sql.as_list(["a"]) == ["a"]
+    assert _sql.as_list("plain") == ["plain"]
+
+
+def test_run_binds_params_and_hides_the_statement_in_errors(monkeypatch):
+    import mcp_server_starrocks.server as sr_server
+
+    calls = []
+
+    class Client:
+        def execute_with_token(self, token, sql, params=None):
+            calls.append((token, sql, params))
+
+            class R:
+                success = False
+                error_message = f"Error executing statement '{sql}': unknown column x"
+            return R()
+
+    monkeypatch.setattr(sr_server, "db_client", Client())
+    p = _sql.Params()
+    with pytest.raises(_sql.SqlError, match="^unknown column x$"):
+        _sql.run("jwt", f"SELECT {p('a')}", p)
+    assert calls == [("jwt", "SELECT %(p0)s", {"p0": "a"})]
+
+
+def placeholders_match(sql: str, values: dict) -> bool:
+    return set(re.findall(r"%\((p\d+)\)s", sql)) == set(values)

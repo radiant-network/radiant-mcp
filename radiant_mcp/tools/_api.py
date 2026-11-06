@@ -30,6 +30,9 @@ AUTH_REQUIRED = {"error": "Authentication required: no JWT in request context"}
 _API_CLASSES = {
     "auth": "AuthApi",
     "cases": "CasesApi",
+    "genes": "GenesApi",
+    "hpo": "HpoApi",
+    "mondo": "MondoApi",
     "occurrences": "OccurrencesApi",
     "patients": "PatientsApi",
     "variants": "VariantApi",
@@ -122,6 +125,13 @@ def api_error(exc: Exception) -> dict:
     """Normalize an exception into a tool-friendly error dict."""
     from radiant_python.exceptions import ApiException
 
+    from ._sql import InvalidInput, SqlError
+
+    if isinstance(exc, InvalidInput):
+        return {"error": str(exc)}
+    if isinstance(exc, SqlError):
+        logger.warning("curated SQL failed: %s", exc)
+        return {"error": f"StarRocks error: {exc}"}
     if isinstance(exc, ApiException):
         err: dict[str, Any] = {
             "error": f"Radiant API error {exc.status}: {exc.reason}",

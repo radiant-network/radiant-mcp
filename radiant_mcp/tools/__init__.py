@@ -7,9 +7,12 @@ still boots as a pure StarRocks MCP server without it.
 
 from ._api import api_enabled
 from .cases import get_case_context, list_tenants, search_cases
+from .cohort import cohort_carriers, genotype_phenotype
+from .genes import gene_info, lookup_terms
 from .occurrences import case_cnv, prioritize_snv
 from .patients import get_patient_context, search_patients
 from .schema import describe_schema
+from .hits import second_hit
 from .variants import variant_carriers, variant_details
 
 API_TOOLS = (
@@ -22,6 +25,11 @@ API_TOOLS = (
     case_cnv,
     variant_details,
     variant_carriers,
+    second_hit,
+    gene_info,
+    lookup_terms,
+    cohort_carriers,
+    genotype_phenotype,
 )
 
 

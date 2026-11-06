@@ -19,6 +19,7 @@ WHAT get_patient_context RETURNS:
 - treatments (surgeries, radiation, medical therapies), laboratory (latest blood count, CSF, Lansky/Karnofsky), imaging (MRI sessions), genomics (the patient's cases and their variant interpretations), trial_eligibilities. Each section has the portal_url of its tab.
 - case_ids: the patient's genomic cases. For variant-level detail, call get_case_context(case_id, tenant), then prioritize_snv / case_cnv / variant_details with the keys it returns.
 - warnings: sections that could not be loaded — say which ones, never present them as empty.
+- gene_info(symbol, tenant) gives a gene's disease associations; lookup_terms(ontology, query, tenant) names an HPO or MONDO term. second_hit(case_id, tenant) finds, in one of the patient's cases, the genes hit twice (germline SNV + deletion, compound heterozygous, or germline P/LP + somatic event).
 - Ages and dates are given in days from birth: convert them to years and months for the reader (e.g. 1026 days → 2 y 9 m).
 
 METHOD for "summarize this patient":
