@@ -56,7 +56,9 @@ this component holds no StarRocks credentials.
 | `STARROCKS_PORT` | No | `9030` | StarRocks FE query port |
 | `STARROCKS_DB` | No | - | Default database to use |
 | `STARROCKS_OVERVIEW_LIMIT` | No | - | Limit for overview queries (memory management) |
-| `RADIANT_API_URL` | No | - | Radiant portal API base URL. When set, registers the `search_cases`, `get_case_context` and `list_tenants` tools (the caller's JWT is forwarded as a Bearer token) |
+| `RADIANT_API_URL` | No | - | Radiant portal API base URL. When set, registers the Radiant API tools below (the caller's JWT is forwarded as a Bearer token) |
+| `RADIANT_API_TIMEOUT` | No | `60` | Timeout of one Radiant API request, in seconds |
+| `RADIANT_PORTAL_URL` | No | - | Radiant portal base URL. When set, the tools return a `portal_url` for every case, patient, occurrence and variant |
 
 > No `STARROCKS_USER` / `STARROCKS_PASSWORD`: this component authenticates to
 > StarRocks with each caller's JWT, never a static credential. `STARROCKS_HOST`
@@ -144,24 +146,32 @@ Configure your MCP client to connect to the server:
 
 ## Available MCP Tools
 
+SQL is the assistant's last resort: of the upstream `mcp-server-starrocks` tools,
+only the read-only ones stay exposed. `write_query`, `db_summary`, `analyze_query`,
+`collect_query_dump_and_profile` and `query_and_plotly_chart` are removed at startup.
+
 | Tool | Description |
 |------|-------------|
 | `read_query` | Execute SELECT queries |
-| `write_query` | Execute DDL/DML commands |
-| `analyze_query` | Analyze query performance |
 | `table_overview` | Get table schema and sample data |
-| `db_summary` | Get database summary with table schemas |
-| `query_and_plotly_chart` | Execute query and generate Plotly chart |
+| `describe_schema` | Curated description of the StarRocks tables of a topic (`germline_snv`, `somatic_snv`, `cnv`, `annotations`, `frequencies`): tables to use, keys, partitions, stored enum values, join rules, example queries |
 
-With `RADIANT_API_URL` set, two additional tools backed by the Radiant portal
-API are registered. They forward the caller's Keycloak JWT as a Bearer token,
-so the API applies its own per-user authorization:
+With `RADIANT_API_URL` set, the tools backed by the Radiant portal API are
+registered. They forward the caller's Keycloak JWT as a Bearer token, so the API
+applies its own per-user authorization. Every case, patient, occurrence and
+variant they return carries a `portal_url` when `RADIANT_PORTAL_URL` is set:
 
 | Tool | Description |
 |------|-------------|
 | `search_cases` | Find cases by exact-match filters (status, type, panel, project, MRN, patient id, ...) and/or a free-text identifier prefix (resolved through the cases autocomplete endpoint). Returns case summaries and total count |
 | `get_case_context` | Full clinical context of a case: metadata, patients with phenotypes, tasks, sequencing experiments, and the `(case_id, seq_id, task_id, data_type)` keys needed to query its variant occurrences. `tenant` is optional and auto-resolved when the user belongs to a single tenant |
 | `list_tenants` | Tenants the authenticated user belongs to (codes to pass as `tenant`) |
+| `search_patients` | Find patients of the portal's patient list by identifier or name prefix and/or clinical filters (diagnosis, vital status, treatments, ...) |
+| `get_patient_context` | Clinical context of a patient, as on the portal's patient page: demographics, diagnoses, treatments, laboratory, imaging, genomic cases and interpretations, trial eligibility. Returns `clinical_data_available: false` for a tenant without clinical data |
+| `prioritize_snv` | Germline or somatic SNV occurrences of a sequencing, filtered and ranked like the case variants tab (Exomiser order by default) |
+| `case_cnv` | Germline or somatic CNV occurrences of a sequencing, filtered and sorted like the case CNV tab |
+| `variant_details` | One SNV's annotations (predictions, OMIM, ClinVar, external and internal frequencies, key transcripts) and, with an occurrence key, its genotype and transmission in a case |
+| `variant_carriers` | The cases of the tenant that carry a germline SNV, interpreted or not |
 
 ## Local Development
 

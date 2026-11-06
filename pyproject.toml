@@ -10,10 +10,21 @@ dependencies = [
     "fastmcp>=3,<4",
     # Radiant portal API client (generated, not on PyPI) — pinned to a commit SHA
     # because the generated code floats with the upstream OpenAPI spec.
-    "radiant-python-cli @ git+https://github.com/radiant-network/radiant-portal.git@3fe07d86bbfe1539c6e2f9db21cdd0969c1eaf48#subdirectory=cli/python",
+    "radiant-python-cli @ git+https://github.com/radiant-network/radiant-portal.git@616ace048346981e008b8db1e1ac9993e26fb088#subdirectory=cli/python",
 ]
 
 # Deps-only project: radiant_mcp/ is COPY'd into the image and run from the
 # working directory, not installed as a distribution.
+[dependency-groups]
+# Unit tests only; the image installs with --no-dev.
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = [".", "tests/unit"]
+addopts = "-ra"
+
 [tool.uv]
 package = false
