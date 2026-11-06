@@ -7,6 +7,7 @@ still boots as a pure StarRocks MCP server without it.
 
 from ._api import api_enabled
 from .cases import get_case_context, list_tenants, search_cases
+from .charts import bar_chart, family_venn, lollipop, oncoprint, patient_timeline, survival_curve
 from .cohort import cohort_carriers, genotype_phenotype
 from .genes import gene_info, lookup_terms
 from .occurrences import case_cnv, prioritize_snv
@@ -30,12 +31,18 @@ API_TOOLS = (
     lookup_terms,
     cohort_carriers,
     genotype_phenotype,
+    family_venn,
+    survival_curve,
+    oncoprint,
+    lollipop,
+    patient_timeline,
 )
 
 
 def register_tools(mcp) -> list[str]:
     """Register the Radiant tools on ``mcp`` and return their names."""
-    tools = [describe_schema]
+    # bar_chart draws numbers the agent passes: no API needed.
+    tools = [describe_schema, bar_chart]
     if api_enabled():
         # Fail fast at boot if the client isn't installed rather than on first call.
         import radiant_python  # noqa: F401

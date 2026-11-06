@@ -11,6 +11,8 @@ dependencies = [
     # Radiant portal API client (generated, not on PyPI) — pinned to a commit SHA
     # because the generated code floats with the upstream OpenAPI spec.
     "radiant-python-cli @ git+https://github.com/radiant-network/radiant-portal.git@616ace048346981e008b8db1e1ac9993e26fb088#subdirectory=cli/python",
+    "scipy>=1.12",
+    "matplotlib>=3.8",
 ]
 
 # Deps-only project: radiant_mcp/ is COPY'd into the image and run from the
