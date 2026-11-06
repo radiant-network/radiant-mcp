@@ -27,6 +27,8 @@ COPY server.py .
 COPY radiant_mcp/ radiant_mcp/
 
 ENV PATH="/app/.venv/bin:$PATH"
+# Charts (matplotlib): the app user has no home directory for the config and font cache.
+ENV MPLCONFIGDIR=/tmp/matplotlib
 EXPOSE 8000
 
 USER 10001

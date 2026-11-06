@@ -177,6 +177,12 @@ variant they return carries a `portal_url` when `RADIANT_PORTAL_URL` is set:
 | `genotype_phenotype` | Observed HPO phenotypes of a gene's carriers, and the carriers of a given HPO term |
 | `gene_info` | A gene's OMIM, HPO, Orphanet, DDD and COSMIC associations, tenant gene panels and gnomAD pLI/LOEUF |
 | `lookup_terms` | HPO or MONDO terms and ids from a name |
+| `family_venn` | Image: Venn diagram of the SNVs shared by a trio or a duo of a case, with the counts |
+| `survival_curve` | Image: Kaplan-Meier curves of a gene's carriers vs the other sequenced patients, or of two clinical groups, with the log-rank test |
+| `oncoprint` | Image: gene x case matrix of the alteration types in a gene list |
+| `lollipop` | Image: the carriers' variants along a gene's protein |
+| `patient_timeline` | Image: a patient's events, treatments and imaging on one age axis |
+| `bar_chart` | Image: a bar chart of numbers the agent passes (always registered) |
 
 ## Local Development
 
