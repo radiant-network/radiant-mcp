@@ -43,13 +43,13 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
     p = _sql.Params()
     sql = (
         "WITH snv AS ("
-        " SELECT o.locus_id, v.symbol, v.hgvsg, v.aa_change, v.vep_impact, v.gnomad_v3_af,"
-        "  v.clinvar_interpretation, o.exomiser_acmg_classification, v.chromosome, v.start"
+        " SELECT o.locus_id, o.zygosity, o.transmission_mode, v.symbol, v.hgvsg, v.aa_change, v.vep_impact,"
+        "  v.gnomad_v3_af, v.clinvar_interpretation, o.exomiser_acmg_classification, v.chromosome, v.start"
         f" FROM {tenant_db}.germline__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(snv_key['variant_part'])}"
         f" LEFT JOIN {_interpretations(p, tenant_db, snv_key['seq_id'])} ig ON ig.locus_id = CAST(o.locus_id AS VARCHAR)"
         f" WHERE o.seq_id = {p(snv_key['seq_id'])} AND o.task_id = {p(snv_key['task_id'])} AND o.part = {p(snv_key['part'])}"
-        f"  AND o.zygosity = {p(_rules.HET)}"
+        f"  AND o.zygosity IN ({p.list(_rules.ALT_ZYGOSITIES)})"
         f"  AND (v.gnomad_v3_af IS NULL OR v.gnomad_v3_af < {p(_rules.RARE_MAX_AF)})"
         f"  AND (v.vep_impact IN ({p.list(_rules.QUALIFYING_IMPACTS)}) OR {_plp_condition(p)})"
         "), cnv AS ("
@@ -58,15 +58,42 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
         f" WHERE c.seq_id = {p(cnv_key['seq_id'])} AND c.task_id = {p(cnv_key['task_id'])} AND c.part = {p(cnv_key['part'])}"
         f"  AND c.filter = {p(_rules.PASS)} AND c.type IN ({p.list(_rules.GERMLINE_SECOND_HIT_CNV_TYPES)})"
         ")"
-        " SELECT snv.symbol AS gene, snv.locus_id, snv.hgvsg, snv.aa_change, snv.vep_impact, snv.gnomad_v3_af,"
-        "  snv.clinvar_interpretation, snv.exomiser_acmg_classification,"
+        " SELECT snv.symbol AS gene, snv.locus_id, snv.hgvsg, snv.start AS snv_start, snv.aa_change, snv.zygosity,"
+        "  snv.transmission_mode,"
+        "  snv.vep_impact, snv.gnomad_v3_af, snv.clinvar_interpretation, snv.exomiser_acmg_classification,"
         "  cnv.cnv_id, cnv.type AS cnv_type, cnv.chromosome AS cnv_chromosome, cnv.start AS cnv_start,"
         "  cnv.end AS cnv_end, cnv.length AS cnv_length, cnv.cn AS cnv_cn,"
         "  (snv.start BETWEEN cnv.start AND cnv.end) AS snv_inside_cnv"
-        " FROM snv JOIN cnv ON cnv.symbol = snv.symbol"
+        # A HET SNV anywhere in the gene, or a HOM/HEM SNV inside the deletion: the
+        # remaining allele of a hemizygous region is called homozygous.
+        " FROM snv JOIN cnv ON cnv.symbol = snv.symbol AND cnv.chromosome = snv.chromosome"
+        f"  AND (snv.zygosity = {p(_rules.HET)} OR snv.start BETWEEN cnv.start AND cnv.end)"
         f" ORDER BY gene, snv.locus_id LIMIT {p(_ROW_LIMIT)}"
     )
     return sql, p
+
+
+def family_deletions_query(tenant_db: str, cnv_key: dict, genes: list[str]) -> tuple[str, _sql.Params]:
+    """PASS deletions over ``genes`` in another member's CNV analysis."""
+    p = _sql.Params()
+    sql = (
+        "SELECT g.symbol AS gene, c.seq_id, c.cnv_id, c.chromosome, c.start, c.end, c.cn"
+        f" FROM {tenant_db}.germline__cnv__occurrence c, unnest(c.symbol) AS g(symbol)"
+        f" WHERE c.seq_id = {p(cnv_key['seq_id'])} AND c.task_id = {p(cnv_key['task_id'])} AND c.part = {p(cnv_key['part'])}"
+        f"  AND c.filter = {p(_rules.PASS)} AND c.type IN ({p.list(_rules.GERMLINE_SECOND_HIT_CNV_TYPES)})"
+        f"  AND g.symbol IN ({p.list(genes)})"
+        f" ORDER BY gene LIMIT {p(_ROW_LIMIT)}"
+    )
+    return sql, p
+
+
+def mechanism(zygosity: str, inside: bool) -> str:
+    if zygosity in _rules.HEMIZYGOUS_CALLS and inside:
+        return ("hemizygous: the SNV lies inside the deletion, so its homozygous call is the only remaining "
+                "allele; the deletion is the second hit, in trans")
+    if inside:
+        return "HET call inside a heterozygous deletion: unexpected (one allele is deleted), check both calls"
+    return "SNV and deletion on the same gene: compound heterozygous if they are in trans"
 
 
 def comphet_query(tenant_db: str, snv_key: dict) -> tuple[str, _sql.Params]:
@@ -173,11 +200,13 @@ def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: l
             for row in _sql.run(token, *snv_cnv_query(tenant_db, snv_key, cnv_key)):
                 row["clinvar_interpretation"] = _sql.as_list(row.get("clinvar_interpretation"))
                 row["snv_inside_cnv"] = bool(row.get("snv_inside_cnv"))
+                row["mechanism"] = mechanism(row.get("zygosity"), row["snv_inside_cnv"])
                 with_url(row, occurrence_url(tenant, case_id, seq_id, "germline_snv",
                                              task_id=snv_key["task_id"], variant_id=str(row["locus_id"])))
                 with_url(row, occurrence_url(tenant, case_id, seq_id, "germline_cnv", task_id=cnv_key["task_id"]),
                          key="cnv_portal_url")
                 snv_cnv.append(row)
+        _attach_family_deletions(token, tenant_db, snv_cnv, [k for k in cnv_keys if k["seq_id"] != seq_id], seqs)
         entry["snv_cnv"] = snv_cnv
 
         pairs: list[dict] = []
@@ -196,6 +225,29 @@ def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: l
         entry["compound_heterozygous"] = pairs
         results.append(entry)
     return results
+
+
+def _attach_family_deletions(token: str, tenant_db: str, hits: list[dict], other_keys: list[dict], seqs: dict) -> None:
+    """Add, to each SNV + deletion hit, the other members' deletions over the same gene.
+
+    A parent's deletion over the SNV explains that parent's WT call, and with it an
+    apparent uniparental disomy.
+    """
+    genes = sorted({h["gene"] for h in hits if h.get("gene")})
+    if not genes:
+        return
+    found: dict[str, list[dict]] = {}
+    for key in other_keys:
+        for row in _sql.run(token, *family_deletions_query(tenant_db, key, genes)):
+            row["relationship_to_proband"] = seqs.get(row["seq_id"], {}).get("relationship_to_proband")
+            found.setdefault(row["gene"], []).append(row)
+    for hit in hits:
+        deletions = []
+        for row in found.get(hit["gene"], []):
+            covers = (row["chromosome"] == hit.get("cnv_chromosome") and hit.get("snv_start") is not None
+                      and row["start"] <= hit["snv_start"] <= row["end"])
+            deletions.append({**row, "covers_snv": covers})
+        hit["family_deletions"] = deletions
 
 
 def _proband_patient_id(case: dict) -> Optional[int]:
@@ -279,10 +331,12 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: Optional
         result.update(_somatic(token, tenant_code, case, context["occurrence_keys"], warnings))
     else:
         result["rules"] = (
-            f"SNV + CNV: HET SNV, {_rules.RARE_DEFINITION}, impact {' or '.join(_rules.QUALIFYING_IMPACTS)} or P/LP "
-            f"({_rules.PLP_DEFINITION}), with a PASS CNV of type "
-            f"{' or '.join(_rules.GERMLINE_SECOND_HIT_CNV_TYPES)} over the same gene. snv_inside_cnv flags an SNV "
-            "inside the deleted region (expected hemizygous, so a HET call there needs review). "
+            f"SNV + CNV: an SNV ({_rules.RARE_DEFINITION}, impact {' or '.join(_rules.QUALIFYING_IMPACTS)} or P/LP: "
+            f"{_rules.PLP_DEFINITION}) with a PASS CNV of type {' or '.join(_rules.GERMLINE_SECOND_HIT_CNV_TYPES)} "
+            "over the same gene: either a HET SNV anywhere in the gene, or a HOM/HEM SNV inside the deletion "
+            "(hemizygous: the only remaining allele is called homozygous). `mechanism` says which. "
+            "`family_deletions` lists the other members' deletions over the gene; one that covers the SNV explains "
+            "that member's WT call and an apparent uniparental disomy. "
             "Compound heterozygous: the pairs computed by the pipeline."
         )
         result["sequencings"] = _germline(token, tenant_code, case, context["occurrence_keys"], warnings)

@@ -25,6 +25,10 @@ SOMATIC_SECOND_HIT_CNV_TYPES = ("LOSS", "CNLOH")
 
 PASS = "PASS"
 HET = "HET"
+# Calls with an alternate allele. A family member can also have WT rows.
+ALT_ZYGOSITIES = ("HET", "HOM", "HEM")
+# An SNV inside a heterozygous deletion keeps one allele: the caller reports it HOM (or HEM).
+HEMIZYGOUS_CALLS = ("HOM", "HEM")
 
 # staging_sequencing_experiment.task_type of a germline SNV annotation task.
 GERMLINE_SNV_TASK_TYPE = "radiant_germline_annotation"
