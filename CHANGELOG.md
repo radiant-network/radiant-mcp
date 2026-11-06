@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/radiant-network/radiant-mcp/compare/v0.2.1...v0.3.0) (2026-11-06)
+
+
+### Features
+
+* RAD-251 add case, patient and cohort tools for the D.A.V.I.D agents ([#17](https://github.com/radiant-network/radiant-mcp/issues/17)) ([b468da6](https://github.com/radiant-network/radiant-mcp/commit/b468da61f203e114dfb4875dd9a2a2fd445f7e0c))
+* RAD-252 add second-hit, cohort carriers, gene info and ontology lookup tools ([#21](https://github.com/radiant-network/radiant-mcp/issues/21)) ([c74cfe6](https://github.com/radiant-network/radiant-mcp/commit/c74cfe60ea9ca6d41499e4fdd47968e2581cd3aa))
+
+
+### Bug Fixes
+
+* RAD-251 allow last-resort SQL in the patient and cohort agents ([#19](https://github.com/radiant-network/radiant-mcp/issues/19)) ([294b151](https://github.com/radiant-network/radiant-mcp/commit/294b151bc224d87c60a9ac84bd712fde63663700))
+* RAD-251 explain array columns and unnest in describe_schema ([#20](https://github.com/radiant-network/radiant-mcp/issues/20)) ([234a1ec](https://github.com/radiant-network/radiant-mcp/commit/234a1ec49f6aaca1476535a1be2532a0ceebf890))
+* RAD-252 use the BioMCP 0.9.3 tool names and add pathway analysis to the agents ([#22](https://github.com/radiant-network/radiant-mcp/issues/22)) ([2758a3f](https://github.com/radiant-network/radiant-mcp/commit/2758a3f09b117cd04133d7fd0a65867e378182e0))
+
 ## [0.2.1](https://github.com/radiant-network/radiant-mcp/compare/v0.2.0...v0.2.1) (2026-10-30)
 
 
