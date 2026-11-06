@@ -94,10 +94,13 @@ open http://localhost:3080
    API key, the region and model access.
 3. Create an **Agent** on the **Bedrock** endpoint with a Claude model, and enable
    the **radiant** MCP server's tools on it.
-   The clinical-analysis agent's instructions live in `agent-radiant-clinical.md`
-   (paste them into the agent's *Instructions* field).
-4. Ask the agent to run a query (e.g. "list the tables" → `db_summary`, or a
-   `read_query`). Confirm StarRocks data comes back.
+   The instructions of the three D.A.V.I.D agents live in `agent-radiant-case.md`,
+   `agent-radiant-patient.md` and `agent-radiant-cohort.md` (paste one into the
+   agent's *Instructions* field). In QA they are the `promptPrefix` of the
+   `radiant-case`, `radiant-patient` and `radiant-cohort` model specs in
+   qlin-qa-infra's `librechat.yaml`: keep both copies in sync.
+4. Ask the agent about a case (e.g. "summarize case 1131" → `get_case_context`),
+   or ask for `describe_schema` then a `read_query`. Confirm data comes back.
 5. Check the **remote** radiant-mcp logs: the token is accepted by
    `KeycloakAuthProvider` (no DCR/discovery), and `JWTDBClient` runs under the user
    identity ("queries will run under user identity").

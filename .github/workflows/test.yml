@@ -1,0 +1,47 @@
+# Unit tests. describe_schema is checked against the ETL (radiant-portal-pipeline),
+# which owns the StarRocks schema: its main branch is checked out next to this repo,
+# so a schema change in the ETL that breaks the curated catalog fails here.
+name: Unit tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout the ETL (StarRocks schema owner)
+        uses: actions/checkout@v4
+        with:
+          repository: radiant-network/radiant-portal-pipeline
+          ref: main
+          path: etl
+          sparse-checkout: |
+            radiant/dags/sql
+            radiant/data_qa/macros
+            radiant/tasks/data/radiant_tables.py
+          sparse-checkout-cone-mode: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run unit tests
+        env:
+          RADIANT_ETL_DIR: ${{ github.workspace }}/etl
+          RADIANT_REQUIRE_ETL: "1"
+        run: uv run pytest

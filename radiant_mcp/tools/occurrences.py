@@ -1,0 +1,294 @@
+"""Occurrence tools: the SNV and CNV tables of a case, through the portal API.
+
+They call the same list endpoints as the case variants tab, with the same
+filter language (SQON) and the same field names, so a filter that works in
+the portal works here and the backend keeps its own validation, partition
+pruning and access control.
+"""
+
+from dataclasses import dataclass
+from typing import Any, Optional, Union
+
+from ..enums import canonical_values
+from ..portal_links import occurrence_url, variant_url, with_url
+from . import _api
+from ._api import RadiantApi, clamp, resolve_tenant
+
+MAX_LIMIT = 100
+# SQON leaf operators accepted by the backend (types/filter.go, sqonToFilter).
+OPERATORS = ("in", "not-in", "<", ">", "<=", ">=", "between", "all")
+_SINGLE_VALUE_OPERATORS = ("<", ">", "<=", ">=")
+# Operators whose values are OR-ed: an ambiguous enum value may expand.
+_SET_OPERATORS = ("in", "not-in")
+
+
+@dataclass(frozen=True)
+class _Kind:
+    list_operation: str
+    count_operation: str
+    id_field: str
+    is_snv: bool
+
+
+_KINDS = {
+    "germline_snv": _Kind("list_germline_snv_occurrences", "count_germline_snv_occurrences", "locus_id", True),
+    "somatic_snv_tn": _Kind("list_somatic_snv_occurrences", "count_somatic_snv_occurrences", "locus_id", True),
+    "somatic_snv_to": _Kind("list_somatic_snv_occurrences", "count_somatic_snv_occurrences", "locus_id", True),
+    "germline_cnv": _Kind("list_germline_cnv_occurrences", "count_germline_cnv_occurrences", "cnv_id", False),
+    "somatic_cnv": _Kind("list_somatic_cnv_occurrences", "count_somatic_cnv_occurrences", "cnv_id", False),
+}
+SNV_DATA_TYPES = tuple(k for k, v in _KINDS.items() if v.is_snv)
+CNV_DATA_TYPES = tuple(k for k, v in _KINDS.items() if not v.is_snv)
+
+Filters = Union[list[dict[str, Any]], dict[str, Any], None]
+Sort = Optional[list[dict[str, str]]]
+
+
+class FilterError(ValueError):
+    pass
+
+
+def normalize_filters(filters: Filters) -> list[dict]:
+    """Validate the tool's filters and return ``[{field, op, value: [...]}, ...]``.
+
+    Accepts ``[{"field", "op", "value"}, ...]`` (``op`` defaults to ``in``) or
+    the shorthand ``{field: value | [values]}`` (all ``in``). Enum values are
+    mapped onto their stored spelling (see ``enums``).
+    """
+    if not filters:
+        return []
+    if isinstance(filters, dict):
+        filters = [{"field": f, "op": "in", "value": v} for f, v in filters.items()]
+    if not isinstance(filters, list):
+        raise FilterError("`filters` must be a list of {field, op, value} objects.")
+    out = []
+    for item in filters:
+        if not isinstance(item, dict):
+            raise FilterError(f"Each filter must be an object, got {item!r}.")
+        field, op, value = item.get("field"), item.get("op", "in"), item.get("value")
+        if not isinstance(field, str) or not field:
+            raise FilterError(f"Filter without a `field`: {item!r}.")
+        if op not in OPERATORS:
+            raise FilterError(f"Unknown operator {op!r} on {field}. Allowed: {', '.join(OPERATORS)}.")
+        values = list(value) if isinstance(value, (list, tuple)) else [value]
+        if not values or any(v is None for v in values):
+            raise FilterError(f"Filter on {field} needs at least one non-null value.")
+        if op in _SINGLE_VALUE_OPERATORS and len(values) != 1:
+            raise FilterError(f"Operator {op} on {field} takes exactly one value.")
+        if op == "between" and len(values) != 2:
+            raise FilterError(f"Operator between on {field} takes exactly two values [min, max].")
+        expand = op in _SET_OPERATORS
+        out.append({"field": field, "op": op, "value": canonical_values(field, values, expand=expand)})
+    return out
+
+
+def normalize_sort(sort: Sort) -> list[dict]:
+    if not sort:
+        return []
+    if not isinstance(sort, list):
+        raise FilterError("`sort` must be a list of {field, order} objects.")
+    out = []
+    for item in sort:
+        if not isinstance(item, dict) or not isinstance(item.get("field"), str):
+            raise FilterError(f"Each sort entry needs a `field`: {item!r}.")
+        order = (item.get("order") or "desc").lower()
+        if order not in ("asc", "desc"):
+            raise FilterError(f"Sort order must be asc or desc, got {item.get('order')!r}.")
+        out.append({"field": item["field"], "order": order})
+    return out
+
+
+def _sqon(filters: list[dict]):
+    from radiant_python.models import LeafContent, Sqon, SqonContent
+
+    leaves = [
+        Sqon(op=f["op"], content=SqonContent(actual_instance=LeafContent(field=f["field"], value=f["value"])))
+        for f in filters
+    ]
+    return Sqon(op="and", content=SqonContent(actual_instance=leaves))
+
+
+def _list_occurrences(
+    api: RadiantApi,
+    _token: str,
+    data_type: str,
+    case_id: int,
+    seq_id: int,
+    task_id: int,
+    tenant: Optional[str],
+    filters: list[dict],
+    sort: list[dict],
+    limit: int,
+    offset: int,
+    additional_fields: Optional[list[str]],
+) -> dict:
+    from radiant_python.models import CountBodyWithSqon, ListBodyWithSqon, SortBody
+
+    tenant_code, err = resolve_tenant(api, tenant)
+    if err:
+        return err
+
+    kind = _KINDS[data_type]
+    keys = {"tenant": tenant_code, "case_id": case_id, "seq_id": seq_id, "task_id": task_id}
+    sqon = _sqon(filters)
+    count = api.call("occurrences", kind.count_operation, **keys, count_body_with_sqon=CountBodyWithSqon(sqon=sqon))
+    body = ListBodyWithSqon(
+        sqon=sqon,
+        limit=limit,
+        offset=offset,
+        sort=[SortBody(field=s["field"], order=s["order"]) for s in sort] or None,
+        additional_fields=list(additional_fields) if additional_fields else None,
+    )
+    rows = api.call("occurrences", kind.list_operation, **keys, list_body_with_sqon=body) or []
+
+    for row in rows:
+        variant_id = row.get(kind.id_field) if kind.is_snv else None
+        with_url(row, occurrence_url(tenant_code, case_id, seq_id, data_type, task_id=task_id, variant_id=variant_id))
+        if kind.is_snv:
+            with_url(row, variant_url(tenant_code, variant_id), key="variant_portal_url")
+
+    result = {
+        "tenant": tenant_code,
+        "case_id": case_id,
+        "seq_id": seq_id,
+        "task_id": task_id,
+        "data_type": data_type,
+        "count": (count or {}).get("count"),
+        "returned": len(rows),
+        "offset": offset,
+        "filters": filters,
+    }
+    with_url(result, occurrence_url(tenant_code, case_id, seq_id, data_type, task_id=task_id))
+    result["occurrences"] = rows
+    return result
+
+
+async def _run_list(
+    data_type: str,
+    allowed: tuple[str, ...],
+    case_id: int,
+    seq_id: int,
+    task_id: int,
+    tenant: Optional[str],
+    filters: Filters,
+    sort: Sort,
+    limit: int,
+    offset: int,
+    additional_fields: Optional[list[str]],
+) -> dict:
+    if data_type not in allowed:
+        return {"error": f"Unknown data_type {data_type!r}. Allowed: {', '.join(allowed)}."}
+    try:
+        leaves = normalize_filters(filters)
+        order = normalize_sort(sort)
+    except FilterError as exc:
+        return {"error": str(exc)}
+    return await _api.run(
+        _list_occurrences, data_type, case_id, seq_id, task_id, tenant, leaves, order,
+        clamp(limit, 1, MAX_LIMIT), max(0, int(offset)), additional_fields,
+    )
+
+
+# -- tools -------------------------------------------------------------------
+
+async def prioritize_snv(
+    case_id: int,
+    seq_id: int,
+    task_id: int,
+    data_type: str = "germline_snv",
+    filters: Filters = None,
+    sort: Sort = None,
+    limit: int = 20,
+    offset: int = 0,
+    additional_fields: Optional[list[str]] = None,
+    tenant: Optional[str] = None,
+) -> dict:
+    """Rank and filter the SNV occurrences of one sequencing of a case.
+
+    Same data, filters and order as the SNV table of the case variants tab.
+    Take ``case_id``, ``seq_id``, ``task_id`` and ``data_type`` from one entry
+    of ``get_case_context``'s ``occurrence_keys`` (data_type germline_snv,
+    somatic_snv_tn or somatic_snv_to). For somatic data, ``seq_id`` is the
+    tumor sequencing.
+
+    Default order: germline by Exomiser gene combined score then impact score
+    (desc); somatic by impact score (desc).
+
+    Args:
+        case_id, seq_id, task_id: The occurrence key.
+        data_type: germline_snv (default), somatic_snv_tn or somatic_snv_to.
+        filters: AND-ed list of ``{"field", "op", "value"}``. ``op`` is one of
+            in (default), not-in, <, >, <=, >=, between ([min, max]), all
+            (array contains all). Shorthand: ``{"field": value_or_list}``.
+            Useful fields: symbol, vep_impact (HIGH/MODERATE/LOW/MODIFIER),
+            consequence, zygosity (HET/HOM/HEM), transmission_mode,
+            parental_origin, clinvar (Pathogenic, Likely_pathogenic, ...),
+            exomiser_acmg_classification (pathogenic, likely_pathogenic,
+            uncertain_significance, ...), exomiser_gene_combined_score,
+            gnomad_v3_af, germline_pf_wgs, ad_ratio, genotype_quality, filter,
+            hpo_gene_panel, omim_gene_panel, tenant_gene_panel, cadd_phred,
+            revel_score, spliceai_ds, has_comphet, cmc_tier, hotspot
+            (somatic). Values of enum fields are matched case-insensitively.
+            Numeric comparisons drop NULLs: ``gnomad_v3_af < 0.01`` excludes
+            variants absent from gnomAD (their AF is NULL); filter on the
+            internal frequency or sort instead when they matter.
+        sort: List of ``{"field", "order"}`` (``desc`` by default), e.g.
+            ``[{"field": "max_impact_score"}]``.
+        limit: Max occurrences returned (1–100, default 20).
+        offset: Pagination offset.
+        additional_fields: Extra fields to return beyond the defaults, e.g.
+            ["transmission_mode", "parental_origin", "father_zygosity",
+            "mother_zygosity", "omim_inheritance_code", "cmc_tier"].
+        tenant: Tenant code (auto-resolved when the user has only one).
+
+    Returns ``count`` (all matches), ``occurrences`` (each with
+    ``portal_url``, the occurrence side panel in the case, and
+    ``variant_portal_url``, the variant page) and the table's ``portal_url``.
+    """
+    return await _run_list(
+        data_type, SNV_DATA_TYPES, case_id, seq_id, task_id, tenant, filters, sort, limit, offset,
+        additional_fields,
+    )
+
+
+async def case_cnv(
+    case_id: int,
+    seq_id: int,
+    task_id: int,
+    data_type: str = "germline_cnv",
+    filters: Filters = None,
+    sort: Sort = None,
+    limit: int = 20,
+    offset: int = 0,
+    additional_fields: Optional[list[str]] = None,
+    tenant: Optional[str] = None,
+) -> dict:
+    """List and filter the CNV occurrences of one sequencing of a case.
+
+    Same data, filters and order as the CNV table of the case variants tab.
+    Take the key from the germline_cnv or somatic_cnv entry of
+    ``get_case_context``'s ``occurrence_keys``: the CNV task of a sequencing
+    is usually not its SNV task.
+
+    Args:
+        case_id, seq_id, task_id: The occurrence key.
+        data_type: germline_cnv (default) or somatic_cnv.
+        filters: Same syntax as ``prioritize_snv``. Useful fields: type
+            (GAIN, LOSS, CNLOH, GAINLOH), symbol (genes overlapped; ``in``
+            matches any), chromosome, start, end, length, cn, filter (PASS),
+            quality, nb_genes, cytoband, hpo_gene_panel, omim_gene_panel,
+            tenant_gene_panel.
+        sort: List of ``{"field", "order"}``, e.g. ``[{"field": "length"}]``.
+        limit: Max occurrences returned (1–100, default 20).
+        offset: Pagination offset.
+        additional_fields: Extra fields to return beyond the defaults.
+        tenant: Tenant code (auto-resolved when the user has only one).
+
+    Returns ``count``, ``occurrences`` (each with ``portal_url``, the CNV
+    table of the case) and the table's ``portal_url``. No CNV key in
+    ``occurrence_keys`` means no CNV analysis exists for that sequencing.
+    """
+    return await _run_list(
+        data_type, CNV_DATA_TYPES, case_id, seq_id, task_id, tenant, filters, sort, limit, offset,
+        additional_fields,
+    )

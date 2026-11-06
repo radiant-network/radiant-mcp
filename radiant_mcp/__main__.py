@@ -14,15 +14,18 @@ startup it:
      Both are accepted by the same verifier.
   2. Wraps the DB client so each MCP tool call executes queries
      under the authenticated user's identity (JWT → StarRocks).
-  3. If RADIANT_API_URL is set, registers extra tools backed by the Radiant
-     portal API (case context, tenants) that forward the same JWT as a
-     Bearer token.
+  3. Hides the upstream tools the assistant must not use (writes, internals,
+     model-written Python) and registers the Radiant tools: describe_schema
+     always, and, if RADIANT_API_URL is set, the tools backed by the Radiant
+     portal API (cases, patients, occurrences, variants) that forward the
+     same JWT as a Bearer token.
 
 The component holds no StarRocks credentials: there is no static-credential
 fallback and no DB-connection health check.
 """
 
 import argparse
+import logging
 import os
 
 import uvicorn
@@ -34,7 +37,9 @@ from mcp_server_starrocks.db_summary_manager import DatabaseSummaryManager
 
 from .app import create_app
 from .jwt_db_client import JWTDBClient
-from .radiant_api_tools import register_tools as register_radiant_api_tools
+from .portal_links import PORTAL_URL_ENV
+from .tools import register_tools
+from .upstream import hide_upstream_tools
 
 
 async def main():
@@ -45,6 +50,7 @@ async def main():
                         help='Server port (default: 8000)')
 
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     # OAuth is mandatory — refuse to boot without a Keycloak realm.
     realm_url = os.getenv("KEYCLOAK_REALM_URL")
@@ -86,12 +92,16 @@ async def main():
     sr_server.db_summary_manager = DatabaseSummaryManager(jwt_client)
     print("JWTDBClient installed — queries will run under user identity")
 
-    # Optional Radiant API tools (get_case_context, list_tenants). They
-    # forward the caller's JWT to the Radiant API — no server-held credential.
-    if register_radiant_api_tools(mcp):
-        print(f"Radiant API tools registered (RADIANT_API_URL={os.getenv('RADIANT_API_URL')})")
-    else:
+    print(f"Upstream tools hidden: {', '.join(hide_upstream_tools(mcp)) or 'none'}")
+
+    # Radiant tools. The API-backed ones forward the caller's JWT to the
+    # Radiant API — no server-held credential — and are skipped without
+    # RADIANT_API_URL.
+    print(f"Radiant tools registered: {', '.join(register_tools(mcp))}")
+    if not os.getenv("RADIANT_API_URL"):
         print("RADIANT_API_URL unset — Radiant API tools not registered")
+    if not os.getenv(PORTAL_URL_ENV):
+        print(f"{PORTAL_URL_ENV} unset — tools return no portal links")
 
     # Get the MCP ASGI app for streamable-http transport
     mcp_app = mcp.http_app(path="/")
