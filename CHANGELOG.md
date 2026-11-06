@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/radiant-network/radiant-mcp/compare/v0.3.0...v0.4.0) (2026-11-06)
+
+
+### Features
+
+* RAD-254 add family venn survival oncoprint lollipop timeline and bar chart tools ([#23](https://github.com/radiant-network/radiant-mcp/issues/23)) ([3f40704](https://github.com/radiant-network/radiant-mcp/commit/3f40704c08dc28043bc51646f2aeff3823851e8d))
+
 ## [0.3.0](https://github.com/radiant-network/radiant-mcp/compare/v0.2.1...v0.3.0) (2026-11-06)
 
 
