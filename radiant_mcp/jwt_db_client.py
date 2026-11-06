@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import time
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 import mysql.connector
 from mysql.connector.errors import Error as MySQLError
@@ -118,6 +118,7 @@ class JWTDBClient:
         statement: str,
         db: Optional[str] = None,
         return_format: Literal["raw", "pandas"] = "raw",
+        params: Optional[Union[tuple, dict]] = None,
     ):
         """Same as ``execute`` but with an explicitly supplied JWT.
 
@@ -125,6 +126,9 @@ class JWTDBClient:
         context before hopping to a worker thread (e.g. the Radiant API tools,
         which run their sync bodies in ``anyio.to_thread.run_sync``), so the
         query does not depend on contextvar propagation across threads.
+
+        ``params`` are bound by the MySQL connector: ``%s`` placeholders with a
+        tuple, ``%(name)s`` with a dict. A literal ``%`` must then be ``%%``.
         """
         if token is None:
             from mcp_server_starrocks.db_client import ResultSet
@@ -150,7 +154,7 @@ class JWTDBClient:
                         execution_time=0,
                     )
                 cursor_temp.close()
-            return self._original._execute(conn, statement, None, return_format)
+            return self._original._execute(conn, statement, params, return_format)
         except MySQLError as e:
             from mcp_server_starrocks.db_client import ResultSet
             return ResultSet(

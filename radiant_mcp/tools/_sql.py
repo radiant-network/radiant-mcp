@@ -1,0 +1,188 @@
+"""Curated SQL run in StarRocks under the caller's JWT.
+
+The tools that have no portal API endpoint (``gene_info``, ``second_hit``,
+``cohort_carriers``, ``genotype_phenotype``) build fixed queries here and run
+them through the JWT-authenticated client installed by ``__main__``, exactly
+like the ``part`` lookup of ``get_case_context``: no service account, the
+caller's StarRocks rights apply.
+
+Values are bound as parameters (``Params``) and also validated first against
+a strict pattern or a closed list, so a bad value fails with a clear
+``InvalidInput`` before any query runs. Only identifiers that cannot be bound
+(the tenant database name) are written into the SQL, and only once validated.
+"""
+
+import math
+import os
+import re
+from typing import Any, Iterable, Optional
+
+_SHARED_DB_ENV = "RADIANT_SHARED_DB"
+_SHARED_DB_DEFAULT = "radiant"
+
+_TENANT = re.compile(r"^[a-z0-9_]{1,64}$")
+_DB_NAME = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+# HGNC symbols: letters, digits, '-', '.', '@' (e.g. C9orf72, HLA-A, IGH@).
+_SYMBOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.@-]{0,39}$")
+_HPO_ID = re.compile(r"^HP:\d{7}$")
+_LOCUS_ID = re.compile(r"^-?\d{1,20}$")
+
+
+class InvalidInput(ValueError):
+    """A value that cannot safely go into a query."""
+
+
+class SqlError(RuntimeError):
+    """StarRocks rejected or failed the query."""
+
+
+# -- validation ----------------------------------------------------------------
+
+def tenant_db(tenant: str) -> str:
+    if not isinstance(tenant, str) or not _TENANT.match(tenant):
+        raise InvalidInput(f"invalid tenant code: {tenant!r}")
+    return f"{tenant}_tenant"
+
+
+def shared_db() -> str:
+    name = os.getenv(_SHARED_DB_ENV, _SHARED_DB_DEFAULT)
+    if not _DB_NAME.match(name):
+        raise InvalidInput(f"invalid {_SHARED_DB_ENV}: {name!r}")
+    return name
+
+
+def symbol(value: Any) -> str:
+    if not isinstance(value, str) or not _SYMBOL.match(value):
+        raise InvalidInput(f"invalid gene symbol: {value!r}")
+    return value
+
+
+def hpo_id(value: Any) -> str:
+    if not isinstance(value, str) or not _HPO_ID.match(value):
+        raise InvalidInput(f"invalid HPO id (expected HP:0000000): {value!r}")
+    return value
+
+
+def integer(value: Any) -> int:
+    if isinstance(value, bool):
+        raise InvalidInput(f"invalid integer: {value!r}")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidInput(f"invalid integer: {value!r}") from exc
+
+
+def number(value: Any) -> float:
+    if isinstance(value, bool):
+        raise InvalidInput(f"invalid number: {value!r}")
+    try:
+        out = float(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidInput(f"invalid number: {value!r}") from exc
+    if not math.isfinite(out):
+        raise InvalidInput(f"invalid number: {value!r}")
+    return out
+
+
+def locus_id(value: Any) -> str:
+    text = str(value)
+    if not _LOCUS_ID.match(text):
+        raise InvalidInput(f"invalid locus_id: {value!r}")
+    return text
+
+
+def one_of(value: Any, allowed: Iterable[str], what: str) -> str:
+    allowed = tuple(allowed)
+    if value not in allowed:
+        raise InvalidInput(f"invalid {what}: {value!r} (allowed: {', '.join(allowed)})")
+    return value
+
+
+def all_of(values: Iterable[Any], allowed: Iterable[str], what: str) -> list[str]:
+    allowed = tuple(allowed)
+    return [one_of(v, allowed, what) for v in values]
+
+
+# -- bound parameters -----------------------------------------------------------
+
+class Params:
+    """Collects bound values while a query is written.
+
+    ``p(value)`` records the value and returns a named placeholder
+    (``%(p0)s``), so the binding does not depend on the order in which the
+    query fragments are built. ``p.list`` does the same for each value of an
+    IN list or array literal. The MySQL connector escapes the values.
+    """
+
+    def __init__(self) -> None:
+        self.values: dict[str, Any] = {}
+
+    def __call__(self, value: Any) -> str:
+        name = f"p{len(self.values)}"
+        self.values[name] = value
+        return f"%({name})s"
+
+    def list(self, values: Iterable[Any]) -> str:
+        values = list(values)
+        if not values:
+            raise InvalidInput("empty value list")
+        return ", ".join(self(v) for v in values)
+
+
+# -- execution --------------------------------------------------------------------
+
+def run(token: str, sql: str, params: Optional[Params] = None) -> list[dict]:
+    """Run ``sql`` as the caller and return the rows as JSON-friendly dicts."""
+    import mcp_server_starrocks.server as sr_server
+
+    client = sr_server.db_client
+    if not hasattr(client, "execute_with_token"):
+        raise SqlError("StarRocks client without JWT pass-through")
+    values = dict(params.values) if params is not None else None
+    result = client.execute_with_token(token, sql, params=values or None)
+    if not getattr(result, "success", False):
+        raise SqlError(_strip_statement(getattr(result, "error_message", None) or "query failed"))
+    columns = list(result.column_names or [])
+    return [{c: _plain(v) for c, v in zip(columns, row, strict=True)} for row in (result.rows or [])]
+
+
+def _strip_statement(message: str) -> str:
+    """The client prefixes errors with the whole statement: keep the cause."""
+    marker = "': "
+    if message.startswith("Error executing statement '") and marker in message:
+        return message.rsplit(marker, 1)[1]
+    return message
+
+
+def _plain(value: Any) -> Any:
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", "replace")
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
+def as_list(value: Any) -> list:
+    """An ARRAY column as a list (StarRocks sends arrays as JSON text)."""
+    import json
+
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return [value]
+        return parsed if isinstance(parsed, list) else [parsed]
+    return [value]
+
+
+def first(rows: list[dict]) -> Optional[dict]:
+    return rows[0] if rows else None
