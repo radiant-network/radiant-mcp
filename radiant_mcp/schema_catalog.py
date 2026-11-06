@@ -51,6 +51,12 @@ _PARTITION_RULE = (
     "occurrence_keys, from the key of the right data type; never compute them. Without it "
     "StarRocks scans every partition of the tenant and the query can time out."
 )
+ARRAY_RULE = (
+    "Columns marked (array) hold lists. Filter with array_contains(col, 'value') or "
+    "arrays_overlap(col, ['a', 'b']). To count or group by element, unnest in the FROM clause: "
+    "`FROM <table> v, unnest(v.col) AS u(value)`, then GROUP BY u.value. StarRocks has no "
+    "LATERAL VIEW / explode."
+)
 _TENANT_RULE = (
     "`<tenant>` is a placeholder for the tenant code returned by get_case_context. Another "
     "tenant's database answers 0 rows without error: re-check the prefix before concluding "
@@ -245,6 +251,7 @@ TOPICS: dict[str, Topic] = {
             "gnomad_v3_af is NULL for a variant absent from gnomAD: write "
             "`(v.gnomad_v3_af IS NULL OR v.gnomad_v3_af < 0.01)` for rare variants.",
             "Enum values are case-sensitive: use the stored values listed below.",
+            ARRAY_RULE,
         ),
         queries=(
             ("Rare pathogenic or de novo candidates of one sequencing",
@@ -257,6 +264,14 @@ TOPICS: dict[str, Topic] = {
              "  AND (array_contains(v.clinvar_interpretation, 'Pathogenic')\n"
              "       OR o.transmission_mode = 'autosomal_dominant_de_novo')\n"
              "LIMIT 100;"),
+            ("Rare variants of one sequencing counted by consequence (unnest of an array column)",
+             "SELECT c.consequence, COUNT(*) AS n\n"
+             "FROM <tenant>_tenant.germline__snv__occurrence o\n"
+             "JOIN <tenant>_tenant.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = <variant_part>,\n"
+             "     unnest(v.consequences) AS c(consequence)\n"
+             "WHERE o.seq_id = <seq_id> AND o.task_id = <task_id> AND o.part = <part>\n"
+             "  AND (v.gnomad_v3_af IS NULL OR v.gnomad_v3_af < 0.01)\n"
+             "GROUP BY c.consequence ORDER BY n DESC;"),
             ("SNV counts shared by a trio (Venn regions)",
              "WITH occ AS (\n"
              "  SELECT locus_id,\n"
@@ -280,6 +295,7 @@ TOPICS: dict[str, Topic] = {
             _PARTITION_RULE,
             "The somatic occurrence key is tumor_seq_id, not seq_id. normal_seq_id is NULL in tumor-only.",
             "Join the catalog with `v.locus_id = o.locus_id AND v.part = <variant_part>`.",
+            ARRAY_RULE,
         ),
         queries=(
             ("High-impact PASS variants of a tumor",
@@ -300,6 +316,7 @@ TOPICS: dict[str, Topic] = {
             _TENANT_RULE,
             _PARTITION_RULE,
             "symbol is an array of the genes overlapped: filter with array_contains(symbol, 'GENE').",
+            ARRAY_RULE,
         ),
         queries=(
             ("Rare PASS CNVs of one sequencing, largest first",
@@ -322,6 +339,7 @@ TOPICS: dict[str, Topic] = {
             "`LEFT SEMI JOIN radiant.snv__consequence_filter_partitioned cf ON cf.locus_id = o.locus_id "
             "AND cf.part = o.part AND (<condition>)`.",
             "snv__consequence holds every transcript: add `is_picked = true` for the picked one.",
+            ARRAY_RULE,
         ),
         queries=(
             ("Genes associated with the proband's HPO terms",

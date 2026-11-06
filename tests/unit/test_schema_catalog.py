@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from radiant_mcp.enums import ENUMS, FIELD_ENUMS
-from radiant_mcp.schema_catalog import SHARED_DB, TENANT_DB, TOPICS, render
+from radiant_mcp.schema_catalog import ARRAY_RULE, SHARED_DB, TENANT_DB, TOPICS, render
 from radiant_mcp.tools.schema import describe_schema
 
 REPO = Path(__file__).resolve().parents[2]
@@ -161,6 +161,14 @@ def test_render(topic_name):
     assert text.startswith(f"# {TOPICS[topic_name].title}\n")
     for table in TOPICS[topic_name].tables:
         assert f"### {table.qualified}" in text
+
+
+@pytest.mark.parametrize("topic_name", sorted(TOPICS))
+def test_topics_with_array_columns_explain_unnest(topic_name):
+    topic = TOPICS[topic_name]
+    if any("(array" in d for table in topic.tables for d in table.columns.values()):
+        assert ARRAY_RULE in topic.rules
+        assert "unnest(" in render(topic_name)
 
 
 def test_render_prints_the_stored_enum_values():
