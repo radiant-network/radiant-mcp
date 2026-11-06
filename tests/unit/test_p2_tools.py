@@ -271,3 +271,47 @@ def test_lookup_terms(fake_api, run):
 def test_lookup_terms_validates(fake_api, run):
     assert "Unknown ontology" in run(lookup_terms("go", "x"))["error"]
     assert "non-empty" in run(lookup_terms("hpo", "  "))["error"]
+
+
+def test_second_hit_finds_a_hemizygous_snv_inside_a_deletion(fake_api, fake_sql, run, monkeypatch):
+    """Case 1129: CLCNKB p.Ala77Pro called HOM in the proband because it sits inside his deletion
+    (LOSS, CN 1); the mother carries the deletion (her WT call), the father the SNV. slivar
+    reports uniparental_disomy; the deletion explains it."""
+    seqs = [(1032, "proband", 1070, 1071), (1033, "mother", None, 1072), (1034, "father", None, 1073)]
+    fake_api.on("cases", "case_entity", {
+        "case_id": 1129, "case_type": "germline", "members": [],
+        "sequencing_experiments": [{"seq_id": s, "has_variants": True, "relationship_to_proband": r} for s, r, _, _ in seqs],
+    })
+    fake_api.on("cases", "case_tasks_with_occurrences", lambda seq_id, data_type, **_: [
+        {"id": snv if data_type == "germline_snv" else cnv} for s, _, snv, cnv in seqs
+        if s == seq_id and (snv if data_type == "germline_snv" else cnv)])
+    parts = {(s, t): 2 for s, _, snv, cnv in seqs for t in (snv, cnv) if t}
+    monkeypatch.setattr(cases, "_lookup_parts", lambda token, case_id: (parts, None))
+    fake_sql.on("WITH snv AS", [{
+        "gene": "CLCNKB", "locus_id": 42, "hgvsg": "chr1:g.16045686G>C", "snv_start": 16045686, "zygosity": "HOM",
+        "transmission_mode": "uniparental_disomy", "clinvar_interpretation": '["Pathogenic"]', "cnv_id": 7,
+        "cnv_chromosome": "1", "cnv_start": 16033040, "cnv_end": 16057606, "cnv_cn": 1, "snv_inside_cnv": 1,
+    }])
+    fake_sql.on("SELECT g.symbol AS gene, c.seq_id", lambda values: [
+        {"gene": "CLCNKB", "seq_id": 1033, "cnv_id": 8, "chromosome": "1", "start": 16037075, "end": 16057606, "cn": 1}
+    ] if 1033 in values.values() else [])
+
+    result = run(second_hit(1129, tenant="pragmatiq"))
+
+    [proband] = [s for s in result["sequencings"] if s["seq_id"] == 1032]
+    [hit] = proband["snv_cnv"]
+    assert hit["zygosity"] == "HOM" and hit["snv_inside_cnv"] is True and hit["mechanism"].startswith("hemizygous")
+    assert hit["family_deletions"] == [{
+        "gene": "CLCNKB", "seq_id": 1033, "cnv_id": 8, "chromosome": "1", "start": 16037075, "end": 16057606,
+        "cn": 1, "relationship_to_proband": "mother", "covers_snv": True,
+    }]
+    assert "apparent uniparental disomy" in result["rules"]
+    [(sql, values)] = fake_sql.matching("WITH snv AS")
+    assert {"HET", "HOM", "HEM"} <= set(values.values())
+    assert "snv.zygosity = %(" in sql and "snv.start BETWEEN cnv.start AND cnv.end)" in sql
+
+
+def test_mechanism_wording():
+    assert hits.mechanism("HOM", True).startswith("hemizygous")
+    assert hits.mechanism("HET", True).startswith("HET call inside")
+    assert hits.mechanism("HET", False).startswith("SNV and deletion on the same gene")

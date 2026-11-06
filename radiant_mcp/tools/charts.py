@@ -23,7 +23,7 @@ from .cohort import Criteria, build_criteria, carriers_cte
 from .genes import resolve_gene
 from .patients import PATIENT_SEARCH_FILTER_FIELDS, _get_patient_context, _no_clinical_data
 
-ALT_ZYGOSITIES = ("HET", "HOM", "HEM")
+ALT_ZYGOSITIES = _rules.ALT_ZYGOSITIES
 MAX_ONCOPRINT_GENES = 20
 MAX_ONCOPRINT_CASES = 100
 MAX_SURVIVAL_PATIENTS = 5000
