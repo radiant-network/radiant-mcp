@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/radiant-network/radiant-mcp/compare/v0.4.0...v0.4.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **second_hit:** pair hemizygous snvs inside a deletion and report family deletions ([#25](https://github.com/radiant-network/radiant-mcp/issues/25)) ([7106dc1](https://github.com/radiant-network/radiant-mcp/commit/7106dc1b7a02c957506af8d0faf4599bcc157221))
+
 ## [0.4.0](https://github.com/radiant-network/radiant-mcp/compare/v0.3.0...v0.4.0) (2026-11-06)
 
 
