@@ -60,6 +60,11 @@ ARRAY_RULE = (
     "`FROM <table> v, unnest(v.col) AS u(value)`, then GROUP BY u.value. StarRocks has no "
     "LATERAL VIEW / explode."
 )
+_CLINICAL_TENANT_RULE = (
+    "`<tenant>` is a placeholder for the tenant code: the `tenant` of search_patients or "
+    "get_patient_context results, or list_tenants. Another tenant's database answers 0 rows "
+    "without error: re-check the prefix before concluding that data is missing."
+)
 _TENANT_RULE = (
     "`<tenant>` is a placeholder for the tenant code returned by get_case_context. Another "
     "tenant's database answers 0 rows without error: re-check the prefix before concluding "
@@ -421,7 +426,7 @@ TOPICS: dict[str, Topic] = {
         "patient_key list to survival_curve. Prefer search_patients and get_patient_context otherwise.",
         (PATIENT_KEY, PATIENT_LIST, MEDICAL_THERAPY),
         rules=(
-            _TENANT_RULE,
+            _CLINICAL_TENANT_RULE,
             "The views apply the caller's PHI rights. Select patient_key, codes, protocols and ages in days "
             "only: never names, MRNs (patient_id) or dates.",
             "Join a level view to its patient_key with v_pcx_30_patient_key on "

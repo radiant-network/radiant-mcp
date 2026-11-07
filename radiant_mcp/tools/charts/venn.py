@@ -15,17 +15,23 @@ from ...services.cases import case_context
 from ._common import image as _image
 
 
-def _members(case: dict, keys: list[dict]) -> list[tuple[str, dict]]:
-    """``[(role, germline_snv key)]`` for the proband, then father and mother when sequenced."""
+def _members(case: dict, keys: list[dict]) -> tuple[list[tuple[str, dict]], list[str]]:
+    """``[(role, germline_snv key)]`` for the proband, then father and mother when sequenced,
+    and the members left out because their key has no ``part``."""
     roles = {s.get("seq_id"): (s.get("relationship_to_proband") or "").lower() for s in case.get("sequencing_experiments", [])}
     by_role: dict[str, dict] = {}
+    skipped = []
     for key in keys:
-        if key.get("data_type") != "germline_snv" or key.get("part") is None:
+        role = roles.get(key.get("seq_id"))
+        if key.get("data_type") != "germline_snv" or role not in ("proband", "father", "mother"):
             continue
-        role = roles.get(key["seq_id"])
-        if role in ("proband", "father", "mother") and role not in by_role:
+        if key.get("part") is None:
+            skipped.append(f"{role} (seq_id={key['seq_id']}): no `part` for its germline SNV task, left out")
+            continue
+        if role not in by_role or key["task_id"] > by_role[role]["task_id"]:
             by_role[role] = key
-    return [(role, by_role[role]) for role in ("proband", "father", "mother") if role in by_role]
+    found = [(role, by_role[role]) for role in ("proband", "father", "mother") if role in by_role]
+    return found, [s for s in skipped if s.split(" ")[0] not in by_role]
 
 
 def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: Optional[str], rare_only: bool,
@@ -34,7 +40,8 @@ def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: Optional[str
     if "error" in context:
         return context
     tenant_code, case = context["tenant"], context["case"]
-    members = _members(case, context["occurrence_keys"])
+    members, skipped = _members(case, context["occurrence_keys"])
+    warnings = list(context.get("warnings", [])) + skipped
     if not members or members[0][0] != "proband":
         return {"error": f"Case {case_id} has no germline SNV analysis of the proband with a known `part`."}
     if len(members) == 1:
@@ -53,12 +60,19 @@ def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: Optional[str
     png = charts.venn(labels, counts, title + (f"\n({'; '.join(filters)})" if filters else ""))
     regions = {" & ".join(l for l, flag in zip(labels, region, strict=True) if flag): n
                for region, n in sorted(counts.items(), key=lambda kv: (-sum(kv[0]), kv[0])) if any(region)}
-    text = json.dumps({
+    result: dict[str, Any] = {
         "case_id": case_id, "tenant": tenant_code, "members": labels,
         "variants_per_region": regions, "filters": filters or ["none (all called SNVs)"],
         "counted": "variants with an alternate allele (HET, HOM or HEM) in each member",
+        "proband_only": ("de novo candidates (absent from both parents; a parent's no-call also lands here)"
+                         if len(members) == 3 else
+                         "de novo candidates OR variants inherited from the parent who is not sequenced: "
+                         "a duo cannot tell them apart"),
         "portal_url": case.get("portal_url"),
-    })
+    }
+    if warnings:
+        result["warnings"] = warnings
+    text = json.dumps(result)
     return _image(text, png)
 
 
@@ -68,8 +82,10 @@ async def family_venn(case_id: int, rare_only: bool = False, vep_impact: Optiona
 
     The tool counts, from each member's germline SNV analysis of the case, the
     variants with an alternate allele in each combination of members, and
-    returns the diagram as an image plus the counts per region. The
-    proband-only region holds the de novo candidates. Use this instead of SQL.
+    returns the diagram as an image plus the counts per region. In a trio, the
+    proband-only region holds the de novo candidates; in a duo it also holds
+    what the proband inherited from the parent who is not sequenced
+    (``proband_only`` says which). Use this instead of SQL.
 
     Args:
         case_id: Numeric Radiant case ID (germline, with at least one parent sequenced).

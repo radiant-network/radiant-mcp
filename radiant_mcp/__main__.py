@@ -63,7 +63,8 @@ async def main():
     # Leaving this None lets DCR-registered clients (each with their own
     # client_id and no per-client audience mapper) validate too.
     audience = os.getenv("KEYCLOAK_AUDIENCE", None)
-    required_scopes = os.getenv("OAUTH_REQUIRED_SCOPES", "openid").split(",")
+    # "openid, profile" must not require the scope " profile".
+    required_scopes = [s.strip() for s in os.getenv("OAUTH_REQUIRED_SCOPES", "openid").split(",") if s.strip()]
 
     # Native fastmcp Keycloak provider: a pure JWT resource server. It holds
     # no client secret and mints no tokens — it only validates incoming

@@ -262,17 +262,29 @@ class Lollipop:
 def lollipop(points: Sequence[Lollipop], title: str, subtitle: str) -> bytes:
     """Protein positions of variants, stem height = number of carriers."""
     fig, ax = plt.subplots(figsize=(9, 4))
+    # The protein length is not stored: the bar ends at the last variant.
     length = max(p.position for p in points)
     ax.add_patch(Rectangle((0, -0.25), length * 1.03, 0.25, color="#CED4DA"))
+    # Variants at the same residue (p.Arg175His, p.Arg175Cys) stack on one stem.
+    by_position: dict[int, list[Lollipop]] = {}
     for point in points:
-        color = ALTERATION_COLORS.get(point.kind, ALTERATION_COLORS["other"])
-        ax.plot([point.position, point.position], [0, point.carriers], color="#6C757D", linewidth=1)
-        ax.plot(point.position, point.carriers, "o", color=color, markersize=8)
-    for point in sorted(points, key=lambda p: -p.carriers)[:8]:
-        ax.annotate(point.label, (point.position, point.carriers), textcoords="offset points", xytext=(0, 8),
-                    ha="center", fontsize=8)
-    ax.set(xlim=(0, length * 1.05), ylim=(-0.4, max(p.carriers for p in points) * 1.3 + 0.5),
-           xlabel="Protein position (aa)", ylabel="Carriers")
+        by_position.setdefault(point.position, []).append(point)
+    totals = {}
+    for position, stacked in by_position.items():
+        stacked.sort(key=lambda p: -p.carriers)
+        totals[position] = sum(p.carriers for p in stacked)
+        ax.plot([position, position], [0, totals[position]], color="#6C757D", linewidth=1)
+        height = 0
+        for point in stacked:
+            height += point.carriers
+            ax.plot(position, height, "o", color=ALTERATION_COLORS.get(point.kind, ALTERATION_COLORS["other"]),
+                    markersize=8)
+    for position in sorted(totals, key=lambda pos: -totals[pos])[:8]:
+        label = "/".join(p.label for p in by_position[position])
+        ax.annotate(label if len(label) <= 30 else label[:29] + "…", (position, totals[position]),
+                    textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8)
+    ax.set(xlim=(0, length * 1.05), ylim=(-0.4, max(totals.values()) * 1.3 + 0.5),
+           xlabel="Protein position (aa), up to the last variant", ylabel="Carriers")
     ax.set_title(f"{title}\n{subtitle}", fontsize=11)
     ax.grid(axis="y", **_GRID)
     used = sorted({p.kind for p in points}, key=list(ALTERATION_COLORS).index)
