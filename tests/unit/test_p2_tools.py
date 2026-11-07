@@ -71,7 +71,7 @@ def test_each_query_binds_exactly_its_placeholders(name, query):
 def test_carrier_query_binds_the_gene_and_the_tenant_to_their_own_slots():
     criteria = build_criteria("germline_snv", "SCN1A", None, None, None, None, None)
     sql, params = carrier_queries.totals_query("demo", criteria)
-    assert bound_value(sql, params.values, "WHERE symbol = ") == "SCN1A"
+    assert bound_value(sql, params.values, "WHERE cf.symbol = ") == "SCN1A"
     assert bound_value(sql, params.values, "s.tenant_code = ") == "demo"
 
 
@@ -199,10 +199,13 @@ def test_carriers(fake_api, fake_sql, run):
     assert result["criteria"] == {
         "data_type": "germline_snv", "gene": "SCN1A", "vep_impact": ["HIGH"],
         "max_gnomad_af": "< 0.01 or absent from gnomAD",
+        "gene_match": "a consequence on a transcript of the gene (not only the picked one); "
+                      "vep_impact is the impact on that gene",
+        "reruns": "the latest task of each sequencing",
     }
     for sql, values in fake_sql.queries:
-        assert bound_value(sql, values, "WHERE symbol = ") == "SCN1A"
-        assert "gnomad_v3_af IS NULL OR gnomad_v3_af < " in sql
+        assert bound_value(sql, values, "WHERE cf.symbol = ") == "SCN1A"
+        assert "sv.gnomad_v3_af IS NULL OR sv.gnomad_v3_af < " in sql
 
 
 def test_carriers_unknown_gene(fake_api, fake_sql, run):
@@ -378,3 +381,23 @@ def test_second_hit_matches_every_gene_of_a_variant():
     sql, params = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])
     assert bound_value(sql, params.values, "cf.symbol IN (") == "BRCA1"
     assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
+
+
+def test_carriers_match_any_transcript_of_the_gene_and_the_latest_task():
+    criteria = build_criteria("germline_snv", "SCN1A", ["HIGH"], None, None, None, None)
+    sql, params = carrier_queries.totals_query("demo", criteria)
+    # The gene and the impact come from the consequences on the gene's transcripts.
+    assert "radiant.snv__consequence_filter cf" in sql
+    assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
+    assert "demo_tenant.snv__variant sv" in sql and "snv__variant_partitioned" not in sql
+    assert "ROW_NUMBER() OVER (PARTITION BY x.seq_id, x.variant_id ORDER BY x.task_id DESC)" in sql
+    cnv_sql, _ = carrier_queries.totals_query("demo", build_criteria("germline_cnv", "SCN1A", None, None, None, None, None))
+    assert "ROW_NUMBER()" in cnv_sql
+
+
+def test_phenotypes_leave_fetal_observations_out():
+    criteria = build_criteria("germline_snv", "SCN1A", None, None, None, None, None)
+    for sql, _ in (carrier_queries.phenotypes_query("demo", criteria, 10),
+                   carrier_queries.phenotyped_patients_query("demo", criteria),
+                   carrier_queries.carriers_with_term_query("demo", criteria, "HP:0001250", 10)):
+        assert "obs.fetus_id IS NULL" in sql

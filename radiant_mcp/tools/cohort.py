@@ -88,6 +88,8 @@ def _genotype_phenotype(
         "carrier_patients": totals.get("patients", 0),
         "carrier_patients_with_phenotypes": phenotyped.get("patients", 0),
         "phenotypes": _sql.run(token, *phenotypes_query(tenant_code, criteria, limit)),
+        "phenotype_source": ("positive HPO observations of the carrier patients; observations recorded for a "
+                             "fetus are left out, since a fetal sample carries its mother's patient_id"),
     }
     if hpo_term:
         rows = _sql.run(token, *carriers_with_term_query(tenant_code, criteria, hpo_term, CARRIERS_MAX_LIMIT))
