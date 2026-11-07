@@ -1,0 +1,194 @@
+"""``second_hit``: germline SNV + deletion, compound heterozygous pairs and somatic two-hit genes."""
+
+import re
+
+from conftest import CNV_KEY, PORTAL, SNV_KEY, bound_value
+
+from radiant_mcp.queries import hits as hit_queries
+from radiant_mcp.services import cases as case_service
+from radiant_mcp.tools import hits
+from radiant_mcp.tools.hits import second_hit
+
+
+def _case_api(fake_api, case_type, keys):
+    fake_api.on("cases", "case_entity", {
+        "case_id": 1, "case_type": case_type,
+        "members": [{"patient_id": 100, "relationship_to_proband": "proband"}],
+        "sequencing_experiments": [{"seq_id": 10, "has_variants": True, "relationship_to_proband": "proband",
+                                    "sample_submitter_id": "S1"}],
+    })
+    fake_api.on("cases", "case_tasks_with_occurrences", lambda data_type, **_: keys.get(data_type, []))
+
+
+def test_second_hit_germline(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}], "germline_cnv": [{"id": 21}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5, (10, 21): 5}, None))
+    fake_sql.on("germline__cnv__occurrence", [{
+        "gene": "SCN1A", "locus_id": 1001, "clinvar_interpretation": '["Pathogenic"]', "cnv_id": 501,
+        "snv_inside_cnv": 0,
+    }])
+    fake_sql.on("germline__snv__comphet", [
+        {"gene": "SCN1A", "locus_id": 1001, "partner_locus_id": 1002},
+        {"gene": "SCN1A", "locus_id": 1002, "partner_locus_id": 1001},
+    ])
+
+    result = run(second_hit(1, tenant="demo"))
+
+    [seq] = result["sequencings"]
+    [hit] = seq["snv_cnv"]
+    assert hit["clinvar_interpretation"] == ["Pathogenic"] and hit["snv_inside_cnv"] is False
+    assert hit["portal_url"] == f"{PORTAL}/demo/case/entity/1?tab=variants&seq_id=10&task_id=20&variant_section=snv&selectedVariant=1001"
+    assert hit["cnv_portal_url"].endswith("task_id=21&variant_section=cnv")
+    assert [(p["locus_id"], p["partner_locus_id"]) for p in seq["compound_heterozygous"]] == [(1001, 1002)]
+    assert "rare = gnomAD v3 AF < 0.01" in result["rules"]
+    # AC 4: every occurrence table is filtered on the part of its key.
+    for sql, values in fake_sql.queries:
+        for alias in re.findall(r"\b(o|c)\.part = ", sql):
+            assert bound_value(sql, values, f"{alias}.part = ") == 5
+
+
+def test_second_hit_skips_keys_without_part(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({}, "part lookup failed: boom"))
+    result = run(second_hit(1, tenant="demo"))
+    assert result["sequencings"] == []
+    assert any("no `part`, skipped" in w for w in result["warnings"])
+    assert fake_sql.queries == []
+
+
+def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}], "somatic_cnv": [{"id": 41}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7, (10, 41): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
+    fake_sql.on("germline__snv__occurrence", [
+        {"gene": "BRCA1", "locus_id": 1003, "clinvar_interpretation": "[]", "interpreted_plp": 1},
+        {"gene": "SCN1A", "locus_id": 1001, "clinvar_interpretation": '["Pathogenic"]', "interpreted_plp": 0},
+    ])
+    fake_sql.on("somatic__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1005}])
+    fake_sql.on("somatic__cnv__occurrence", [{"gene": "BRCA1", "cnv_id": 601, "cnv_type": "CNLOH"}])
+
+    result = run(second_hit(1, tenant="demo"))
+
+    [gene] = result["genes"]
+    assert gene["gene"] == "BRCA1" and gene["germline"][0]["interpreted_plp"] is True
+    assert gene["germline"][0]["portal_url"].startswith(f"{PORTAL}/demo/case/entity/9?")
+    assert [r["locus_id"] for r in gene["somatic_snv"]] == [1005] and gene["somatic_snv"][0]["data_type"] == "somatic_snv_tn"
+    assert [r["cnv_id"] for r in gene["somatic_cnv"]] == [601]
+    assert result["germline_plp_without_somatic_event"] == ["SCN1A"]
+    [(sql, values)] = fake_sql.matching("germline__snv__occurrence")
+    assert bound_value(sql, values, "o.part = ") == 15 and bound_value(sql, values, "v.part = ") == 1
+    [(sql, values)] = fake_sql.matching("staging_sequencing_experiment")
+    assert bound_value(sql, values, "task_type = ") == "radiant_germline_annotation"
+
+
+def test_second_hit_somatic_without_germline_sequencing(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
+    result = run(second_hit(1, tenant="demo"))
+    assert "no germline sequencing" in result["note"]
+
+
+def test_second_hit_rejects_a_non_numeric_case(fake_api, run):
+    assert "invalid integer" in run(second_hit("1 OR 1=1"))["error"]
+    assert fake_api.calls == []
+
+
+def test_second_hit_finds_a_hemizygous_snv_inside_a_deletion(fake_api, fake_sql, run, monkeypatch):
+    """Case 1129: CLCNKB p.Ala77Pro called HOM in the proband because it sits inside his deletion
+    (LOSS, CN 1); the mother carries the deletion (her WT call), the father the SNV. slivar
+    reports uniparental_disomy; the deletion explains it."""
+    seqs = [(1032, "proband", 1070, 1071), (1033, "mother", None, 1072), (1034, "father", None, 1073)]
+    fake_api.on("cases", "case_entity", {
+        "case_id": 1129, "case_type": "germline", "members": [],
+        "sequencing_experiments": [{"seq_id": s, "has_variants": True, "relationship_to_proband": r} for s, r, _, _ in seqs],
+    })
+    fake_api.on("cases", "case_tasks_with_occurrences", lambda seq_id, data_type, **_: [
+        {"id": snv if data_type == "germline_snv" else cnv} for s, _, snv, cnv in seqs
+        if s == seq_id and (snv if data_type == "germline_snv" else cnv)])
+    parts = {(s, t): 2 for s, _, snv, cnv in seqs for t in (snv, cnv) if t}
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: (parts, None))
+    fake_sql.on("WITH snv AS", [{
+        "gene": "CLCNKB", "locus_id": 42, "hgvsg": "chr1:g.16045686G>C", "snv_start": 16045686, "zygosity": "HOM",
+        "transmission_mode": "uniparental_disomy", "clinvar_interpretation": '["Pathogenic"]', "cnv_id": 7,
+        "cnv_chromosome": "1", "cnv_start": 16033040, "cnv_end": 16057606, "cnv_cn": 1, "snv_inside_cnv": 1,
+    }])
+    fake_sql.on("SELECT g.symbol AS gene, c.seq_id", lambda values: [
+        {"gene": "CLCNKB", "seq_id": 1033, "cnv_id": 8, "chromosome": "1", "start": 16037075, "end": 16057606, "cn": 1}
+    ] if 1033 in values.values() else [])
+
+    result = run(second_hit(1129, tenant="pragmatiq"))
+
+    [proband] = [s for s in result["sequencings"] if s["seq_id"] == 1032]
+    [hit] = proband["snv_cnv"]
+    assert hit["zygosity"] == "HOM" and hit["snv_inside_cnv"] is True and hit["mechanism"].startswith("hemizygous")
+    assert hit["family_deletions"] == [{
+        "gene": "CLCNKB", "seq_id": 1033, "cnv_id": 8, "chromosome": "1", "start": 16037075, "end": 16057606,
+        "cn": 1, "relationship_to_proband": "mother", "covers_snv": True,
+    }]
+    assert "apparent uniparental disomy" in result["rules"]
+    [(sql, values)] = fake_sql.matching("WITH snv AS")
+    assert {"HET", "HOM", "HEM"} <= set(values.values())
+    assert "snv.zygosity = %(" in sql and "snv.start BETWEEN cnv.start AND cnv.end)" in sql
+
+
+def test_mechanism_wording():
+    assert hits.mechanism("HOM", True).startswith("hemizygous")
+    assert hits.mechanism("HET", True).startswith("HET call inside")
+    assert hits.mechanism("HET", False).startswith("SNV and deletion on the same gene")
+
+
+def test_second_hit_flags_a_cut_list(fake_api, fake_sql, run, monkeypatch):
+    from radiant_mcp.tools import hits as hits_tool
+
+    monkeypatch.setattr(hits_tool, "ROW_LIMIT", 2)
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5}, None))
+    fake_sql.on("germline__snv__comphet", [
+        {"gene": g, "locus_id": i, "partner_locus_id": i + 100} for i, g in enumerate(["A", "B", "C"], 1)
+    ])
+    result = run(second_hit(1, tenant="demo"))
+    assert [p["gene"] for p in result["sequencings"][0]["compound_heterozygous"]] == ["A", "B"]
+    assert result["truncated"] == ["seq_id=10 compound_heterozygous"] and "alphabet" in result["truncated_note"]
+    [(sql, values)] = fake_sql.matching("germline__snv__comphet")
+    assert "LEAST(c.locus_id, c.partner_locus_id)" in sql and values[re.findall(r"LIMIT %\((p\d+)\)s", sql)[0]] == 201
+
+
+def test_second_hit_keeps_a_pair_per_gene(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5}, None))
+    fake_sql.on("germline__snv__comphet", [
+        {"gene": "GENE1", "locus_id": 1, "partner_locus_id": 2},
+        {"gene": "GENE2", "locus_id": 1, "partner_locus_id": 2},
+    ])
+    result = run(second_hit(1, tenant="demo"))
+    assert [p["gene"] for p in result["sequencings"][0]["compound_heterozygous"]] == ["GENE1", "GENE2"]
+    assert "truncated" not in result
+
+
+def test_second_hit_reads_the_latest_task_of_a_rerun(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}, {"id": 42}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7, (10, 42): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [
+        {"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15},
+        {"case_id": 9, "seq_id": 11, "task_id": 23, "part": 15},
+    ])
+    fake_sql.on("germline__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1003, "clinvar_interpretation": "[]"}])
+    fake_sql.on("somatic__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1005}])
+    result = run(second_hit(1, tenant="demo"))
+    assert [k["task_id"] for k in result["germline_sequencings"]] == [23]
+    [gene] = result["genes"]
+    assert len(gene["germline"]) == 1 and len(gene["somatic_snv"]) == 1
+    assert sum("older task" in w for w in result["warnings"]) == 2
+    [(sql, values)] = fake_sql.matching("germline__snv__occurrence")
+    assert bound_value(sql, values, "o.task_id = ") == 23
+
+
+def test_second_hit_matches_every_gene_of_a_variant():
+    for sql, values in (hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
+                        hit_queries.germline_plp_query("demo_tenant", SNV_KEY),
+                        hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])):
+        assert "JOIN radiant.snv__consequence_filter cf ON cf.locus_id = o.locus_id" in sql
+        assert not re.search(r"\bv\.symbol", sql)
+    sql, params = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])
+    assert bound_value(sql, params.values, "cf.symbol IN (") == "BRCA1"
+    assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
