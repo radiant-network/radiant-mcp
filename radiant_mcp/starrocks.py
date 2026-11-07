@@ -18,9 +18,10 @@ import json
 import os
 import re
 import tempfile
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Optional, Union
+from typing import Any
 
 import mysql.connector
 from mysql.connector.errors import Error as MySQLError
@@ -59,7 +60,7 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-def default_database() -> Optional[str]:
+def default_database() -> str | None:
     return os.getenv(_DB_ENV) or None
 
 
@@ -86,7 +87,7 @@ def _username(token: str) -> str:
 
 
 @contextmanager
-def connect(token: Optional[str], database: Optional[str] = None) -> Iterator[Any]:
+def connect(token: str | None, database: str | None = None) -> Iterator[Any]:
     """Open a connection as the caller; it is closed on exit."""
     if not token:
         raise StarRocksError(AUTH_REQUIRED)
@@ -120,27 +121,24 @@ def connect(token: Optional[str], database: Optional[str] = None) -> Iterator[An
     except MySQLError as exc:
         raise StarRocksError(str(exc)) from exc
     finally:
-        try:
+        with suppress(OSError):
             os.unlink(token_path)
-        except OSError:
-            pass
 
     try:
         yield conn
     finally:
-        try:
+        # A close failure must not hide the result.
+        with suppress(Exception):
             conn.close()
-        except Exception:  # noqa: BLE001 — a close failure must not hide the result
-            pass
 
 
 def query(
-    token: Optional[str],
+    token: str | None,
     sql: str,
-    params: Optional[Union[tuple, dict]] = None,
+    params: tuple | dict | None = None,
     *,
-    database: Optional[str] = None,
-    max_rows: Optional[int] = None,
+    database: str | None = None,
+    max_rows: int | None = None,
 ) -> Result:
     """Run one statement as the caller and return its first result set.
 
@@ -161,7 +159,6 @@ def query(
         except MySQLError as exc:
             raise StarRocksError(str(exc)) from exc
         finally:
-            try:
+            # Unread rows of a truncated result can make the close fail.
+            with suppress(Exception):
                 cursor.close()
-            except Exception:  # noqa: BLE001 — unread rows of a truncated result
-                pass

@@ -1,7 +1,7 @@
 """Gene and ontology tools: ``gene_info`` and ``lookup_terms``."""
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from typing import Any
 
 from .. import portal_api as _api
 from .. import sql as _sql
@@ -18,7 +18,7 @@ _HPO_TERMS_SHOWN = 100
 _WORKERS = 3
 
 
-def _gene_info(api: RadiantApi, token: str, gene: str, tenant: Optional[str]) -> dict:
+def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> dict:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return err
@@ -28,7 +28,7 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: Optional[str]) ->
     symbol = _sql.symbol(resolved["symbol"])
     queries = gene_queries(symbol, resolved.get("ensembl_gene_id"), tenant_code)
 
-    def _fetch(item: tuple[str, tuple[str, _sql.Params]]) -> tuple[str, Any, Optional[str]]:
+    def _fetch(item: tuple[str, tuple[str, _sql.Params]]) -> tuple[str, Any, str | None]:
         name, (sql, params) = item
         try:
             return name, _sql.run(token, sql, params), None
@@ -73,7 +73,7 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: Optional[str]) ->
     return result
 
 
-def _lookup_terms(api: RadiantApi, _token: str, ontology: str, query: str, tenant: Optional[str], limit: int) -> dict:
+def _lookup_terms(api: RadiantApi, _token: str, ontology: str, query: str, tenant: str | None, limit: int) -> dict:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return err
@@ -89,7 +89,7 @@ def _lookup_terms(api: RadiantApi, _token: str, ontology: str, query: str, tenan
 
 # -- tools -------------------------------------------------------------------
 
-async def gene_info(symbol: str, tenant: Optional[str] = None) -> dict:
+async def gene_info(symbol: str, tenant: str | None = None) -> dict:
     """What is known about a gene, independently of any patient.
 
     Returns ``omim_conditions`` (condition, OMIM ids, inheritance),
@@ -111,7 +111,7 @@ async def gene_info(symbol: str, tenant: Optional[str] = None) -> dict:
     return await _api.run(_gene_info, symbol, tenant)
 
 
-async def lookup_terms(ontology: str, query: str, tenant: Optional[str] = None, limit: int = 10) -> dict:
+async def lookup_terms(ontology: str, query: str, tenant: str | None = None, limit: int = 10) -> dict:
     """Find HPO or MONDO terms by name or id, with their identifiers.
 
     Use it to name an HPO code, or to find the MONDO id of a condition (e.g.

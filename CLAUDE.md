@@ -29,7 +29,7 @@ The server used to wrap the upstream `mcp-server-starrocks` package; RAD-259 rep
 - **Every query has a timeout and `read_query` a row cap.** `STARROCKS_QUERY_TIMEOUT` (seconds, default 60) is set as the session `query_timeout`, and the socket read timeout is 5 s longer. `read_query` reads at most `STARROCKS_MAX_ROWS` (default 500) rows plus one and returns `truncated: true` when more exist, so a `SELECT *` on an occurrence table cannot load millions of rows into the shared process.
 - **StarRocks re-validates the JWT itself.** A working token isn't enough — a StarRocks user whose name is the token's `sub` (UUID) must exist as `IDENTIFIED WITH authentication_jwt` (with `principal_field: sub`), and StarRocks needs SSL enabled for JWT auth.
 - **Radiant API tools are opt-in.** `register_tools()` registers only `describe_schema`, `bar_chart`, `read_query` and `table_overview` unless `RADIANT_API_URL` is set, so the compose stack (which has no Radiant API) still boots. The `radiant_python` client is a generated OpenAPI package installed from git and pinned to a commit SHA (the `radiant-python-cli` git URL in `pyproject.toml`) — bumping it can change model fields/method names. It is a sync urllib3 client, so tool bodies run in `anyio.to_thread.run_sync`; the JWT is read from the contextvar *before* hopping threads.
-- **Unit tests run in CI, integration tests do not.** `.github/workflows/test.yml` runs the pytest suite (`tests/unit/`, fake portal API, no network). The shell integration suite needs Docker and is run by hand.
+- **Unit tests and lint run in CI, integration tests do not.** `.github/workflows/test.yml` runs `ruff check` (rules in `pyproject.toml`, ruff pinned in the dev group) and the pytest suite (`tests/unit/`, fake portal API, no network). The shell integration suite needs Docker and is run by hand.
 
 ## Commands
 
@@ -44,6 +44,9 @@ docker compose up --build
 # ETL and portal checkouts (on main) to include the schema checks; without them they
 # are skipped.
 uv sync && RADIANT_ETL_DIR=../radiant-portal-pipeline RADIANT_PORTAL_DIR=../radiant-portal uv run pytest
+
+# Lint (CI fails on any alert; --fix applies the safe fixes)
+uv run ruff check .
 
 # Run the integration test suite (6 tests, requires Docker)
 docker compose --profile test run --rm test-runner

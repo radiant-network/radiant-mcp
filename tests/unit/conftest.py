@@ -2,13 +2,12 @@
 StarRocks schema read from the ETL and portal checkouts (``schema_sources``)."""
 
 import asyncio
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from radiant_python.exceptions import ApiException
-
-from radiant_mcp import portal_api as _api
 from schema_sources import (  # noqa: F401
     etl,
     etl_dictionaries,
@@ -18,6 +17,8 @@ from schema_sources import (  # noqa: F401
     portal_tenant_objects,
     portal_views,
 )
+
+from radiant_mcp import portal_api as _api
 
 PORTAL = "https://portal.example"
 

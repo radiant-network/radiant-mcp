@@ -1,7 +1,7 @@
 """``family_venn``: the SNVs shared by the members of a trio or a duo."""
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ... import charts
 from ... import portal_api as _api
@@ -34,7 +34,7 @@ def _members(case: dict, keys: list[dict]) -> tuple[list[tuple[str, dict]], list
     return found, [s for s in skipped if s.split(" ")[0] not in by_role]
 
 
-def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: Optional[str], rare_only: bool,
+def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: str | None, rare_only: bool,
                  vep_impact: list[str]) -> Any:
     context = case_context(api, token, case_id, tenant)
     if "error" in context:
@@ -58,7 +58,7 @@ def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: Optional[str
         filters.append(f"impact {' or '.join(vep_impact)}")
     title = f"Case {case_id} — SNVs shared by {' / '.join(labels).lower()}"
     png = charts.venn(labels, counts, title + (f"\n({'; '.join(filters)})" if filters else ""))
-    regions = {" & ".join(l for l, flag in zip(labels, region, strict=True) if flag): n
+    regions = {" & ".join(label for label, flag in zip(labels, region, strict=True) if flag): n
                for region, n in sorted(counts.items(), key=lambda kv: (-sum(kv[0]), kv[0])) if any(region)}
     result: dict[str, Any] = {
         "case_id": case_id, "tenant": tenant_code, "members": labels,
@@ -76,8 +76,8 @@ def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: Optional[str
     return _image(text, png)
 
 
-async def family_venn(case_id: int, rare_only: bool = False, vep_impact: Optional[list[str]] = None,
-                      tenant: Optional[str] = None) -> Any:
+async def family_venn(case_id: int, rare_only: bool = False, vep_impact: list[str] | None = None,
+                      tenant: str | None = None) -> Any:
     """Venn diagram of the SNVs shared by a trio (proband, father, mother) or a duo.
 
     The tool counts, from each member's germline SNV analysis of the case, the

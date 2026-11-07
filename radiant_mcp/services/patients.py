@@ -9,13 +9,12 @@ of ``survival_curve`` share the filter fields.
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from typing import Any
 
 from .. import portal_api as _api
 from ..api_fields import PATIENT_FILTER_FIELDS
 from ..portal_api import RadiantApi, is_status, resolve_tenant
 from ..portal_links import case_url, occurrence_url, patient_url, variant_url, with_url
-
 
 # Field aliases accepted by POST /{tenant}/patients/search
 # (backend/internal/types/pcx_patient_query.go: PcxPatientListFields).
@@ -52,7 +51,7 @@ def _route_missing(exc: Exception) -> bool:
     return not (isinstance(body, dict) and "message" in body)
 
 
-def no_clinical_data(tenant: str, exc: Exception) -> Optional[dict]:
+def no_clinical_data(tenant: str, exc: Exception) -> dict | None:
     """The result for a tenant whose clinical data cannot be read, or None
     when ``exc`` is an ordinary error."""
     if _route_missing(exc):
@@ -92,7 +91,7 @@ def _link_genomics(tenant: str, genomics: dict) -> None:
 
 
 def patient_context(
-    api: RadiantApi, _token: str, patient_key: str, tenant: Optional[str], sections: list[str],
+    api: RadiantApi, _token: str, patient_key: str, tenant: str | None, sections: list[str],
 ) -> dict:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
@@ -113,7 +112,7 @@ def patient_context(
         raise
     with_url(patient, patient_url(tenant_code, patient_key))
 
-    def _fetch(section: str) -> tuple[str, Any, Optional[str]]:
+    def _fetch(section: str) -> tuple[str, Any, str | None]:
         operation, _tab = PATIENT_SECTIONS[section]
         try:
             return section, api.call("patients", operation, tenant=tenant_code, patient_key=patient_key), None

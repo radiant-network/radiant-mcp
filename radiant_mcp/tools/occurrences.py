@@ -7,14 +7,14 @@ pruning and access control.
 """
 
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any
 
+from .. import portal_api as _api
 from ..api_fields import OCCURRENCE_SORT_FIELDS
 from ..domain.data_types import CASE_CNV_DATA_TYPES, CASE_SNV_DATA_TYPES, CaseCnvDataType, CaseSnvDataType
 from ..enums import canonical_values
-from ..portal_links import occurrence_url, variant_url, with_url
-from .. import portal_api as _api
 from ..portal_api import RadiantApi, clamp, resolve_tenant
+from ..portal_links import occurrence_url, variant_url, with_url
 
 MAX_LIMIT = 100
 # SQON leaf operators accepted by the backend (types/filter.go, sqonToFilter).
@@ -42,8 +42,8 @@ _KINDS = {
 SNV_DATA_TYPES = CASE_SNV_DATA_TYPES
 CNV_DATA_TYPES = CASE_CNV_DATA_TYPES
 
-Filters = Union[list[dict[str, Any]], dict[str, Any], None]
-Sort = Optional[list[dict[str, str]]]
+Filters = list[dict[str, Any]] | dict[str, Any] | None
+Sort = list[dict[str, str]] | None
 
 
 class FilterError(ValueError):
@@ -84,7 +84,7 @@ def normalize_filters(filters: Filters) -> list[dict]:
     return out
 
 
-def normalize_sort(sort: Sort, sortable: Optional[tuple[str, ...]] = None) -> list[dict]:
+def normalize_sort(sort: Sort, sortable: tuple[str, ...] | None = None) -> list[dict]:
     """``sort`` as ``[{field, order}]``. With ``sortable``, an unknown field is an error:
     the backend would drop it silently, and its default sort with it."""
     if not sort:
@@ -121,12 +121,12 @@ def _list_occurrences(
     case_id: int,
     seq_id: int,
     task_id: int,
-    tenant: Optional[str],
+    tenant: str | None,
     filters: list[dict],
     sort: list[dict],
     limit: int,
     offset: int,
-    additional_fields: Optional[list[str]],
+    additional_fields: list[str] | None,
 ) -> dict:
     from radiant_python.models import CountBodyWithSqon, ListBodyWithSqon, SortBody
 
@@ -175,12 +175,12 @@ async def _run_list(
     case_id: int,
     seq_id: int,
     task_id: int,
-    tenant: Optional[str],
+    tenant: str | None,
     filters: Filters,
     sort: Sort,
     limit: int,
     offset: int,
-    additional_fields: Optional[list[str]],
+    additional_fields: list[str] | None,
 ) -> dict:
     if data_type not in allowed:
         return {"error": f"Unknown data_type {data_type!r}. Allowed: {', '.join(allowed)}."}
@@ -206,8 +206,8 @@ async def prioritize_snv(
     sort: Sort = None,
     limit: int = 20,
     offset: int = 0,
-    additional_fields: Optional[list[str]] = None,
-    tenant: Optional[str] = None,
+    additional_fields: list[str] | None = None,
+    tenant: str | None = None,
 ) -> dict:
     """Rank and filter the SNV occurrences of one sequencing of a case.
 
@@ -269,8 +269,8 @@ async def case_cnv(
     sort: Sort = None,
     limit: int = 20,
     offset: int = 0,
-    additional_fields: Optional[list[str]] = None,
-    tenant: Optional[str] = None,
+    additional_fields: list[str] | None = None,
+    tenant: str | None = None,
 ) -> dict:
     """List and filter the CNV occurrences of one sequencing of a case.
 

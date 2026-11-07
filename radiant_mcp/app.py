@@ -3,7 +3,7 @@
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.routing import Route, Mount
+from starlette.routing import Mount, Route
 
 from .health import health_check, ready_check
 from .oauth import protected_resource_metadata

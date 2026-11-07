@@ -1,12 +1,12 @@
 """Case tools: tenant discovery, case search and the full case context."""
 
-from typing import Any, Optional
+from typing import Any
 
 from .. import portal_api as _api
-from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
-from ..portal_links import case_url, with_url
 from ..api_fields import CASE_FILTER_FIELDS as CASE_SEARCH_FILTER_FIELDS
 from ..api_fields import CASE_SORT_FIELDS as CASE_SEARCH_SORT_FIELDS
+from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
+from ..portal_links import case_url, with_url
 from ..services.cases import case_context, merge_criteria, search_criteria
 
 # Autocomplete match types that are integer ids AND directly filterable fields.
@@ -23,9 +23,9 @@ def _list_tenants(api: RadiantApi, _token: str) -> dict:
 def _search_cases(
     api: RadiantApi,
     _token: str,
-    tenant: Optional[str],
-    filters: Optional[dict],
-    query: Optional[str],
+    tenant: str | None,
+    filters: dict | None,
+    query: str | None,
     limit: int,
     offset: int,
     sort_by: str,
@@ -145,7 +145,7 @@ async def list_tenants() -> dict:
     return await _api.run(_list_tenants)
 
 
-async def get_case_context(case_id: int, tenant: Optional[str] = None) -> dict:
+async def get_case_context(case_id: int, tenant: str | None = None) -> dict:
     """Retrieve the full clinical context of a Radiant case.
 
     Use this first whenever a question is about a specific case (e.g. "what is
@@ -184,9 +184,9 @@ async def get_case_context(case_id: int, tenant: Optional[str] = None) -> dict:
 
 
 async def search_cases(
-    filters: Optional[dict[str, Any]] = None,
-    query: Optional[str] = None,
-    tenant: Optional[str] = None,
+    filters: dict[str, Any] | None = None,
+    query: str | None = None,
+    tenant: str | None = None,
     limit: int = 20,
     offset: int = 0,
     sort_by: str = "updated_on",

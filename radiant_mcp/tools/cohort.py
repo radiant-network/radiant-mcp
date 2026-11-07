@@ -8,7 +8,7 @@ caller's JWT, so a user only counts the cases they may see.
 """
 
 from dataclasses import replace
-from typing import Any, Optional
+from typing import Any
 
 from .. import portal_api as _api
 from .. import sql as _sql
@@ -30,7 +30,7 @@ CARRIERS_MAX_LIMIT = 200
 PHENOTYPES_MAX_LIMIT = 100
 
 
-def _resolve(api: RadiantApi, tenant: Optional[str], criteria: Criteria) -> tuple[Optional[str], Optional[Criteria], Optional[dict]]:
+def _resolve(api: RadiantApi, tenant: str | None, criteria: Criteria) -> tuple[str | None, Criteria | None, dict | None]:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return None, None, err
@@ -40,7 +40,7 @@ def _resolve(api: RadiantApi, tenant: Optional[str], criteria: Criteria) -> tupl
     return tenant_code, replace(criteria, gene=_sql.symbol(gene["symbol"])), None
 
 
-def _link(tenant: str, criteria: Criteria, row: dict) -> Optional[str]:
+def _link(tenant: str, criteria: Criteria, row: dict) -> str | None:
     if criteria.data_type == "germline_snv":
         return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "germline_snv",
                               task_id=row.get("task_id"), variant_id=str(row.get("first_variant_id")))
@@ -50,7 +50,7 @@ def _link(tenant: str, criteria: Criteria, row: dict) -> Optional[str]:
     return case_url(tenant, row.get("case_id"), tab="variants")
 
 
-def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: Optional[str], limit: int) -> dict:
+def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: str | None, limit: int) -> dict:
     tenant_code, criteria, err = _resolve(api, tenant, criteria)
     if err:
         return err
@@ -75,7 +75,7 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: Op
 
 
 def _genotype_phenotype(
-    api: RadiantApi, token: str, criteria: Criteria, hpo_term: Optional[str], tenant: Optional[str], limit: int,
+    api: RadiantApi, token: str, criteria: Criteria, hpo_term: str | None, tenant: str | None, limit: int,
 ) -> dict:
     tenant_code, criteria, err = _resolve(api, tenant, criteria)
     if err:
@@ -103,13 +103,13 @@ def _genotype_phenotype(
 async def cohort_carriers(
     gene: str,
     data_type: CohortDataType = "germline_snv",
-    vep_impact: Optional[list[str]] = None,
-    clinvar: Optional[list[str]] = None,
-    max_gnomad_af: Optional[float] = None,
-    zygosity: Optional[list[str]] = None,
-    cnv_types: Optional[list[str]] = None,
+    vep_impact: list[str] | None = None,
+    clinvar: list[str] | None = None,
+    max_gnomad_af: float | None = None,
+    zygosity: list[str] | None = None,
+    cnv_types: list[str] | None = None,
     limit: int = 50,
-    tenant: Optional[str] = None,
+    tenant: str | None = None,
 ) -> dict:
     """The cases and patients of the tenant that carry a variant in a gene.
 
@@ -144,15 +144,15 @@ async def cohort_carriers(
 
 async def genotype_phenotype(
     gene: str,
-    hpo_term: Optional[str] = None,
+    hpo_term: str | None = None,
     data_type: CohortDataType = "germline_snv",
-    vep_impact: Optional[list[str]] = None,
-    clinvar: Optional[list[str]] = None,
-    max_gnomad_af: Optional[float] = None,
-    zygosity: Optional[list[str]] = None,
-    cnv_types: Optional[list[str]] = None,
+    vep_impact: list[str] | None = None,
+    clinvar: list[str] | None = None,
+    max_gnomad_af: float | None = None,
+    zygosity: list[str] | None = None,
+    cnv_types: list[str] | None = None,
     limit: int = 30,
-    tenant: Optional[str] = None,
+    tenant: str | None = None,
 ) -> dict:
     """The observed HPO phenotypes of a gene's carriers.
 

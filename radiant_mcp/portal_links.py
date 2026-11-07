@@ -13,7 +13,6 @@ this module and its tests.
 """
 
 import os
-from typing import Optional
 from urllib.parse import quote, urlencode
 
 PORTAL_URL_ENV = "RADIANT_PORTAL_URL"
@@ -36,12 +35,12 @@ PATIENT_TABS = (
 )
 
 
-def _base() -> Optional[str]:
+def _base() -> str | None:
     base = os.getenv(PORTAL_URL_ENV, "").strip()
     return base.rstrip("/") or None
 
 
-def _build(tenant: Optional[str], path: str, params: Optional[dict] = None) -> Optional[str]:
+def _build(tenant: str | None, path: str, params: dict | None = None) -> str | None:
     base = _base()
     if not base or not tenant:
         return None
@@ -50,7 +49,7 @@ def _build(tenant: Optional[str], path: str, params: Optional[dict] = None) -> O
     return f"{url}?{urlencode(query)}" if query else url
 
 
-def case_url(tenant: Optional[str], case_id, tab: Optional[str] = None) -> Optional[str]:
+def case_url(tenant: str | None, case_id, tab: str | None = None) -> str | None:
     if case_id is None:
         return None
     if tab is not None and tab not in CASE_TABS:
@@ -59,13 +58,13 @@ def case_url(tenant: Optional[str], case_id, tab: Optional[str] = None) -> Optio
 
 
 def occurrence_url(
-    tenant: Optional[str],
+    tenant: str | None,
     case_id,
     seq_id,
     data_type: str,
     task_id=None,
-    variant_id: Optional[str] = None,
-) -> Optional[str]:
+    variant_id: str | None = None,
+) -> str | None:
     """Case variants tab on one sequencing and data type.
 
     For an SNV, ``variant_id`` (the ``locus_id``) opens its occurrence side
@@ -84,7 +83,7 @@ def occurrence_url(
     return _build(tenant, f"case/entity/{quote(str(case_id), safe='')}", params)
 
 
-def patient_url(tenant: Optional[str], patient_key: Optional[str], tab: Optional[str] = None) -> Optional[str]:
+def patient_url(tenant: str | None, patient_key: str | None, tab: str | None = None) -> str | None:
     if not patient_key:
         return None
     if tab is not None and tab not in PATIENT_TABS:
@@ -92,13 +91,13 @@ def patient_url(tenant: Optional[str], patient_key: Optional[str], tab: Optional
     return _build(tenant, f"patient/entity/{quote(str(patient_key), safe='')}", {"tab": tab})
 
 
-def variant_url(tenant: Optional[str], locus_id) -> Optional[str]:
+def variant_url(tenant: str | None, locus_id) -> str | None:
     if locus_id is None or locus_id == "":
         return None
     return _build(tenant, f"variants/entity/{quote(str(locus_id), safe='')}")
 
 
-def with_url(item: dict, url: Optional[str], key: str = "portal_url") -> dict:
+def with_url(item: dict, url: str | None, key: str = "portal_url") -> dict:
     """Set ``item[key]`` when ``url`` is not None, and return ``item``."""
     if url is not None:
         item[key] = url

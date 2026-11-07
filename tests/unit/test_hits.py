@@ -184,7 +184,7 @@ def test_second_hit_reads_the_latest_task_of_a_rerun(fake_api, fake_sql, run, mo
 
 
 def test_second_hit_matches_every_gene_of_a_variant():
-    for sql, values in (hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
+    for sql, _ in (hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
                         hit_queries.germline_plp_query("demo_tenant", SNV_KEY),
                         hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])):
         assert "JOIN radiant.snv__consequence_filter cf ON cf.locus_id = o.locus_id" in sql

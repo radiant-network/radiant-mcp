@@ -5,7 +5,7 @@ groups of ``survival_curve`` share them.
 """
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from .. import sql as _sql
 from ..enums import ENUMS, canonical_values
@@ -21,7 +21,7 @@ class Criteria:
     gene: str
     vep_impact: tuple[str, ...] = ()
     clinvar: tuple[str, ...] = ()
-    max_gnomad_af: Optional[float] = None
+    max_gnomad_af: float | None = None
     zygosity: tuple[str, ...] = ()
     cnv_types: tuple[str, ...] = ()
 
@@ -52,11 +52,11 @@ class Criteria:
 def build_criteria(
     data_type: str,
     gene: str,
-    vep_impact: Optional[list[str]],
-    clinvar: Optional[list[str]],
-    max_gnomad_af: Optional[float],
-    zygosity: Optional[list[str]],
-    cnv_types: Optional[list[str]],
+    vep_impact: list[str] | None,
+    clinvar: list[str] | None,
+    max_gnomad_af: float | None,
+    zygosity: list[str] | None,
+    cnv_types: list[str] | None,
 ) -> Criteria:
     _sql.one_of(data_type, data_types.COHORT_DATA_TYPES, "data_type")
     _sql.symbol(gene)

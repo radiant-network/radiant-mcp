@@ -5,12 +5,12 @@ the ones a geneticist sees there.
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from typing import Any
 
-from ..domain.data_types import CaseSnvDataType
-from ..portal_links import case_url, occurrence_url, variant_url, with_url
 from .. import portal_api as _api
+from ..domain.data_types import CaseSnvDataType
 from ..portal_api import RadiantApi, clamp, is_status, resolve_tenant
+from ..portal_links import case_url, occurrence_url, variant_url, with_url
 
 # Section -> (variants API operation, extra arguments).
 _VARIANT_SECTIONS = {
@@ -29,7 +29,7 @@ _WORKERS = 3
 CARRIERS_MAX_LIMIT = 100
 
 
-def _key_transcripts(consequences: list[dict], picked_transcript_id: Optional[str]) -> list[dict]:
+def _key_transcripts(consequences: list[dict], picked_transcript_id: str | None) -> list[dict]:
     """Keep the picked, MANE and canonical transcripts of each gene.
 
     ``is_picked`` is set on the gene, not on its transcripts: the picked
@@ -56,10 +56,10 @@ def _variant_details(
     api: RadiantApi,
     _token: str,
     locus_id: str,
-    tenant: Optional[str],
-    case_id: Optional[int],
-    seq_id: Optional[int],
-    task_id: Optional[int],
+    tenant: str | None,
+    case_id: int | None,
+    seq_id: int | None,
+    task_id: int | None,
     data_type: str,
 ) -> dict:
     tenant_code, err = resolve_tenant(api, tenant)
@@ -84,7 +84,7 @@ def _variant_details(
             {"tenant": tenant_code, "case_id": case_id, "seq_id": seq_id, "task_id": task_id, "locus_id": locus_id},
         ))
 
-    def _fetch(call: tuple[str, str, str, dict]) -> tuple[str, Any, Optional[str]]:
+    def _fetch(call: tuple[str, str, str, dict]) -> tuple[str, Any, str | None]:
         name, api_name, operation, kwargs = call
         try:
             return name, api.call(api_name, operation, **kwargs), None
@@ -114,7 +114,7 @@ def _variant_details(
     return result
 
 
-def _variant_carriers(api: RadiantApi, _token: str, locus_id: str, tenant: Optional[str], limit: int) -> dict:
+def _variant_carriers(api: RadiantApi, _token: str, locus_id: str, tenant: str | None, limit: int) -> dict:
     from radiant_python.models.list_body_with_criteria import ListBodyWithCriteria
 
     tenant_code, err = resolve_tenant(api, tenant)
@@ -150,10 +150,10 @@ def _variant_carriers(api: RadiantApi, _token: str, locus_id: str, tenant: Optio
 
 async def variant_details(
     locus_id: str,
-    tenant: Optional[str] = None,
-    case_id: Optional[int] = None,
-    seq_id: Optional[int] = None,
-    task_id: Optional[int] = None,
+    tenant: str | None = None,
+    case_id: int | None = None,
+    seq_id: int | None = None,
+    task_id: int | None = None,
     data_type: CaseSnvDataType = "germline_snv",
 ) -> dict:
     """Everything the portal knows about one SNV, optionally in one case.
@@ -187,7 +187,7 @@ async def variant_details(
     return await _api.run(_variant_details, str(locus_id), tenant, case_id, seq_id, task_id, data_type)
 
 
-async def variant_carriers(locus_id: str, tenant: Optional[str] = None, limit: int = 20) -> dict:
+async def variant_carriers(locus_id: str, tenant: str | None = None, limit: int = 20) -> dict:
     """List the cases of the tenant that carry a germline SNV.
 
     Same lists as the "Cases" section of the portal's variant page:

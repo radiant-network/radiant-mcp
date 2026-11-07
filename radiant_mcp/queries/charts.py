@@ -1,12 +1,12 @@
 """SQL of the family Venn diagram and the oncoprint."""
 
-from typing import Optional
 
 from .. import sql as _sql
 from ..domain import data_types
 from ..domain import rules as _rules
 from ..domain.rules import ALT_ZYGOSITIES
 from .sequencing import sequencing_join
+
 
 def venn_query(tenant_db: str, members: list[tuple[str, dict]], rare_only: bool,
                vep_impact: list[str]) -> tuple[str, _sql.Params]:
@@ -41,7 +41,7 @@ def venn_query(tenant_db: str, members: list[tuple[str, dict]], rare_only: bool,
 ONCOPRINT_ROW_LIMIT = 50000
 
 
-def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af: Optional[float],
+def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af: float | None,
                     vep_impact: list[str]) -> tuple[str, _sql.Params]:
     """``(case_id, gene, kind)`` rows, ordered by case so a cut drops whole cases last.
 

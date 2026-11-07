@@ -13,7 +13,7 @@ Every occurrence query filters on the ``part`` of its key, taken from
 output.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from .. import portal_api as _api
 from .. import sql as _sql
@@ -32,7 +32,6 @@ from ..queries.hits import (
     somatic_snv_query,
 )
 from ..services.cases import case_context
-
 
 
 def mechanism(zygosity: str, inside: bool) -> str:
@@ -161,7 +160,7 @@ def _attach_family_deletions(token: str, tenant_db: str, hits: list[dict], other
         hit["family_deletions"] = deletions
 
 
-def _proband_patient_id(case: dict) -> Optional[int]:
+def _proband_patient_id(case: dict) -> int | None:
     for member in case.get("members", []):
         if member.get("relationship_to_proband") == "proband" and member.get("patient_id") is not None:
             return int(member["patient_id"])
@@ -226,7 +225,7 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
     }
 
 
-def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: Optional[str]) -> dict:
+def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | None) -> dict:
     context = case_context(api, token, case_id, tenant)
     if "error" in context:
         return context
@@ -265,7 +264,7 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: Optional
 
 # -- tool --------------------------------------------------------------------
 
-async def second_hit(case_id: int, tenant: Optional[str] = None) -> dict:
+async def second_hit(case_id: int, tenant: str | None = None) -> dict:
     """Find genes hit twice in a case.
 
     Germline case, for each sequencing with variants: ``snv_cnv`` lists the

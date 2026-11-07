@@ -12,8 +12,8 @@ import io
 import math
 import os
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
 
 # matplotlib reads MPLCONFIGDIR on import; the container user has no home directory.
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
@@ -112,9 +112,9 @@ class SurvivalGroup:
 @dataclass
 class SurvivalStats:
     groups: list[dict] = field(default_factory=list)
-    logrank_p: Optional[float] = None
-    logrank_df: Optional[int] = None
-    logrank_skipped: Optional[str] = None
+    logrank_p: float | None = None
+    logrank_df: int | None = None
+    logrank_skipped: str | None = None
 
 
 def _censored(group: SurvivalGroup):
@@ -141,7 +141,7 @@ def _km_steps(group: SurvivalGroup) -> tuple[np.ndarray, np.ndarray]:
     return xs, ys
 
 
-def logrank(groups: Sequence[SurvivalGroup]) -> Optional[tuple[float, int, float]]:
+def logrank(groups: Sequence[SurvivalGroup]) -> tuple[float, int, float] | None:
     """k-sample log-rank test: ``(chi-square, degrees of freedom, p-value)``,
     or None without any death or with fewer than two informative groups.
 
@@ -190,7 +190,7 @@ def logrank_skipped_reason(groups: Sequence[SurvivalGroup]) -> str:
     return "the groups share no follow-up time with a death"
 
 
-def _median(xs: np.ndarray, ys: np.ndarray) -> Optional[float]:
+def _median(xs: np.ndarray, ys: np.ndarray) -> float | None:
     below = np.nonzero(ys <= 0.5)[0]
     return float(xs[below[0]]) if below.size else None
 
@@ -338,7 +338,7 @@ def lollipop(points: Sequence[Lollipop], title: str, subtitle: str) -> bytes:
 class TimelineItem:
     track: str
     start: float  # years
-    end: Optional[float] = None  # years; None = point event
+    end: float | None = None  # years; None = point event
     label: str = ""
 
 

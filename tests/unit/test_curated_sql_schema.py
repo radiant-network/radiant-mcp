@@ -14,10 +14,10 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.qualify import qualify
 
-from radiant_mcp.schema_catalog import SHARED_DB, TENANT_DB
 from radiant_mcp.domain.criteria import Criteria
 from radiant_mcp.domain.data_types import COHORT_DATA_TYPES
 from radiant_mcp.queries import carriers, charts, genes, hits, sequencing
+from radiant_mcp.schema_catalog import SHARED_DB, TENANT_DB
 
 TENANT = "t1"
 TENANT_SQL_DB = f"{TENANT}_tenant"

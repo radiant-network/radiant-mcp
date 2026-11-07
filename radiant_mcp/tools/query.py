@@ -7,12 +7,12 @@ at most ``STARROCKS_MAX_ROWS`` rows and says when it cut the result.
 """
 
 import os
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import anyio
 
-from .. import starrocks
 from .. import portal_api as _api
+from .. import starrocks
 from ..sql import plain
 
 _MAX_ROWS_ENV = "STARROCKS_MAX_ROWS"
@@ -46,7 +46,7 @@ async def _run(fn: Callable[..., dict], *args) -> dict:
         return {"error": f"StarRocks error: {exc}"}
 
 
-def _read_query(token: str, query: str, db: Optional[str]) -> dict:
+def _read_query(token: str, query: str, db: str | None) -> dict:
     max_rows = _max_rows()
     result = starrocks.query(token, query, database=db, max_rows=max_rows)
     out = {"columns": result.columns, "rows": _rows(result), "returned": len(result.rows)}
@@ -57,7 +57,7 @@ def _read_query(token: str, query: str, db: Optional[str]) -> dict:
     return out
 
 
-async def read_query(query: str, db: Optional[str] = None) -> dict:
+async def read_query(query: str, db: str | None = None) -> dict:
     """Run one read-only SQL statement in StarRocks, as the caller.
 
     Last resort: call ``describe_schema`` first and prefer the Radiant tools.
@@ -83,7 +83,7 @@ def _table_overview(token: str, table: str) -> dict:
     out = {
         "table": f"{db}.{name}",
         "row_count": plain(count),
-        "columns": [dict(zip(columns.columns, row)) for row in _rows(columns)],
+        "columns": [dict(zip(columns.columns, row, strict=True)) for row in _rows(columns)],
     }
     if count:
         sample = starrocks.query(token, f"SELECT * FROM {full} LIMIT {_SAMPLE_ROWS}")
