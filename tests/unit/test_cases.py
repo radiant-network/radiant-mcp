@@ -7,7 +7,7 @@ from radiant_mcp.tools.cases import get_case_context, search_cases
 def test_search_cases_links_each_case(fake_api, run):
     fake_api.on("cases", "search_cases", {"count": 1, "list": [{"case_id": 1131}]})
     result = run(search_cases(filters={"status_code": "active"}, tenant="pragmatiq"))
-    assert result["cases"][0]["portal_url"] == f"{PORTAL}/pragmatiq/case/entity/1131"
+    assert result["data"]["cases"][0]["portal_url"] == f"{PORTAL}/pragmatiq/case/entity/1131"
 
 
 def test_search_cases_by_identifier_caps_the_merged_list(fake_api, run):
@@ -16,12 +16,12 @@ def test_search_cases_by_identifier_caps_the_merged_list(fake_api, run):
         "count": 2, "list": [{"case_id": 7}, {"case_id": 8}],
     })
     result = run(search_cases(query="GM1", tenant="t", limit=1))
-    assert result["returned"] == 1 and [c["case_id"] for c in result["cases"]] == [7]
-    assert result["count"] == 2 and result["more_results"] is True
+    assert result["data"]["returned"] == 1 and [c["case_id"] for c in result["data"]["cases"]] == [7]
+    assert result["data"]["count"] == 2 and "longer identifier" in result["truncated"]["reason"]
 
 
 def test_search_cases_validates_before_calling(fake_api, run):
-    assert "Unknown filter" in run(search_cases(filters={"foo": 1}, tenant="t"))["error"]
+    assert "Unknown filter" in run(search_cases(filters={"foo": 1}, tenant="t"))["error"]["message"]
     assert fake_api.calls == []
 
 
@@ -38,14 +38,14 @@ def test_case_context_links_the_case_members_and_keys(fake_api, run, monkeypatch
 
     result = run(get_case_context(8, tenant="radiant"))
 
-    case = result["case"]
+    case = result["data"]["case"]
     assert case["portal_url"] == f"{PORTAL}/radiant/case/entity/8"
     assert case["members"][0]["portal_url"] == f"{PORTAL}/radiant/patient/entity/k-1"
     assert "portal_url" not in case["members"][1]
-    [key] = result["occurrence_keys"]
+    [key] = result["data"]["occurrence_keys"]
     assert key["part"] == 154 and key["variant_part"] == 15
     assert key["portal_url"] == f"{PORTAL}/radiant/case/entity/8?tab=variants&seq_id=21&task_id=3&variant_section=snv"
-    assert "warnings" not in result
+    assert result["warnings"] == [] and result["portal_url"] == f"{PORTAL}/radiant/case/entity/8"
 
 
 def test_part_lookup_binds_the_case_and_skips_tasks_without_part(fake_sql):
@@ -73,7 +73,7 @@ def test_search_cases_finds_a_case_by_sample_id(fake_api, run):
         searched.append(_criteria_of(list_body_with_criteria)) or {"count": 1, "list": [{"case_id": 7}]}))
     result = run(search_cases(query="S12345", tenant="t"))
     assert searched == [{"proband_submitter_sample_ids": ["S12345"]}]
-    assert [c["case_id"] for c in result["cases"]] == [7]
+    assert [c["case_id"] for c in result["data"]["cases"]] == [7]
 
 
 def test_search_cases_intersects_a_filter_with_a_match_on_the_same_field(fake_api, run):
@@ -88,6 +88,6 @@ def test_search_cases_intersects_a_filter_with_a_match_on_the_same_field(fake_ap
 
 def test_search_cases_rejects_a_retired_field(fake_api, run):
     result = run(search_cases(filters={"resolution_status_code": "solved"}, tenant="t"))
-    assert "Unknown filter field" in result["error"] and "project_name" in result["allowed_filter_fields"]
-    assert "Unknown sort field" in run(search_cases(query="1", sort_by="resolution_status_code", tenant="t"))["error"]
+    assert "Unknown filter field" in result["error"]["message"] and "project_name" in result["error"]["details"]["allowed"]
+    assert "Unknown sort field" in run(search_cases(query="1", sort_by="resolution_status_code", tenant="t"))["error"]["message"]
     assert fake_api.calls == []

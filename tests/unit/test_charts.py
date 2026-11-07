@@ -2,13 +2,11 @@
 
 import asyncio
 import importlib
-import json
 import re
 
 import pytest
 from conftest import api_exception, bound_value
 from fastmcp import Client, FastMCP
-from fastmcp.utilities.types import Image
 
 from radiant_mcp import charts
 from radiant_mcp.domain.consequences import consequence_class
@@ -26,9 +24,9 @@ PLACEBO_T = [1, 1, 2, 2, 3, 4, 4, 5, 5, 8, 8, 8, 8, 11, 11, 12, 12, 15, 17, 22, 
 
 
 def _parts(result) -> tuple[dict, bytes]:
-    text, image = result
-    assert isinstance(image, Image)
-    return json.loads(text), image.data
+    """The ``data`` of a chart result and its PNG."""
+    assert result["ok"] and result.png is not None, result
+    return result["data"], result.png
 
 
 # -- rendering -----------------------------------------------------------------------
@@ -167,7 +165,7 @@ def test_family_venn_duo_with_filters(fake_api, fake_sql, run, monkeypatch):
 
 def test_family_venn_needs_a_parent(fake_api, fake_sql, run, monkeypatch):
     _trio_api(fake_api, monkeypatch, roles=("proband",))
-    assert "no sequenced parent" in run(family_venn(1, tenant="demo"))["error"]
+    assert "no sequenced parent" in run(family_venn(1, tenant="demo"))["error"]["message"]
     assert fake_sql.queries == []
 
 
@@ -278,7 +276,7 @@ def test_survival_of_three_groups(fake_api, run):
      "cohort_filters"),
 ])
 def test_survival_validates(fake_api, run, kwargs, message):
-    assert message in run(survival_curve(tenant="demo", **kwargs))["error"]
+    assert message in run(survival_curve(tenant="demo", **kwargs))["error"]["message"]
     assert fake_api.calls == []
 
 
@@ -286,14 +284,14 @@ def test_survival_reports_an_unknown_gene(fake_api, run):
     fake_api.on("genes", "gene_search", [])
     _patients(fake_api, [{"patient_key": _key(1), "radiant_patient_id": 1, "survival_days": 10, "vital_status": "alive"}])
     result = run(survival_curve(groups=[{"label": "A", "carriers": {"gene": "NOPE1"}}], others_label="B", tenant="demo"))
-    assert "not found" in result["error"]
+    assert "not found" in result["error"]["message"]
 
 
 def test_survival_without_clinical_data(fake_api, run):
     fake_api.on("patients", "search_patients", api_exception(404, "404 page not found"))
     result = run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "alive"}},
                                         {"label": "B", "filters": {"vital_status": "deceased"}}], tenant="x"))
-    assert result["clinical_data_available"] is False
+    assert result["error"]["code"] == "unavailable" and result.png is None
 
 
 # -- oncoprint / lollipop ------------------------------------------------------------
@@ -306,13 +304,14 @@ def test_oncoprint(fake_api, fake_sql, run):
         {"case_id": 2, "gene": "BRCA1", "kind": "missense_variant"},
     ])
     fake_sql.on("germline__cnv__occurrence", [{"case_id": 2, "gene": "SCN1A", "kind": "LOSS"}])
-    data, png = _parts(run(oncoprint(["scn1a", "brca1"], data_types=["germline_snv", "germline_cnv"], tenant="demo")))
+    result = run(oncoprint(["scn1a", "brca1"], data_types=["germline_snv", "germline_cnv"], tenant="demo"))
+    data, png = _parts(result)
     assert png.startswith(PNG)
     assert data["altered_cases"] == 2 and data["altered_cases_per_gene"] == {"SCN1A": 2, "BRCA1": 1}
     for sql, values in fake_sql.queries:
         assert bound_value(sql, values, "s.tenant_code = ") == "demo"
         assert bound_value(sql, values, "s.family_role = ") == "proband"
-    assert "polymorphisms" in data["note"] and "proband" in data["germline"]
+    assert any("polymorphisms" in w for w in result["warnings"]) and "proband" in data["germline"]
 
 
 def test_oncoprint_keeps_parents_out_of_germline_cases_only(fake_api, fake_sql, run):
@@ -332,11 +331,12 @@ def test_oncoprint_counts_every_altered_case_and_flags_a_cut(fake_api, fake_sql,
     fake_sql.on("germline__snv__occurrence", [
         {"case_id": i, "gene": "TP53", "kind": "missense_variant"} for i in range(1, 152)
     ])
-    data, _ = _parts(run(oncoprint(["TP53", "P53"], max_gnomad_af=0.01, tenant="demo")))
+    result = run(oncoprint(["TP53", "P53"], max_gnomad_af=0.01, tenant="demo"))
+    data, _ = _parts(result)
     assert data["genes"] == ["TP53"]
     assert data["altered_cases"] == 150 and data["cases_shown"] == 100
     assert data["altered_cases_per_gene"] == {"TP53": 150}
-    assert data["truncated"] == ["germline_snv"] and "note" not in data
+    assert result["truncated"]["lists"] == ["germline_snv"] and result["warnings"] == []
 
 
 @pytest.mark.parametrize("kwargs, message", [
@@ -345,7 +345,7 @@ def test_oncoprint_counts_every_altered_case_and_flags_a_cut(fake_api, fake_sql,
     ({"genes": ["TP53"], "data_types": ["rna"]}, "invalid data_type"),
 ])
 def test_oncoprint_validates(fake_api, run, kwargs, message):
-    assert message in run(oncoprint(**kwargs))["error"]
+    assert message in run(oncoprint(**kwargs))["error"]["message"]
 
 
 def test_lollipop_draws_the_main_transcript(fake_api, fake_sql, run):
@@ -391,14 +391,14 @@ def test_patient_timeline(fake_api, run):
 
 
 def test_patient_timeline_rejects_an_mrn(fake_api, run):
-    assert "not a patient key" in run(patient_timeline("MRN-1"))["error"]
+    assert "not a patient key" in run(patient_timeline("MRN-1"))["error"]["message"]
 
 
 def test_bar_chart(run):
     data, png = _parts(run(bar_chart("Carriers", ["missense", "stop_gained"], [3, 1])))
     assert png.startswith(PNG) and data["values"] == {"missense": 3.0, "stop_gained": 1.0}
-    assert "one number per category" in run(bar_chart("t", ["a"], [1, 2]))["error"]
-    assert "1 to 50" in run(bar_chart("t", [], []))["error"]
+    assert "one number per category" in run(bar_chart("t", ["a"], [1, 2]))["error"]["message"]
+    assert "1 to 50" in run(bar_chart("t", [], []))["error"]["message"]
 
 
 # -- MCP contract ----------------------------------------------------------------------
@@ -424,14 +424,15 @@ def test_family_venn_says_what_the_proband_only_region_holds(fake_api, fake_sql,
     # The father's task has no part: the duo says so instead of silently dropping him.
     _trio_api(fake_api, monkeypatch)
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5, (14, 20): 5}, None))
-    data, _ = _parts(run(family_venn(1, tenant="demo")))
+    result = run(family_venn(1, tenant="demo"))
+    data, _ = _parts(result)
     assert data["members"] == ["Proband", "Mother"] and "not sequenced" in data["proband_only"]
-    assert any(w.startswith("father (seq_id=13)") for w in data["warnings"])
+    assert any(w.startswith("father (seq_id=13)") for w in result["warnings"])
 
 
 def test_bar_chart_rejects_duplicate_categories(run):
-    assert "distinct" in run(bar_chart("t", ["a", "a"], [1, 2]))["error"]
-    assert "distinct" in run(bar_chart("t", ["x" * 60 + "1", "x" * 60 + "2"], [1, 2]))["error"]
+    assert "distinct" in run(bar_chart("t", ["a", "a"], [1, 2]))["error"]["message"]
+    assert "distinct" in run(bar_chart("t", ["x" * 60 + "1", "x" * 60 + "2"], [1, 2]))["error"]["message"]
 
 
 def test_lollipop_stacks_variants_of_one_residue():
@@ -467,11 +468,13 @@ def test_survival_explains_a_missing_logrank_and_a_cut_cohort(fake_api, run, mon
     rows = [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "alive"} for i in range(1, 5)]
     rows.append({"patient_key": None, "survival_days": 50, "vital_status": "alive"})
     _patients(fake_api, rows)
-    data, _ = _parts(run(survival_curve(groups=[{"label": "A", "patient_keys": [_key(1).upper() + "\n"]}],
-                                        others_label="B", tenant="demo")))
+    result = run(survival_curve(groups=[{"label": "A", "patient_keys": [_key(1).upper() + "\n"]}],
+                                others_label="B", tenant="demo"))
+    data, _ = _parts(result)
     assert data["logrank_p"] is None and data["logrank_skipped"] == "no death in any group"
     assert data["definition"]["A"]["not_found_or_not_in_cohort"] == 0  # upper case and newline normalized
-    assert data["capped_at"] == 3 and any("not representative" in w for w in data["warnings"])
+    assert "stopped at 3 patients" in result["truncated"]["reason"]
+    assert "not representative" in result["truncated"]["reason"]
 
 
 def test_survival_overlap_counts_only_drawn_patients(fake_api, run):
@@ -491,24 +494,25 @@ def test_survival_warns_when_non_carriers_include_patients_without_a_case(fake_a
              "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 9)]
     _patients(fake_api, rows)
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": "1"}, {"patient_id": "2"}])
-    data, _ = _parts(run(survival_curve(groups=[{"label": "TP53", "carriers": {"gene": "TP53"}}],
-                                        others_label="Others", tenant="demo")))
+    result = run(survival_curve(groups=[{"label": "TP53", "carriers": {"gene": "TP53"}}],
+                                others_label="Others", tenant="demo"))
+    data, _ = _parts(result)
     assert data["definition"]["Others"]["patients_without_radiant_case"] == 4
-    assert any("sequenced_only=True" in w for w in data["warnings"])
+    assert any("sequenced_only=True" in w for w in result["warnings"])
 
 
 def test_survival_resolves_genes_before_reading_patients(fake_api, run):
     fake_api.on("genes", "gene_search", [])
     result = run(survival_curve(groups=[{"label": "X", "carriers": {"gene": "NOPE1"}}], others_label="Rest",
                                 tenant="demo"))
-    assert "not found" in result["error"] and _searches(fake_api) == []
+    assert "not found" in result["error"]["message"] and _searches(fake_api) == []
 
 
 def test_survival_reports_gene_search_errors_as_errors(fake_api, run):
     fake_api.on("genes", "gene_search", api_exception(503))
     result = run(survival_curve(groups=[{"label": "X", "carriers": {"gene": "TP53"}}], others_label="Rest",
                                 tenant="demo"))
-    assert "clinical_data_available" not in result and "503" in result["error"]
+    assert "clinical_data_available" not in result and "503" in result["error"]["message"]
 
 
 def test_survival_combines_cohort_and_group_filters_in_one_search(fake_api, run):
@@ -525,7 +529,7 @@ def test_survival_combines_cohort_and_group_filters_in_one_search(fake_api, run)
 
 def test_survival_names_an_empty_group(fake_api, run):
     result = run(survival_curve(groups=[{"label": "Arm B", "patient_keys": []}], others_label="Rest", tenant="demo"))
-    assert "the group is empty" in result["error"] and fake_api.calls == []
+    assert "the group is empty" in result["error"]["message"] and fake_api.calls == []
 
 
 def test_dollar_signs_in_titles_and_labels_are_plain_text(run):

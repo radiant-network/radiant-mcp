@@ -34,7 +34,8 @@ def test_without_the_api_only_the_schema_chart_and_sql_tools_are_added():
 
 
 def test_unexpected_errors_do_not_leak_their_message():
-    from radiant_mcp.portal_api import api_error
+    from radiant_mcp.results import failure
 
-    error = api_error(ConnectionError("HTTPConnectionPool(host='radiant-api.internal', port=8090): refused"))
-    assert error == {"error": "Unexpected ConnectionError in the tool; the details are in the server logs."}
+    error = failure(ConnectionError("HTTPConnectionPool(host='radiant-api.internal', port=8090): refused")).error
+    assert error.code == "internal"
+    assert error.message == "Unexpected ConnectionError in the tool; the details are in the server logs."

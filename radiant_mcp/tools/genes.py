@@ -3,10 +3,13 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from fastmcp.tools import ToolResult
+
 from .. import portal_api as _api
 from .. import sql as _sql
 from ..portal_api import RadiantApi, clamp, resolve_tenant
 from ..queries.genes import gene_queries
+from ..results import ToolOutput, Truncation, error, failure, not_found, ok, respond
 from ..services.genes import resolve_gene
 
 ONTOLOGIES = {
@@ -18,13 +21,11 @@ _HPO_TERMS_SHOWN = 100
 _WORKERS = 3
 
 
-def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> dict:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> ToolOutput:
+    tenant_code = resolve_tenant(api, tenant)
     resolved = resolve_gene(api, tenant_code, gene)
     if resolved is None:
-        return {"error": f"Gene {gene!r} not found.", "status": 404}
+        raise not_found(f"Gene {gene!r} not found.")
     symbol = _sql.symbol(resolved["symbol"])
     queries = gene_queries(symbol, resolved.get("ensembl_gene_id"), tenant_code)
 
@@ -41,6 +42,7 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> di
         "ensembl_gene_id": resolved.get("ensembl_gene_id"),
     }
     warnings: list[str] = []
+    cut = None
     with ThreadPoolExecutor(max_workers=_WORKERS) as pool:
         rows = {}
         for name, data, warning in pool.map(_fetch, queries.items()):
@@ -56,6 +58,9 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> di
     if "hpo" in rows:
         result["hpo_terms_count"] = len(rows["hpo"])
         result["hpo_terms"] = rows["hpo"][:_HPO_TERMS_SHOWN]
+        if len(rows["hpo"]) > _HPO_TERMS_SHOWN:
+            cut = Truncation(reason=f"`hpo_terms` lists the first {_HPO_TERMS_SHOWN} of {len(rows['hpo'])} "
+                                    "terms; `hpo_terms_count` counts them all.", lists=["hpo_terms"])
     if "orphanet" in rows:
         result["orphanet_disorders"] = [
             {**r, "inheritance_code": _sql.as_list(r.get("inheritance_code"))} for r in rows["orphanet"]
@@ -68,15 +73,13 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> di
         result["tenant_gene_panels"] = [r["panel"] for r in rows["tenant_panels"]]
     if "constraint" in rows:
         result["gnomad_constraint"] = rows["constraint"]
-    if warnings:
-        result["warnings"] = warnings
-    return result
+    return ok(result, warnings=warnings, truncated=cut)
 
 
-def _lookup_terms(api: RadiantApi, _token: str, ontology: str, query: str, tenant: str | None, limit: int) -> dict:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+def _lookup_terms(
+    api: RadiantApi, _token: str, ontology: str, query: str, tenant: str | None, limit: int,
+) -> ToolOutput:
+    tenant_code = resolve_tenant(api, tenant)
     api_name, operation = ONTOLOGIES[ontology]
     matches = api.call(api_name, operation, tenant=tenant_code, prefix=query, limit=str(limit)) or []
     terms = []
@@ -84,12 +87,12 @@ def _lookup_terms(api: RadiantApi, _token: str, ontology: str, query: str, tenan
         source = match.get("source") or {}
         if source.get("id"):
             terms.append({"id": source["id"], "name": source.get("name")})
-    return {"tenant": tenant_code, "ontology": ontology, "query": query, "terms": terms}
+    return ok({"tenant": tenant_code, "ontology": ontology, "query": query, "terms": terms})
 
 
 # -- tools -------------------------------------------------------------------
 
-async def gene_info(symbol: str, tenant: str | None = None) -> dict:
+async def gene_info(symbol: str, tenant: str | None = None) -> ToolResult:
     """What is known about a gene, independently of any patient.
 
     Returns ``omim_conditions`` (condition, OMIM ids, inheritance),
@@ -107,11 +110,11 @@ async def gene_info(symbol: str, tenant: str | None = None) -> dict:
     try:
         _sql.symbol(symbol)
     except _sql.InvalidInput as exc:
-        return {"error": str(exc)}
+        return respond(failure(exc))
     return await _api.run(_gene_info, symbol, tenant)
 
 
-async def lookup_terms(ontology: str, query: str, tenant: str | None = None, limit: int = 10) -> dict:
+async def lookup_terms(ontology: str, query: str, tenant: str | None = None, limit: int = 10) -> ToolResult:
     """Find HPO or MONDO terms by name or id, with their identifiers.
 
     Use it to name an HPO code, or to find the MONDO id of a condition (e.g.
@@ -126,7 +129,7 @@ async def lookup_terms(ontology: str, query: str, tenant: str | None = None, lim
         limit: Max terms returned (1–50, default 10).
     """
     if ontology not in ONTOLOGIES:
-        return {"error": f"Unknown ontology {ontology!r}. Allowed: {', '.join(ONTOLOGIES)}."}
+        return respond(error("invalid_input", f"Unknown ontology {ontology!r}.", allowed=list(ONTOLOGIES)))
     if not (query or "").strip():
-        return {"error": "Provide a non-empty `query`."}
+        return respond(error("invalid_input", "Provide a non-empty `query`."))
     return await _api.run(_lookup_terms, ontology, query.strip(), tenant, clamp(limit, 1, TERMS_MAX_LIMIT))

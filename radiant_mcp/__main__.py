@@ -31,6 +31,7 @@ from fastmcp import FastMCP
 
 from . import starrocks
 from .app import create_app
+from .results import INSTRUCTIONS
 from .settings import load_or_exit
 from .tools import register_tools
 
@@ -49,7 +50,7 @@ async def main():
     # mandatory) or a malformed value stops the server before it serves anything.
     settings = load_or_exit()
 
-    mcp = FastMCP("radiant-mcp")
+    mcp = FastMCP("radiant-mcp", instructions=INSTRUCTIONS)
     print(f"Starting server on {args.host}:{args.port}")
     print(f"Default database: {starrocks.default_database() or 'None'}")
 

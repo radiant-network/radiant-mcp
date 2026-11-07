@@ -18,12 +18,12 @@ from contextlib import contextmanager
 from typing import Any
 
 import anyio
+from fastmcp.tools import ToolResult
 
+from .results import AUTH_REQUIRED, ToolFailure, ToolOutput, failure, respond
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
-
-AUTH_REQUIRED = {"error": "Authentication required: no JWT in request context"}
 
 _API_CLASSES = {
     "auth": "AuthApi",
@@ -63,7 +63,7 @@ class RadiantApi:
 
     ``call("patients", "patient_entity", tenant=..., patient_key=...)`` runs
     the operation and returns its JSON body. A status >= 400 raises
-    ``radiant_python.exceptions.ApiException`` (see ``api_error``).
+    ``radiant_python.exceptions.ApiException`` (see ``results.failure``).
     """
 
     def __init__(self, client) -> None:
@@ -116,32 +116,6 @@ def compact(value: Any) -> Any:
     return value
 
 
-def api_error(exc: Exception) -> dict:
-    """Normalize an exception into a tool-friendly error dict."""
-    from radiant_python.exceptions import ApiException
-
-    from .sql import InvalidInput, SqlError
-
-    if isinstance(exc, InvalidInput):
-        return {"error": str(exc)}
-    if isinstance(exc, SqlError):
-        logger.warning("curated SQL failed: %s", exc)
-        return {"error": f"StarRocks error: {exc}"}
-    if isinstance(exc, ApiException):
-        err: dict[str, Any] = {
-            "error": f"Radiant API error {exc.status}: {exc.reason}",
-            "status": exc.status,
-        }
-        if exc.body:
-            body = exc.body.decode() if isinstance(exc.body, bytes) else str(exc.body)
-            err["body"] = body[:2000]
-        return err
-    # The message of an unexpected error (a connection error, say) can name internal
-    # hosts and URLs: log it, and give the agent the error type only.
-    logger.exception("Radiant API tool failed")
-    return {"error": f"Unexpected {type(exc).__name__} in the tool; the details are in the server logs."}
-
-
 def is_status(exc: Exception, *statuses: int) -> bool:
     from radiant_python.exceptions import ApiException
 
@@ -152,27 +126,27 @@ def list_tenants(api: RadiantApi) -> list[dict]:
     return api.call("auth", "get_me") or []
 
 
-def resolve_tenant(api: RadiantApi, tenant: str | None) -> tuple[str | None, dict | None]:
-    """Return ``(tenant_code, error_dict)``. Exactly one is non-None.
+def resolve_tenant(api: RadiantApi, tenant: str | None) -> str:
+    """The tenant code to use; raises ``ToolFailure`` when it cannot be chosen.
 
     If ``tenant`` is given it is used as-is (the API will 403 if the caller
     isn't a member). Otherwise the caller's memberships (GET /auth/me) are
     consulted: a single membership is auto-selected, several is ambiguous.
     """
     if tenant:
-        return tenant, None
+        return tenant
 
     memberships = list_tenants(api)
     codes = [m.get("code") for m in memberships if m.get("code")]
     if len(codes) == 1:
-        return codes[0], None
+        return codes[0]
     if not codes:
-        return None, {"error": "The authenticated user is not a member of any tenant."}
-    return None, {
-        "error": "The authenticated user belongs to several tenants; "
-                 "pass the `tenant` argument explicitly.",
-        "tenants": [{"code": m.get("code"), "name": m.get("name")} for m in memberships],
-    }
+        raise ToolFailure("forbidden", "The authenticated user is not a member of any tenant.")
+    raise ToolFailure(
+        "ambiguous_tenant",
+        "The authenticated user belongs to several tenants; pass the `tenant` argument explicitly.",
+        tenants=[{"code": m.get("code"), "name": m.get("name")} for m in memberships],
+    )
 
 
 # Page size cap of the case and patient searches.
@@ -183,22 +157,23 @@ def clamp(value: int, low: int, high: int) -> int:
     return max(low, min(int(value), high))
 
 
-async def run(fn: Callable[..., dict], *args) -> dict:
+async def run(fn: Callable[..., ToolOutput], *args) -> ToolResult:
     """Run a synchronous tool body for the current caller.
 
     The JWT is read here, on the event loop, before hopping to a worker
     thread: the auth context does not follow the thread. ``fn`` receives an
-    open ``RadiantApi`` and the token, then ``args``.
+    open ``RadiantApi`` and the token, then ``args``, and returns a
+    ``ToolOutput``; whatever it raises becomes the error result.
     """
     token = get_jwt_token()
     if not token:
-        return AUTH_REQUIRED
+        return respond(AUTH_REQUIRED)
 
-    def _body() -> dict:
+    def _body() -> ToolOutput:
         with connect(token) as api:
             return fn(api, token, *args)
 
     try:
-        return await anyio.to_thread.run_sync(_body)
+        return respond(await anyio.to_thread.run_sync(_body))
     except Exception as exc:  # noqa: BLE001 — every failure becomes a tool result
-        return api_error(exc)
+        return respond(failure(exc))

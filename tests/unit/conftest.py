@@ -2,6 +2,8 @@
 StarRocks schema read from the ETL and portal checkouts (``schema_sources``)."""
 
 import asyncio
+import base64
+import json
 from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any
@@ -117,10 +119,26 @@ def fake_api(monkeypatch, configure) -> FakeApi:
     return fake
 
 
+class Envelope(dict):
+    """A tool's ``ToolOutput`` as the agent receives it, plus the chart PNG (``png``)."""
+
+    png: bytes | None = None
+
+
+def envelope(result) -> Envelope:
+    """The structured content of a tool's MCP result, with its image part as ``png``."""
+    out = Envelope(result.structured_content)
+    images = [block for block in result.content if block.type == "image"]
+    out.png = base64.b64decode(images[0].data) if images else None
+    # The text part the agent reads is the same object.
+    assert json.loads(result.content[0].text) == dict(out)
+    return out
+
+
 @pytest.fixture
-def run() -> Callable:
-    """Run a tool coroutine to completion."""
-    return lambda coroutine: asyncio.run(coroutine)
+def run() -> Callable[..., Envelope]:
+    """Run a tool coroutine to completion and return its envelope."""
+    return lambda coroutine: envelope(asyncio.run(coroutine))
 
 
 def serialized(model) -> Any:

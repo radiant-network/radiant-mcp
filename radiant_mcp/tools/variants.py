@@ -7,10 +7,13 @@ the ones a geneticist sees there.
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from fastmcp.tools import ToolResult
+
 from .. import portal_api as _api
 from ..domain.data_types import CaseSnvDataType
 from ..portal_api import RadiantApi, clamp, is_status, resolve_tenant
 from ..portal_links import case_url, occurrence_url, variant_url, with_url
+from ..results import ToolOutput, Truncation, describe, error, not_found, ok, respond
 
 # Section -> (variants API operation, extra arguments).
 _VARIANT_SECTIONS = {
@@ -61,16 +64,14 @@ def _variant_details(
     seq_id: int | None,
     task_id: int | None,
     data_type: str,
-) -> dict:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+) -> ToolOutput:
+    tenant_code = resolve_tenant(api, tenant)
 
     try:
         header = api.call("variants", "get_germline_variant_header", tenant=tenant_code, locus_id=locus_id)
     except Exception as exc:  # noqa: BLE001
         if is_status(exc, 404):
-            return {"error": f"Variant {locus_id} not found in tenant {tenant_code}.", "status": 404}
+            raise not_found(f"Variant {locus_id} not found in tenant {tenant_code}.") from exc
         raise
 
     calls: list[tuple[str, str, str, dict]] = [
@@ -89,10 +90,9 @@ def _variant_details(
         try:
             return name, api.call(api_name, operation, **kwargs), None
         except Exception as exc:  # noqa: BLE001 — one section never fails the whole result
-            return name, None, f"{name}: {_api.api_error(exc)['error']}"
+            return name, None, f"{name}: {describe(exc)}"
 
     result: dict[str, Any] = {"tenant": tenant_code, "locus_id": locus_id, "header": header}
-    with_url(result, variant_url(tenant_code, locus_id))
     warnings: list[str] = []
     with ThreadPoolExecutor(max_workers=_WORKERS) as pool:
         for name, data, warning in pool.map(_fetch, calls):
@@ -109,17 +109,13 @@ def _variant_details(
         with_url(result["occurrence"], occurrence_url(
             tenant_code, case_id, seq_id, data_type, task_id=task_id, variant_id=locus_id,
         ))
-    if warnings:
-        result["warnings"] = warnings
-    return result
+    return ok(result, warnings=warnings, portal_url=variant_url(tenant_code, locus_id))
 
 
-def _variant_carriers(api: RadiantApi, _token: str, locus_id: str, tenant: str | None, limit: int) -> dict:
+def _variant_carriers(api: RadiantApi, _token: str, locus_id: str, tenant: str | None, limit: int) -> ToolOutput:
     from radiant_python.models.list_body_with_criteria import ListBodyWithCriteria
 
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+    tenant_code = resolve_tenant(api, tenant)
 
     counts = api.call("variants", "get_germline_variant_cases_count", tenant=tenant_code, locus_id=locus_id) or {}
     result: dict[str, Any] = {
@@ -128,7 +124,7 @@ def _variant_carriers(api: RadiantApi, _token: str, locus_id: str, tenant: str |
         "count_interpreted": counts.get("count_interpreted", 0),
         "count_uninterpreted": counts.get("count_uninterpreted", 0),
     }
-    with_url(result, variant_url(tenant_code, locus_id))
+    cut = []
 
     for key, operation in (
         ("interpreted_cases", "get_germline_variant_interpreted_cases"),
@@ -143,7 +139,13 @@ def _variant_carriers(api: RadiantApi, _token: str, locus_id: str, tenant: str |
                 task_id=case.get("task_id"), variant_id=locus_id,
             ) or case_url(tenant_code, case.get("case_id")))
         result[key] = cases
-    return result
+        if resp.get("count", len(cases)) > len(cases):
+            cut.append(key)
+    truncated = None
+    if cut:
+        truncated = Truncation(reason=f"Each list stops at {limit} cases: raise `limit` (up to {CARRIERS_MAX_LIMIT}) "
+                                      "or use the counts.", lists=cut)
+    return ok(result, truncated=truncated, portal_url=variant_url(tenant_code, locus_id))
 
 
 # -- tools -------------------------------------------------------------------
@@ -155,7 +157,7 @@ async def variant_details(
     seq_id: int | None = None,
     task_id: int | None = None,
     data_type: CaseSnvDataType = "germline_snv",
-) -> dict:
+) -> ToolResult:
     """Everything the portal knows about one SNV, optionally in one case.
 
     Returns ``header`` (HGVSg, assembly), ``overview`` (gene, consequence,
@@ -181,13 +183,13 @@ async def variant_details(
     """
     keys = (case_id, seq_id, task_id)
     if any(k is not None for k in keys) and not all(k is not None for k in keys):
-        return {"error": "Pass case_id, seq_id and task_id together, or none of them."}
+        return respond(error("invalid_input", "Pass case_id, seq_id and task_id together, or none of them."))
     if data_type not in _EXPANDED_OCCURRENCE:
-        return {"error": f"Unknown data_type {data_type!r}. Allowed: {', '.join(_EXPANDED_OCCURRENCE)}."}
+        return respond(error("invalid_input", f"Unknown data_type {data_type!r}.", allowed=list(_EXPANDED_OCCURRENCE)))
     return await _api.run(_variant_details, str(locus_id), tenant, case_id, seq_id, task_id, data_type)
 
 
-async def variant_carriers(locus_id: str, tenant: str | None = None, limit: int = 20) -> dict:
+async def variant_carriers(locus_id: str, tenant: str | None = None, limit: int = 20) -> ToolResult:
     """List the cases of the tenant that carry a germline SNV.
 
     Same lists as the "Cases" section of the portal's variant page:

@@ -1,7 +1,8 @@
 """``oncoprint``: which cases carry alterations in a gene list."""
 
-import json
 from typing import Any
+
+from fastmcp.tools import ToolResult
 
 from ... import charts
 from ... import portal_api as _api
@@ -12,18 +13,16 @@ from ...domain.data_types import COHORT_DATA_TYPES, CohortDataType
 from ...enums import ENUMS, canonical_values
 from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.charts import ONCOPRINT_ROW_LIMIT, oncoprint_query
+from ...results import ToolOutput, Truncation, failure, not_found, ok, respond
 from ...services.genes import resolve_gene
-from ._common import image as _image
 
 MAX_ONCOPRINT_GENES = 20
 MAX_ONCOPRINT_CASES = 100
 
 
 def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[str], tenant: str | None,
-               max_gnomad_af: float | None, vep_impact: list[str]) -> Any:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+               max_gnomad_af: float | None, vep_impact: list[str]) -> ToolOutput:
+    tenant_code = resolve_tenant(api, tenant)
     resolved, unknown = [], []
     for gene in genes:
         found = resolve_gene(api, tenant_code, gene)
@@ -34,7 +33,8 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
     # Two aliases of one gene (TP53, P53) resolve to the same symbol: one row.
     resolved = list(dict.fromkeys(resolved))
     if not resolved:
-        return {"error": f"No known gene among {genes}.", "status": 404}
+        raise not_found(f"No known gene among {genes}.")
+    warnings = [f"unknown gene(s), left out: {', '.join(unknown)}"] if unknown else []
     cells: dict[tuple[str, str], set[str]] = {}
     truncated = []
     for data_type in data_types:
@@ -52,7 +52,8 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
     shown = cases[:MAX_ONCOPRINT_CASES]
     flat = {key: (next(iter(kinds)) if len(kinds) == 1 else "multiple") for key, kinds in cells.items() if key[1] in shown}
     if not flat:
-        return {"tenant": tenant_code, "genes": resolved, "message": "No carrier of these genes with these filters."}
+        return ok({"tenant": tenant_code, "genes": resolved, "data_types": data_types, "altered_cases": 0},
+                  warnings=[*warnings, "No carrier of these genes with these filters: no chart drawn."])
     title = f"Alterations in {', '.join(resolved)} ({', '.join(data_types)})"
     png = charts.oncoprint(resolved, shown, flat, title)
     per_gene = {g: sum(1 for (gene, _) in cells if gene == g) for g in resolved}
@@ -66,14 +67,16 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
     if any(not _data_types.is_somatic(t) for t in data_types):
         result["germline"] = "a germline case counts the proband's variants only, not the parents'"
         if "germline_snv" in data_types and max_gnomad_af is None and not vep_impact:
-            result["note"] = ("no frequency or impact filter: common germline polymorphisms are counted; "
-                              "pass max_gnomad_af (e.g. 0.01) or vep_impact for rare or damaging variants")
+            warnings.append("no frequency or impact filter: common germline polymorphisms are counted; "
+                            "pass max_gnomad_af (e.g. 0.01) or vep_impact for rare or damaging variants")
+    cut = None
     if truncated:
-        result["truncated"] = truncated
-        result["warning"] = (f"more than {ONCOPRINT_ROW_LIMIT} rows for {', '.join(truncated)}: the cases with the "
-                             "highest case ids are missing; narrow the genes or add filters")
-    text = json.dumps(result)
-    return _image(text, png)
+        cut = Truncation(reason=f"More than {ONCOPRINT_ROW_LIMIT} rows: the cases with the highest case ids are "
+                                "missing; narrow the genes or add filters.", lists=truncated)
+    elif len(shown) < len(cases):
+        cut = Truncation(reason=f"The chart shows the {len(shown)} most altered of {len(cases)} cases; "
+                                "`altered_cases_per_gene` counts them all.")
+    return ok(result, warnings=warnings, truncated=cut, image=png)
 
 
 async def oncoprint(
@@ -82,7 +85,7 @@ async def oncoprint(
     max_gnomad_af: float | None = None,
     vep_impact: list[str] | None = None,
     tenant: str | None = None,
-) -> Any:
+) -> ToolResult:
     """Oncoprint: which cases of the tenant carry an alteration in each gene, by type.
 
     Rows are genes, columns are cases (most altered first, at most 100);
@@ -114,5 +117,5 @@ async def oncoprint(
                 raise _sql.InvalidInput("max_gnomad_af must be in (0, 1]")
         impacts = _sql.all_of(canonical_values("vep_impact", vep_impact or []), ENUMS["vep_impact"], "vep_impact")
     except _sql.InvalidInput as exc:
-        return {"error": str(exc)}
+        return respond(failure(exc))
     return await _api.run(_oncoprint, genes, types, tenant, af, impacts)

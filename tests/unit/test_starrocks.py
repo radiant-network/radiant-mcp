@@ -8,6 +8,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from conftest import envelope
 from mysql.connector.errors import DatabaseError
 
 from radiant_mcp import portal_api as _api
@@ -140,37 +141,38 @@ def test_an_unsafe_database_name_is_rejected_before_connecting(starrocks_server)
 
 def call_as(monkeypatch, user, tool, *args):
     monkeypatch.setattr(_api, "get_jwt_token", lambda: jwt(user) if user else None)
-    return asyncio.run(tool(*args))
+    return envelope(asyncio.run(tool(*args)))
 
 
 def test_read_query_returns_rows_and_says_when_it_cut_them(starrocks_server, monkeypatch, configure):
     configure(starrocks_max_rows=2)
     starrocks_server.data = {"alice": [("a",), ("b",), ("c",)]}
     out = call_as(monkeypatch, "alice", query.read_query, "SELECT patient_id FROM t")
-    assert out["columns"] == ["patient_id"] and out["rows"] == [["a"], ["b"]]
-    assert out["returned"] == 2 and out["truncated"] is True and "Aggregate" in out["note"]
+    assert out["data"]["columns"] == ["patient_id"] and out["data"]["rows"] == [["a"], ["b"]]
+    assert out["data"]["returned"] == 2 and "Aggregate" in out["truncated"]["reason"]
 
 
 def test_read_query_reports_starrocks_errors_and_missing_jwt(starrocks_server, monkeypatch):
-    assert call_as(monkeypatch, None, query.read_query, "SELECT 1") == {"error": starrocks.AUTH_REQUIRED}
+    assert call_as(monkeypatch, None, query.read_query, "SELECT 1")["error"]["code"] == "auth_required"
     starrocks_server.error = DatabaseError(msg="Access denied")
-    assert call_as(monkeypatch, "bob", query.read_query, "SELECT 1") == {"error": "StarRocks error: Access denied"}
+    assert call_as(monkeypatch, "bob", query.read_query, "SELECT 1")["error"] == {
+        "code": "upstream", "message": "StarRocks error: Access denied"}
 
 
 def test_table_overview_runs_under_each_caller_grants(starrocks_server, monkeypatch):
     """No cache: Bob never sees the rows Alice was allowed to read."""
     starrocks_server.data = {"alice": [("MRN-ALICE",)], "bob": []}
     alice = call_as(monkeypatch, "alice", query.table_overview, "t1_tenant.v_pcx_30_patient_key")
-    assert alice["row_count"] == 1 and alice["sample"]["rows"] == [["MRN-ALICE"]]
-    assert alice["columns"] == [{"Field": "patient_id", "Type": "varchar"}]
+    assert alice["data"]["row_count"] == 1 and alice["data"]["sample"]["rows"] == [["MRN-ALICE"]]
+    assert alice["data"]["columns"] == [{"Field": "patient_id", "Type": "varchar"}]
     bob = call_as(monkeypatch, "bob", query.table_overview, "t1_tenant.v_pcx_30_patient_key")
-    assert bob["row_count"] == 0 and "sample" not in bob
+    assert bob["data"]["row_count"] == 0 and "sample" not in bob["data"]
     assert "MRN-ALICE" not in json.dumps(bob)
 
 
 def test_table_overview_rejects_unsafe_or_incomplete_names(starrocks_server, monkeypatch):
     out = call_as(monkeypatch, "alice", query.table_overview, "t1_tenant.x` UNION SELECT 1 --")
-    assert out["error"].startswith("StarRocks error: invalid name")
+    assert out["error"]["code"] == "invalid_input" and out["error"]["message"].startswith("invalid name")
     out = call_as(monkeypatch, "alice", query.table_overview, "germline__snv__occurrence")
-    assert "no database given" in out["error"]
+    assert "no database given" in out["error"]["message"]
     assert starrocks_server.connections == []

@@ -58,7 +58,7 @@ def test_prioritize_snv_sends_the_portal_query_and_links_each_row(fake_api, run)
         sort=[{"field": "max_impact_score"}], limit=500, additional_fields=["transmission_mode"],
     ))
 
-    assert result["count"] == 57 and result["returned"] == 1
+    assert result["data"]["count"] == 57 and result["data"]["returned"] == 1
     body = serialized(fake_api.kwargs("list_germline_snv_occurrences")["list_body_with_sqon"])
     assert body == {
         "additional_fields": ["transmission_mode"],
@@ -71,7 +71,7 @@ def test_prioritize_snv_sends_the_portal_query_and_links_each_row(fake_api, run)
         ]},
     }
     assert fake_api.kwargs("list_germline_snv_occurrences")["case_id"] == 8
-    row = result["occurrences"][0]
+    row = result["data"]["occurrences"][0]
     assert row["portal_url"] == (
         f"{PORTAL}/radiant/case/entity/8?tab=variants&seq_id=21&task_id=3&variant_section=snv&selectedVariant=42"
     )
@@ -86,16 +86,16 @@ def test_prioritize_snv_without_filters_sends_an_empty_and(fake_api, run):
     body = serialized(fake_api.kwargs("list_somatic_snv_occurrences")["list_body_with_sqon"])
     assert body["sqon"] == {"op": "and", "content": []}
     assert "sort" not in body
-    assert result["occurrences"] == []
+    assert result["data"]["occurrences"] == []
 
 
 def test_prioritize_snv_rejects_cnv_data_types(fake_api, run):
-    assert "Unknown data_type" in run(prioritize_snv(**KEY, data_type="germline_cnv"))["error"]
+    assert "Unknown data_type" in run(prioritize_snv(**KEY, data_type="germline_cnv"))["error"]["message"]
     assert fake_api.calls == []
 
 
 def test_invalid_filter_is_reported_without_calling_the_api(fake_api, run):
-    assert "Unknown operator" in run(prioritize_snv(**KEY, filters=[{"field": "x", "op": "like", "value": 1}]))["error"]
+    assert "Unknown operator" in run(prioritize_snv(**KEY, filters=[{"field": "x", "op": "like", "value": 1}]))["error"]["message"]
     assert fake_api.calls == []
 
 
@@ -105,7 +105,7 @@ def test_case_cnv_links_to_the_cnv_table(fake_api, run):
     result = run(case_cnv(**KEY, tenant="radiant", filters={"type": "loss"}))
     body = serialized(fake_api.kwargs("list_germline_cnv_occurrences")["list_body_with_sqon"])
     assert body["sqon"]["content"] == [{"op": "in", "content": {"field": "type", "value": ["LOSS"]}}]
-    row = result["occurrences"][0]
+    row = result["data"]["occurrences"][0]
     assert row["portal_url"].endswith("variant_section=cnv")
     assert "selectedVariant" not in row["portal_url"]
     assert "variant_portal_url" not in row
@@ -116,21 +116,22 @@ def test_api_errors_become_tool_errors(fake_api, run):
 
     fake_api.on("occurrences", "count_germline_snv_occurrences", api_exception(400, '{"message":"unknown field: foo"}'))
     result = run(prioritize_snv(**KEY, tenant="radiant", filters={"foo": 1}))
-    assert result["status"] == 400 and "unknown field" in result["body"]
+    assert result["error"]["code"] == "invalid_input"
+    assert result["error"]["details"]["status"] == 400 and "unknown field" in result["error"]["details"]["body"]
 
 
 def test_no_token_no_call(fake_api, run, monkeypatch):
     from radiant_mcp import portal_api as _api
 
     monkeypatch.setattr(_api, "get_jwt_token", lambda: None)
-    assert run(prioritize_snv(**KEY)) == _api.AUTH_REQUIRED
+    assert run(prioritize_snv(**KEY))["error"]["code"] == "auth_required"
     assert fake_api.calls == []
 
 
 def test_an_unsortable_field_is_rejected_before_any_call(fake_api, run):
     result = run(prioritize_snv(case_id=1, seq_id=2, task_id=3, sort=[{"field": "cadd_phred"}], tenant="demo"))
-    assert "Cannot sort on 'cadd_phred'" in result["error"] and "exomiser_gene_combined_score" in result["error"]
+    assert "Cannot sort on 'cadd_phred'" in result["error"]["message"] and "exomiser_gene_combined_score" in result["error"]["message"]
     result = run(prioritize_snv(case_id=1, seq_id=2, task_id=3, data_type="somatic_snv_tn",
                                 sort=[{"field": "max_impact_score"}], tenant="demo"))
-    assert "Cannot sort on 'max_impact_score'" in result["error"]
+    assert "Cannot sort on 'max_impact_score'" in result["error"]["message"]
     assert fake_api.calls == []

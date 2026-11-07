@@ -15,6 +15,8 @@ output.
 
 from typing import Any
 
+from fastmcp.tools import ToolResult
+
 from .. import portal_api as _api
 from .. import sql as _sql
 from ..domain import rules as _rules
@@ -31,6 +33,7 @@ from ..queries.hits import (
     somatic_cnv_query,
     somatic_snv_query,
 )
+from ..results import ToolOutput, Truncation, failure, ok, respond
 from ..services.cases import case_context
 
 
@@ -175,7 +178,9 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
     case_id = case.get("case_id")
     patient_id = _proband_patient_id(case)
     if patient_id is None:
-        return {"note": "no proband patient id in the case: the germline sequencing cannot be found"}
+        warnings.append("no proband patient id in the case: the germline sequencing cannot be found, "
+                        "so the germline first hit cannot be checked")
+        return {}
 
     germline_keys = _latest_task([
         with_parts({"case_id": row["case_id"], "seq_id": int(row["seq_id"]), "task_id": int(row["task_id"])},
@@ -183,8 +188,8 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
         for row in _sql.run(token, *germline_keys_query(shared_db, tenant, patient_id))
     ], "germline_snv", warnings)
     if not germline_keys:
-        return {"patient_id": patient_id,
-                "note": "no germline sequencing for this patient: the germline first hit cannot be checked"}
+        warnings.append("no germline sequencing for this patient: the germline first hit cannot be checked")
+        return {"patient_id": patient_id}
 
     germline: dict[str, list[dict]] = {}
     for key in germline_keys:
@@ -225,16 +230,13 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
     }
 
 
-def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | None) -> dict:
+def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | None) -> ToolOutput:
     context = case_context(api, token, case_id, tenant)
-    if "error" in context:
-        return context
     tenant_code, case = context["tenant"], context["case"]
-    warnings = list(context.get("warnings", []))
+    warnings = list(context["warnings"])
     truncated: list[str] = []
     case_type = (case.get("case_type") or "").lower()
     result: dict[str, Any] = {"tenant": tenant_code, "case_id": case_id, "case_type": case_type}
-    with_url(result, case.get("portal_url"))
     if case_type == "somatic":
         result["rules"] = (
             f"Germline first hit: P/LP variant of the patient ({_rules.PLP_DEFINITION}) "
@@ -253,18 +255,16 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
             "Compound heterozygous: the pairs computed by the pipeline."
         )
         result["sequencings"] = _germline(token, tenant_code, case, context["occurrence_keys"], warnings, truncated)
+    cut = None
     if truncated:
-        result["truncated"] = truncated
-        result["truncated_note"] = (f"these lists stop at {ROW_LIMIT} rows, in gene order: genes later in the "
-                                    "alphabet may be missing. Do not conclude that a gene has no second hit.")
-    if warnings:
-        result["warnings"] = warnings
-    return result
+        cut = Truncation(reason=f"These lists stop at {ROW_LIMIT} rows, in gene order: genes later in the alphabet "
+                                "may be missing. Do not conclude that a gene has no second hit.", lists=truncated)
+    return ok(result, warnings=warnings, truncated=cut, portal_url=case.get("portal_url"))
 
 
 # -- tool --------------------------------------------------------------------
 
-async def second_hit(case_id: int, tenant: str | None = None) -> dict:
+async def second_hit(case_id: int, tenant: str | None = None) -> ToolResult:
     """Find genes hit twice in a case.
 
     Germline case, for each sequencing with variants: ``snv_cnv`` lists the
@@ -281,7 +281,7 @@ async def second_hit(case_id: int, tenant: str | None = None) -> dict:
     somatic event.
 
     ``rules`` states the exact criteria applied: quote them when reporting.
-    Each list stops at 200 rows; ``truncated`` names the lists that were cut.
+    Each list stops at 200 rows; ``truncated.lists`` names the lists that were cut.
     When a sequencing was re-analysed, its latest task is read.
     Every variant and CNV carries a ``portal_url``. Use this instead of
     cross-checking SNV and CNV lists by hand.
@@ -293,5 +293,5 @@ async def second_hit(case_id: int, tenant: str | None = None) -> dict:
     try:
         case_id = _sql.integer(case_id)
     except _sql.InvalidInput as exc:
-        return {"error": str(exc)}
+        return respond(failure(exc))
     return await _api.run(_second_hit, case_id, tenant)

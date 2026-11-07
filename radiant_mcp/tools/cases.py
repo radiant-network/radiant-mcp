@@ -2,11 +2,14 @@
 
 from typing import Any
 
+from fastmcp.tools import ToolResult
+
 from .. import portal_api as _api
 from ..api_fields import CASE_FILTER_FIELDS as CASE_SEARCH_FILTER_FIELDS
 from ..api_fields import CASE_SORT_FIELDS as CASE_SEARCH_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import case_url, with_url
+from ..results import ToolOutput, error, invalid, ok, respond
 from ..services.cases import case_context, merge_criteria, search_criteria
 
 # Autocomplete match types that are integer ids AND directly filterable fields.
@@ -16,8 +19,14 @@ _AUTOCOMPLETE_TEXT_FIELDS = ("proband_submitter_sample_ids",)
 
 
 
-def _list_tenants(api: RadiantApi, _token: str) -> dict:
-    return {"tenants": _api.list_tenants(api)}
+def _list_tenants(api: RadiantApi, _token: str) -> ToolOutput:
+    return ok({"tenants": _api.list_tenants(api)})
+
+
+def _get_case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) -> ToolOutput:
+    context = case_context(api, token, case_id, tenant)
+    warnings = context.pop("warnings")
+    return ok(context, warnings=warnings, portal_url=context["case"].get("portal_url"))
 
 
 def _search_cases(
@@ -30,7 +39,7 @@ def _search_cases(
     offset: int,
     sort_by: str,
     sort_order: str,
-) -> dict:
+) -> ToolOutput:
     from radiant_python.models.list_body_with_criteria import ListBodyWithCriteria
     from radiant_python.models.sort_body import SortBody
 
@@ -38,24 +47,16 @@ def _search_cases(
     filters = dict(filters or {})
     bad = sorted(set(filters) - set(CASE_SEARCH_FILTER_FIELDS))
     if bad:
-        return {
-            "error": f"Unknown filter field(s): {', '.join(bad)}",
-            "allowed_filter_fields": list(CASE_SEARCH_FILTER_FIELDS),
-        }
+        raise invalid(f"Unknown filter field(s): {', '.join(bad)}", allowed=list(CASE_SEARCH_FILTER_FIELDS))
     if sort_by not in CASE_SEARCH_SORT_FIELDS:
-        return {
-            "error": f"Unknown sort field: {sort_by}",
-            "allowed_sort_fields": list(CASE_SEARCH_SORT_FIELDS),
-        }
+        raise invalid(f"Unknown sort field: {sort_by}", allowed=list(CASE_SEARCH_SORT_FIELDS))
     sort_order = (sort_order or "desc").lower()
     if sort_order not in ("asc", "desc"):
-        return {"error": "sort_order must be 'asc' or 'desc'"}
+        raise invalid("sort_order must be 'asc' or 'desc'")
     limit = clamp(limit, 1, SEARCH_MAX_LIMIT)
     offset = max(0, int(offset))
 
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+    tenant_code = resolve_tenant(api, tenant)
 
     def _search(extra: dict) -> dict:
         merged_filters = merge_criteria(filters, extra)
@@ -75,13 +76,13 @@ def _search_cases(
     if not query:
         resp = _search({})
         cases = resp.get("list", [])
-        return {
-            "tenant": tenant_code,
-            "count": resp.get("count", 0),
-            "returned": len(cases),
-            "offset": offset,
-            "cases": _linked(cases),
-        }
+        count = resp.get("count", 0)
+        more = count - offset - len(cases)
+        return ok(
+            {"tenant": tenant_code, "count": count, "returned": len(cases), "offset": offset,
+             "cases": _linked(cases)},
+            truncated=f"{more} more cases: page with `offset` or narrow the filters." if more > 0 else None,
+        )
 
     # Free-text lookup: resolve the prefix through the autocomplete
     # endpoint, then run one criteria search per matched identifier type
@@ -120,22 +121,23 @@ def _search_cases(
         for c in found:
             merged.setdefault(c["case_id"], c)
 
-    result = {
-        "tenant": tenant_code,
-        "query": query,
-        "autocomplete_matches": matches,
-        "count": len(merged),
-        "returned": min(len(merged), limit),
-        "cases": _linked(list(merged.values())[:limit]),
-    }
-    if truncated or len(merged) > limit:
-        result["more_results"] = True
-    return result
+    return ok(
+        {
+            "tenant": tenant_code,
+            "query": query,
+            "autocomplete_matches": matches,
+            "count": len(merged),
+            "returned": min(len(merged), limit),
+            "cases": _linked(list(merged.values())[:limit]),
+        },
+        truncated=("More cases match than were returned: use a longer identifier prefix or add filters."
+                   if truncated or len(merged) > limit else None),
+    )
 
 
 # -- tools -------------------------------------------------------------------
 
-async def list_tenants() -> dict:
+async def list_tenants() -> ToolResult:
     """List the Radiant tenants the authenticated user belongs to.
 
     Returns each tenant's ``code`` (the value to pass as ``tenant`` to other
@@ -145,7 +147,7 @@ async def list_tenants() -> dict:
     return await _api.run(_list_tenants)
 
 
-async def get_case_context(case_id: int, tenant: str | None = None) -> dict:
+async def get_case_context(case_id: int, tenant: str | None = None) -> ToolResult:
     """Retrieve the full clinical context of a Radiant case.
 
     Use this first whenever a question is about a specific case (e.g. "what is
@@ -180,7 +182,7 @@ async def get_case_context(case_id: int, tenant: str | None = None) -> dict:
             single tenant it is auto-selected; if the user belongs to several
             the response lists them and asks for an explicit value.
     """
-    return await _api.run(case_context, case_id, tenant)
+    return await _api.run(_get_case_context, case_id, tenant)
 
 
 async def search_cases(
@@ -191,7 +193,7 @@ async def search_cases(
     offset: int = 0,
     sort_by: str = "updated_on",
     sort_order: str = "desc",
-) -> dict:
+) -> ToolResult:
     """Search Radiant cases by exact-match filters and/or a free-text identifier.
 
     Use this to find a case ID before calling ``get_case_context``, or to list
@@ -229,14 +231,14 @@ async def search_cases(
             diagnosis_lab_code, created_on, updated_on.
         sort_order: ``asc`` or ``desc`` (default ``desc``).
 
-    Returns ``count`` (total matches; with ``query``, the distinct cases found,
-    plus ``more_results: true`` when some were not returned), ``cases`` (one summary per case:
+    Returns ``count`` (total matches; with ``query``, the distinct cases
+    found; ``truncated`` is set when some were not returned), ``cases`` (one summary per case:
     case_id, case_type, status, priority, panel, primary condition, project,
     proband identifiers, has_variants, ``portal_url``, ...) and, for a
     ``query``, the raw ``autocomplete_matches``.
     """
     if not filters and not query:
-        return {"error": "Provide at least one of `filters` or `query`."}
+        return respond(error("invalid_input", "Provide at least one of `filters` or `query`."))
     return await _api.run(
         _search_cases, tenant, filters, query, limit, offset, sort_by, sort_order,
     )

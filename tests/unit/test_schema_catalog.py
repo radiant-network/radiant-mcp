@@ -6,6 +6,7 @@ import asyncio
 import re
 
 import pytest
+from conftest import envelope
 
 from radiant_mcp.enums import ENUMS, FIELD_ENUMS
 from radiant_mcp.schema_catalog import ARRAY_RULE, TOPICS, render
@@ -87,5 +88,6 @@ def test_render_prints_the_stored_enum_values():
 
 
 def test_describe_schema_tool():
-    assert asyncio.run(describe_schema("cnv"))["documentation"] == render("cnv")
-    assert asyncio.run(describe_schema("nope"))["topics"] == list(TOPICS)
+    assert envelope(asyncio.run(describe_schema("cnv")))["data"]["documentation"] == render("cnv")
+    nope = envelope(asyncio.run(describe_schema("nope")))
+    assert nope["error"]["code"] == "invalid_input" and nope["error"]["details"]["allowed"] == list(TOPICS)
