@@ -1,10 +1,10 @@
 """SQL of ``gene_info``: gene panels and gnomAD constraint."""
 
-from typing import Optional
 
 from .. import sql as _sql
 
-def gene_queries(gene: str, ensembl_gene_id: Optional[str], tenant: str) -> dict[str, tuple[str, _sql.Params]]:
+
+def gene_queries(gene: str, ensembl_gene_id: str | None, tenant: str) -> dict[str, tuple[str, _sql.Params]]:
     shared, tenant_db = _sql.shared_db(), _sql.tenant_db(tenant)
     queries: dict[str, tuple[str, _sql.Params]] = {}
 

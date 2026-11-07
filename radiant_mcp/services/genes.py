@@ -1,12 +1,11 @@
 """Gene resolution through the portal gene search (symbols and aliases)."""
 
-from typing import Optional
 
 from .. import sql as _sql
 from ..portal_api import RadiantApi
 
 
-def resolve_gene(api: RadiantApi, tenant: str, symbol: str) -> Optional[dict]:
+def resolve_gene(api: RadiantApi, tenant: str, symbol: str) -> dict | None:
     """``{symbol, ensembl_gene_id}`` of a gene name, through the portal gene
     search (it knows the current HGNC symbols); None when unknown.
 

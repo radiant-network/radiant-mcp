@@ -7,7 +7,7 @@ the PHI rule per user, so a tool never sees more than the portal page would
 show the same user.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from .. import portal_api as _api
 from ..api_fields import PATIENT_SORT_FIELDS
@@ -34,12 +34,12 @@ DEFAULT_SECTIONS = ("treatments", "laboratory", "imaging", "genomics", "trial_el
 def _search_patients(
     api: RadiantApi,
     _token: str,
-    tenant: Optional[str],
-    filters: Optional[dict],
-    query: Optional[str],
+    tenant: str | None,
+    filters: dict | None,
+    query: str | None,
     limit: int,
     offset: int,
-    sort_by: Optional[str],
+    sort_by: str | None,
     sort_order: str,
     include_filter_values: bool,
 ) -> dict:
@@ -127,12 +127,12 @@ def _search_patients(
 # -- tools -------------------------------------------------------------------
 
 async def search_patients(
-    query: Optional[str] = None,
-    filters: Optional[dict[str, Any]] = None,
-    tenant: Optional[str] = None,
+    query: str | None = None,
+    filters: dict[str, Any] | None = None,
+    tenant: str | None = None,
     limit: int = 20,
     offset: int = 0,
-    sort_by: Optional[str] = None,
+    sort_by: str | None = None,
     sort_order: str = "asc",
     include_filter_values: bool = False,
 ) -> dict:
@@ -181,8 +181,8 @@ async def search_patients(
 
 async def get_patient_context(
     patient_key: str,
-    tenant: Optional[str] = None,
-    sections: Optional[list[str]] = None,
+    tenant: str | None = None,
+    sections: list[str] | None = None,
 ) -> dict:
     """Retrieve the clinical context of a patient, as on the portal's patient page.
 

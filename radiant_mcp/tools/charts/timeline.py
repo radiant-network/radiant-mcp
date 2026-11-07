@@ -1,7 +1,7 @@
 """``patient_timeline``: a patient's clinical events on one time axis."""
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ... import charts
 from ... import portal_api as _api
@@ -10,13 +10,10 @@ from ...services.patients import PATIENT_KEY, patient_context
 from ._common import DAYS_PER_YEAR
 from ._common import image as _image
 
-
-
-
 _TRACKS = ("Events", "Surgery", "Radiation", "Chemotherapy", "Imaging")
 
 
-def _years(day) -> Optional[float]:
+def _years(day) -> float | None:
     return day / DAYS_PER_YEAR if isinstance(day, (int, float)) else None
 
 
@@ -53,7 +50,7 @@ def timeline_items(context: dict) -> list[charts.TimelineItem]:
     return items
 
 
-def _patient_timeline(api: RadiantApi, token: str, patient_key: str, tenant: Optional[str]) -> Any:
+def _patient_timeline(api: RadiantApi, token: str, patient_key: str, tenant: str | None) -> Any:
     context = patient_context(api, token, patient_key, tenant, ["treatments", "imaging"])
     if "error" in context or context.get("clinical_data_available") is False:
         return context
@@ -71,7 +68,7 @@ def _patient_timeline(api: RadiantApi, token: str, patient_key: str, tenant: Opt
     return _image(text, png)
 
 
-async def patient_timeline(patient_key: str, tenant: Optional[str] = None) -> Any:
+async def patient_timeline(patient_key: str, tenant: str | None = None) -> Any:
     """A patient's history on one age axis: events (diagnosis, progression,
     recurrence), surgeries, radiation and chemotherapy periods, imaging
     sessions and the vital status, from the portal patient page.

@@ -23,6 +23,7 @@ dependencies = [
 # Unit tests only; the image installs with --no-dev.
 dev = [
     "pytest>=8",
+    "ruff==0.17.4",
     "sqlglot>=30.30.0",
 ]
 
@@ -33,3 +34,15 @@ addopts = "-ra"
 
 [tool.uv]
 package = false
+
+# Pinned in the dev group: the default rules change between ruff versions.
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# pycodestyle errors, pyflakes, import order, Python 3.11 syntax, bugbear, simplify.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["radiant_mcp"]

@@ -52,7 +52,10 @@ def test_logrank_matches_scipy_for_two_groups():
     placebo = charts.SurvivalGroup("Placebo", PLACEBO_T, [True] * 21)
     statistic, df, p = charts.logrank([drug, placebo])
     reference = logrank(
-        x=CensoredData(uncensored=[t for t, e in zip(DRUG_T, DRUG_E) if e], right=[t for t, e in zip(DRUG_T, DRUG_E) if not e]),
+        x=CensoredData(
+            uncensored=[t for t, e in zip(DRUG_T, DRUG_E, strict=True) if e],
+            right=[t for t, e in zip(DRUG_T, DRUG_E, strict=True) if not e],
+        ),
         y=CensoredData(uncensored=PLACEBO_T),
     )
     assert df == 1 and statistic == pytest.approx(16.79, abs=0.01)

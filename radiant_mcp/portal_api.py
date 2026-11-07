@@ -14,8 +14,9 @@ bodies still go through the generated models.
 import json
 import logging
 import os
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator, Optional
+from typing import Any
 
 import anyio
 
@@ -44,7 +45,7 @@ def api_enabled() -> bool:
     return bool(os.getenv(API_URL_ENV))
 
 
-def get_jwt_token() -> Optional[str]:
+def get_jwt_token() -> str | None:
     """Raw JWT from the current MCP auth context."""
     try:
         from fastmcp.server.dependencies import get_access_token
@@ -157,7 +158,7 @@ def list_tenants(api: RadiantApi) -> list[dict]:
     return api.call("auth", "get_me") or []
 
 
-def resolve_tenant(api: RadiantApi, tenant: Optional[str]) -> tuple[Optional[str], Optional[dict]]:
+def resolve_tenant(api: RadiantApi, tenant: str | None) -> tuple[str | None, dict | None]:
     """Return ``(tenant_code, error_dict)``. Exactly one is non-None.
 
     If ``tenant`` is given it is used as-is (the API will 403 if the caller

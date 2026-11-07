@@ -6,7 +6,6 @@ on it. Each key carries its StarRocks ``part`` / ``variant_part``. TEMPORARY:
 until the Radiant API returns it with each task.
 """
 
-from typing import Optional
 
 from .. import portal_api as _api
 from .. import sql as _sql
@@ -28,7 +27,7 @@ def search_criteria(filters: dict) -> list:
     return out
 
 
-def merge_criteria(filters: dict, extra: dict) -> Optional[dict]:
+def merge_criteria(filters: dict, extra: dict) -> dict | None:
     """``filters`` AND ``extra``; None when a field of both has no value in common.
 
     The API takes one criterion per field, so the user's filter and an
@@ -47,7 +46,7 @@ def merge_criteria(filters: dict, extra: dict) -> Optional[dict]:
     return merged
 
 
-def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], Optional[str]]:
+def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], str | None]:
     """Map every (seq_id, task_id) of ``case_id`` to its StarRocks ``part``.
 
     Reads the shared ``staging_sequencing_experiment`` table under the
@@ -62,7 +61,7 @@ def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], 
     return {(int(r["seq_id"]), int(r["task_id"])): int(r["part"]) for r in rows if r["part"] is not None}, None
 
 
-def case_context(api: RadiantApi, token: str, case_id: int, tenant: Optional[str]) -> dict:
+def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) -> dict:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return err

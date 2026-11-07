@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import replace
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
@@ -18,7 +18,6 @@ from ...services.genes import resolve_gene
 from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, no_clinical_data, unknown_filter_fields
 from ._common import DAYS_PER_YEAR
 from ._common import image as _image
-
 
 MAX_SURVIVAL_PATIENTS = 5000
 _PAGE = 100
@@ -44,11 +43,11 @@ class CarrierSource(BaseModel):
 
     gene: str
     data_type: CohortDataType = "germline_snv"
-    vep_impact: Optional[list[str]] = None
-    clinvar: Optional[list[str]] = None
-    max_gnomad_af: Optional[float] = None
-    zygosity: Optional[list[str]] = None
-    cnv_types: Optional[list[str]] = None
+    vep_impact: list[str] | None = None
+    clinvar: list[str] | None = None
+    max_gnomad_af: float | None = None
+    zygosity: list[str] | None = None
+    cnv_types: list[str] | None = None
 
 
 class GroupSpec(BaseModel):
@@ -57,10 +56,10 @@ class GroupSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     label: str = Field("", description="Group name shown in the legend.")
-    patient_keys: Optional[list[str]] = Field(None, description="Patient keys (UUIDs from search_patients).")
-    filters: Optional[dict[str, Any]] = Field(None, description="search_patients filters.")
-    carriers: Optional[CarrierSource] = Field(None, description="cohort_carriers criteria.")
-    _criteria: Optional[Criteria] = PrivateAttr(None)
+    patient_keys: list[str] | None = Field(None, description="Patient keys (UUIDs from search_patients).")
+    filters: dict[str, Any] | None = Field(None, description="search_patients filters.")
+    carriers: CarrierSource | None = Field(None, description="cohort_carriers criteria.")
+    _criteria: Criteria | None = PrivateAttr(None)
 
     @field_validator("label")
     @classmethod
@@ -94,7 +93,7 @@ class GroupSpec(BaseModel):
         return self
 
     @property
-    def criteria(self) -> Optional[Criteria]:
+    def criteria(self) -> Criteria | None:
         """The validated carrier criteria of a ``carriers`` group."""
         return self._criteria
 
@@ -129,7 +128,7 @@ def _group_spec(index: int, group: Any) -> GroupSpec:
     return spec if spec.label else spec.model_copy(update={"label": f"Group {index}"})
 
 
-def parse_groups(groups: Any, others_label: Optional[str]) -> list[GroupSpec]:
+def parse_groups(groups: Any, others_label: str | None) -> list[GroupSpec]:
     """Validate the ``groups`` argument of survival_curve."""
     if not isinstance(groups, list) or not groups:
         raise _sql.InvalidInput("give `groups`: a list of {label, and one of patient_keys, filters, carriers}")
@@ -210,7 +209,7 @@ def _sequenced(patient: dict) -> bool:
     return (patient.get("case_count") or 0) > 0
 
 
-def _resolve_group(token: str, tenant: str, spec: GroupSpec, cohort: Optional[dict[str, dict]],
+def _resolve_group(token: str, tenant: str, spec: GroupSpec, cohort: dict[str, dict] | None,
                    cohort_filters: dict, reader: _PatientReader) -> tuple[dict[str, dict], dict]:
     """The group's patients by key, inside the cohort when there is one, and how they were found."""
     if spec.patient_keys:
@@ -252,14 +251,14 @@ def _resolve_genes(api: RadiantApi, tenant: str, specs: list[GroupSpec]) -> list
     return out
 
 
-def _survival_curve(api: RadiantApi, token: str, tenant: Optional[str], specs: list[GroupSpec],
-                    cohort_filters: Optional[dict], sequenced_only: bool, others_label: Optional[str],
+def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list[GroupSpec],
+                    cohort_filters: dict | None, sequenced_only: bool, others_label: str | None,
                     title: str) -> Any:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return err
     reader = _PatientReader(api, tenant_code)
-    cohort: Optional[dict[str, dict]] = None
+    cohort: dict[str, dict] | None = None
     unsequenced = 0
     try:
         specs = _resolve_genes(api, tenant_code, specs)
@@ -345,11 +344,11 @@ def _survival_curve(api: RadiantApi, token: str, tenant: Optional[str], specs: l
 
 async def survival_curve(
     groups: list[GroupSpec],
-    cohort_filters: Optional[dict[str, Any]] = None,
+    cohort_filters: dict[str, Any] | None = None,
     sequenced_only: bool = False,
-    others_label: Optional[str] = None,
+    others_label: str | None = None,
     title: str = "",
-    tenant: Optional[str] = None,
+    tenant: str | None = None,
 ) -> Any:
     """Kaplan-Meier survival curves of 2 to 6 patient groups, with the log-rank test.
 

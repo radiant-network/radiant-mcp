@@ -5,12 +5,13 @@ import base64
 import json
 import os
 import stat
+from pathlib import Path
 
 import pytest
 from mysql.connector.errors import DatabaseError
 
-from radiant_mcp import starrocks
 from radiant_mcp import portal_api as _api
+from radiant_mcp import starrocks
 from radiant_mcp.tools import query
 
 
@@ -84,7 +85,7 @@ def starrocks_server(monkeypatch):
 
     def connect(**kwargs):
         path = kwargs["openid_token_file"]
-        Server.token_files.append((path, open(path).read(), stat.S_IMODE(os.stat(path).st_mode)))
+        Server.token_files.append((path, Path(path).read_text(), stat.S_IMODE(os.stat(path).st_mode)))
         conn = FakeConnection(kwargs, Server.data, Server.error)
         Server.connections.append(conn)
         return conn

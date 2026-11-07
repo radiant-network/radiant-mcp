@@ -1,14 +1,13 @@
 """``bar_chart``: a bar chart of numbers the agent already computed."""
 
 import json
+from typing import Any
 
 import anyio
-from typing import Any
 
 from ... import charts
 from ... import sql as _sql
 from ._common import image as _image
-
 
 MAX_BARS = 50
 

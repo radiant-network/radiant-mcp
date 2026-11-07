@@ -15,7 +15,8 @@ a strict pattern or a closed list, so a bad value fails with a clear
 import math
 import os
 import re
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from . import starrocks
 
@@ -133,7 +134,7 @@ class Params:
 
 # -- execution --------------------------------------------------------------------
 
-def run(token: str, sql: str, params: Optional[Params] = None) -> list[dict]:
+def run(token: str, sql: str, params: Params | None = None) -> list[dict]:
     """Run ``sql`` as the caller and return the rows as JSON-friendly dicts."""
     values = dict(params.values) if params is not None else None
     result = starrocks.query(token, sql, values or None)
@@ -170,5 +171,5 @@ def as_list(value: Any) -> list:
     return [value]
 
 
-def first(rows: list[dict]) -> Optional[dict]:
+def first(rows: list[dict]) -> dict | None:
     return rows[0] if rows else None

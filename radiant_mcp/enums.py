@@ -11,7 +11,7 @@ macro ``dict_<name>``). The unit tests compare them with the ETL when a
 checkout is available, so a value added on one side fails the build.
 """
 
-from typing import Iterable
+from collections.abc import Iterable
 
 ENUMS: dict[str, tuple[str, ...]] = {
     "exomiser_acmg_classification": (

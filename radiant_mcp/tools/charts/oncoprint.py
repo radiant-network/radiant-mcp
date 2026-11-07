@@ -1,13 +1,13 @@
 """``oncoprint``: which cases carry alterations in a gene list."""
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ... import charts
 from ... import portal_api as _api
 from ... import sql as _sql
-from ...domain.consequences import consequence_class
 from ...domain import data_types as _data_types
+from ...domain.consequences import consequence_class
 from ...domain.data_types import COHORT_DATA_TYPES, CohortDataType
 from ...enums import ENUMS, canonical_values
 from ...portal_api import RadiantApi, resolve_tenant
@@ -15,13 +15,12 @@ from ...queries.charts import ONCOPRINT_ROW_LIMIT, oncoprint_query
 from ...services.genes import resolve_gene
 from ._common import image as _image
 
-
 MAX_ONCOPRINT_GENES = 20
 MAX_ONCOPRINT_CASES = 100
 
 
-def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[str], tenant: Optional[str],
-               max_gnomad_af: Optional[float], vep_impact: list[str]) -> Any:
+def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[str], tenant: str | None,
+               max_gnomad_af: float | None, vep_impact: list[str]) -> Any:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return err
@@ -79,10 +78,10 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
 
 async def oncoprint(
     genes: list[str],
-    data_types: Optional[list[CohortDataType]] = None,
-    max_gnomad_af: Optional[float] = None,
-    vep_impact: Optional[list[str]] = None,
-    tenant: Optional[str] = None,
+    data_types: list[CohortDataType] | None = None,
+    max_gnomad_af: float | None = None,
+    vep_impact: list[str] | None = None,
+    tenant: str | None = None,
 ) -> Any:
     """Oncoprint: which cases of the tenant carry an alteration in each gene, by type.
 

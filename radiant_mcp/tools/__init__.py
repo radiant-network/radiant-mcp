@@ -11,11 +11,11 @@ from .cases import get_case_context, list_tenants, search_cases
 from .charts import bar_chart, family_venn, lollipop, oncoprint, patient_timeline, survival_curve
 from .cohort import cohort_carriers, genotype_phenotype
 from .genes import gene_info, lookup_terms
+from .hits import second_hit
 from .occurrences import case_cnv, prioritize_snv
 from .patients import get_patient_context, search_patients
 from .query import read_query, table_overview
 from .schema import describe_schema
-from .hits import second_hit
 from .variants import variant_carriers, variant_details
 
 API_TOOLS = (

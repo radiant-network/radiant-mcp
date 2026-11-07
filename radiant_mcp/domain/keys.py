@@ -6,7 +6,6 @@ The occurrence tables (germline / somatic SNV and CNV, exomiser,
 query needs both.
 """
 
-from typing import Optional
 
 # Mirrors `_magic` in radiant-portal-pipeline/radiant/dags/import_part.py
 # (compute_part): variant_part = part // 10.
@@ -17,7 +16,7 @@ def variant_part(part: int) -> int:
     return part // VARIANT_PART_DIVISOR
 
 
-def with_parts(key: dict, part: Optional[int]) -> dict:
+def with_parts(key: dict, part: int | None) -> dict:
     """``key`` with its ``part`` and ``variant_part`` when ``part`` is known."""
     if part is None:
         return key

@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 from ... import charts
 from ... import portal_api as _api
@@ -15,11 +15,10 @@ from ...queries.carriers import lollipop_query
 from ...services.genes import resolve_gene
 from ._common import image as _image
 
-
 _AA_POSITION = re.compile(r"(\d+)")
 
 
-def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: Optional[str]) -> Any:
+def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | None) -> Any:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return err
@@ -59,11 +58,11 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: Optional
 async def lollipop(
     gene: str,
     data_type: CohortSnvDataType = "germline_snv",
-    vep_impact: Optional[list[str]] = None,
-    clinvar: Optional[list[str]] = None,
-    max_gnomad_af: Optional[float] = None,
-    zygosity: Optional[list[str]] = None,
-    tenant: Optional[str] = None,
+    vep_impact: list[str] | None = None,
+    clinvar: list[str] | None = None,
+    max_gnomad_af: float | None = None,
+    zygosity: list[str] | None = None,
+    tenant: str | None = None,
 ) -> Any:
     """Lollipop plot of the carriers' variants along the protein of a gene.
 
