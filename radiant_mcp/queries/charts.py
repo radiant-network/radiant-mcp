@@ -37,11 +37,23 @@ def venn_query(tenant_db: str, members: list[tuple[str, dict]], rare_only: bool,
     return sql, p
 
 
+# Rows read per data type; one more is fetched to tell a truncated result.
+ONCOPRINT_ROW_LIMIT = 50000
+
+
 def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af: Optional[float],
                     vep_impact: list[str]) -> tuple[str, _sql.Params]:
+    """``(case_id, gene, kind)`` rows, ordered by case so a cut drops whole cases last.
+
+    Germline columns are cases: only the proband's sequencings count, since the
+    parents' rows carry the proband's case_id.
+    """
     p = _sql.Params()
     tenant_db = _sql.tenant_db(tenant)
     sequencing = sequencing_join(p, tenant)
+    if not data_types.is_somatic(data_type):
+        sequencing += f" AND s.family_role = {p(_rules.PROBAND)}"
+    tail = f" ORDER BY s.case_id, x.gene LIMIT {p(ONCOPRINT_ROW_LIMIT + 1)}"
     if data_types.is_snv(data_type):
         where = [f"symbol IN ({p.list(genes)})"]
         if max_gnomad_af is not None:
@@ -58,12 +70,12 @@ def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af
             f" WHERE {' AND '.join(where)}),"
             f" x AS (SELECT o.{seq} AS seq_id, o.task_id, v.symbol AS gene, array_join(v.consequences, ',') AS kind"
             f" FROM {tenant_db}.{table} o JOIN v ON v.locus_id = o.locus_id WHERE {occ_filter})"
-            f" SELECT DISTINCT s.case_id, x.gene, x.kind FROM x {sequencing} LIMIT {p(50000)}"
+            f" SELECT DISTINCT s.case_id, x.gene, x.kind FROM x {sequencing}{tail}"
         ), p
     table = "somatic__cnv__occurrence" if data_types.is_somatic(data_type) else "germline__cnv__occurrence"
     return (
         f"WITH x AS (SELECT c.seq_id, c.task_id, g.symbol AS gene, c.type AS kind"
         f" FROM {tenant_db}.{table} c, unnest(c.symbol) AS g(symbol)"
         f" WHERE g.symbol IN ({p.list(genes)}) AND c.filter = {p(_rules.PASS)})"
-        f" SELECT DISTINCT s.case_id, x.gene, x.kind FROM x {sequencing} LIMIT {p(50000)}"
+        f" SELECT DISTINCT s.case_id, x.gene, x.kind FROM x {sequencing}{tail}"
     ), p

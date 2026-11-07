@@ -1,6 +1,7 @@
 """RAD-254 chart tools: rendering, data selection and tool contracts."""
 
 import asyncio
+import importlib
 import json
 import re
 
@@ -109,7 +110,11 @@ def test_venn_needs_two_or_three_sets():
 
 @pytest.mark.parametrize("consequences, expected", [
     (["missense_variant", "stop_gained"], "truncating"),
-    (["splice_region_variant", "intron_variant"], "splice"),
+    (["splice_donor_variant", "intron_variant"], "splice"),
+    # The LOW splice region terms are not "splice": a missense next to an exon edge stays a missense.
+    (["missense_variant", "splice_region_variant"], "missense"),
+    (["synonymous_variant", "splice_region_variant"], "other"),
+    (["splice_donor_5th_base_variant", "intron_variant"], "other"),
     (["missense_variant"], "missense"),
     (["inframe_deletion"], "inframe"),
     (["synonymous_variant"], "other"),
@@ -299,6 +304,32 @@ def test_oncoprint(fake_api, fake_sql, run):
     assert data["altered_cases"] == 2 and data["altered_cases_per_gene"] == {"SCN1A": 2, "BRCA1": 1}
     for sql, values in fake_sql.queries:
         assert bound_value(sql, values, "s.tenant_code = ") == "demo"
+        assert bound_value(sql, values, "s.family_role = ") == "proband"
+    assert "polymorphisms" in data["note"] and "proband" in data["germline"]
+
+
+def test_oncoprint_keeps_parents_out_of_germline_cases_only(fake_api, fake_sql, run):
+    fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
+    run(oncoprint(["TP53"], data_types=["somatic_snv_all", "somatic_cnv", "germline_cnv"], tenant="demo"))
+    by_table = {re.search(r"(\w+__\w+__occurrence)", sql).group(1): sql for sql, _ in fake_sql.queries}
+    assert "family_role" not in by_table["somatic__snv__occurrence"]
+    assert "family_role" not in by_table["somatic__cnv__occurrence"]
+    assert "family_role" in by_table["germline__cnv__occurrence"]
+
+
+def test_oncoprint_counts_every_altered_case_and_flags_a_cut(fake_api, fake_sql, run, monkeypatch):
+    # The package re-exports the oncoprint tool under the module's name.
+    oncoprint_module = importlib.import_module("radiant_mcp.tools.charts.oncoprint")
+    monkeypatch.setattr(oncoprint_module, "ONCOPRINT_ROW_LIMIT", 150)
+    fake_api.on("genes", "gene_search", lambda gene_search_body, **_: [{"symbol": "TP53"}])
+    fake_sql.on("germline__snv__occurrence", [
+        {"case_id": i, "gene": "TP53", "kind": "missense_variant"} for i in range(1, 152)
+    ])
+    data, _ = _parts(run(oncoprint(["TP53", "P53"], max_gnomad_af=0.01, tenant="demo")))
+    assert data["genes"] == ["TP53"]
+    assert data["altered_cases"] == 150 and data["cases_shown"] == 100
+    assert data["altered_cases_per_gene"] == {"TP53": 150}
+    assert data["truncated"] == ["germline_snv"] and "note" not in data
 
 
 @pytest.mark.parametrize("kwargs, message", [
