@@ -367,3 +367,14 @@ def test_second_hit_reads_the_latest_task_of_a_rerun(fake_api, fake_sql, run, mo
     assert sum("older task" in w for w in result["warnings"]) == 2
     [(sql, values)] = fake_sql.matching("germline__snv__occurrence")
     assert bound_value(sql, values, "o.task_id = ") == 23
+
+
+def test_second_hit_matches_every_gene_of_a_variant():
+    for sql, values in (hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
+                        hit_queries.germline_plp_query("demo_tenant", SNV_KEY),
+                        hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])):
+        assert "JOIN radiant.snv__consequence_filter cf ON cf.locus_id = o.locus_id" in sql
+        assert "v.symbol" not in sql
+    sql, values = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])
+    assert bound_value(sql, values, "cf.symbol IN (") == "BRCA1"
+    assert bound_value(sql, values, "cf.vep_impact IN (") == "HIGH"
