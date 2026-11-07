@@ -1,4 +1,5 @@
-"""Shared fixtures: a fake Radiant API in place of the HTTP client."""
+"""Shared fixtures: a fake Radiant API in place of the HTTP client, and the
+StarRocks schema read from the ETL and portal checkouts (``schema_sources``)."""
 
 import asyncio
 from contextlib import contextmanager
@@ -8,6 +9,7 @@ import pytest
 from radiant_python.exceptions import ApiException
 
 from radiant_mcp.tools import _api
+from schema_sources import etl, etl_dictionaries, etl_tables, portal, portal_tenant_objects, portal_views  # noqa: F401
 
 PORTAL = "https://portal.example"
 

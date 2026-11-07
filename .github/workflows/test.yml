@@ -1,7 +1,8 @@
-# Unit tests. describe_schema is checked against the owners of the StarRocks schema:
-# the ETL (radiant-portal-pipeline) for the tables, the portal for the clinical views.
-# Their main branches are checked out next to this repo, so a schema change that breaks
-# the curated catalog fails here.
+# Unit tests. describe_schema and every query of the curated tools are checked against
+# the owners of the StarRocks schema: the ETL (radiant-portal-pipeline) for the tables,
+# the portal for the objects it creates in each tenant database (clinical views, views
+# over its PostgreSQL tables, gene_panel_mv). Their main branches are checked out next
+# to this repo, so a schema change that breaks the catalog or a query fails here.
 name: Unit tests
 
 on:
@@ -33,7 +34,7 @@ jobs:
             radiant/tasks/data/radiant_tables.py
           sparse-checkout-cone-mode: false
 
-      - name: Checkout the portal (clinical views owner)
+      - name: Checkout the portal (owner of the tenant views)
         uses: actions/checkout@v4
         with:
           repository: radiant-network/radiant-portal
@@ -42,6 +43,9 @@ jobs:
           sparse-checkout: |
             backend/scripts/seed/views
             backend/scripts/pcx_tables/access_controlled_views
+            backend/scripts/init-sql/migrations
+            backend/internal/types/tenant.go
+            backend/internal/repository/starrocks/starrocks_tenant.go
           sparse-checkout-cone-mode: false
 
       - name: Set up uv
