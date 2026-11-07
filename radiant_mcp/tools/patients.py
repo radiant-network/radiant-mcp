@@ -9,10 +9,13 @@ show the same user.
 
 from typing import Any
 
+from fastmcp.tools import ToolResult
+
 from .. import portal_api as _api
 from ..api_fields import PATIENT_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import patient_url, with_url
+from ..results import ToolOutput, describe, error, invalid, ok, respond
 from ..services.cases import merge_criteria, search_criteria
 from ..services.patients import (
     PATIENT_KEY,
@@ -42,31 +45,23 @@ def _search_patients(
     sort_by: str | None,
     sort_order: str,
     include_filter_values: bool,
-) -> dict:
+) -> ToolOutput:
     from radiant_python.models.list_body_with_criteria import ListBodyWithCriteria
     from radiant_python.models.sort_body import SortBody
 
     filters = dict(filters or {})
     bad = unknown_filter_fields(filters)
     if bad:
-        return {
-            "error": f"Unknown filter field(s): {', '.join(bad)}",
-            "allowed_filter_fields": list(PATIENT_SEARCH_FILTER_FIELDS),
-        }
+        raise invalid(f"Unknown filter field(s): {', '.join(bad)}", allowed=list(PATIENT_SEARCH_FILTER_FIELDS))
     if sort_by is not None and sort_by not in PATIENT_SEARCH_SORT_FIELDS:
-        return {
-            "error": f"Unknown sort field: {sort_by}",
-            "allowed_sort_fields": list(PATIENT_SEARCH_SORT_FIELDS),
-        }
+        raise invalid(f"Unknown sort field: {sort_by}", allowed=list(PATIENT_SEARCH_SORT_FIELDS))
     sort_order = (sort_order or "asc").lower()
     if sort_order not in ("asc", "desc"):
-        return {"error": "sort_order must be 'asc' or 'desc'"}
+        raise invalid("sort_order must be 'asc' or 'desc'")
     limit = clamp(limit, 1, SEARCH_MAX_LIMIT)
     offset = max(0, int(offset))
 
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+    tenant_code = resolve_tenant(api, tenant)
 
     def _search(extra: dict, page_offset: int) -> dict:
         merged_filters = merge_criteria(filters, extra)
@@ -80,6 +75,7 @@ def _search_patients(
         )
         return api.call("patients", "search_patients", tenant=tenant_code, list_body_with_criteria=body) or {}
 
+    cut = None
     try:
         if query:
             # One search per matched identifier type (criteria are AND-ed by
@@ -103,25 +99,37 @@ def _search_patients(
             patients = list(merged.values())[:limit]
             result: dict[str, Any] = {"tenant": tenant_code, "query": query, "count": len(merged)}
             if truncated or len(merged) > limit:
-                result["more_results"] = True
+                cut = "More patients match than were returned: use a longer identifier prefix or add filters."
         else:
             resp = _search({}, offset)
             patients = resp.get("list", [])
-            result = {"tenant": tenant_code, "count": resp.get("count", 0), "offset": offset}
+            count = resp.get("count", 0)
+            result = {"tenant": tenant_code, "count": count, "offset": offset}
+            more = count - offset - len(patients)
+            if more > 0:
+                cut = f"{more} more patients: page with `offset` or narrow the filters."
     except Exception as exc:  # noqa: BLE001
         no_data = no_clinical_data(tenant_code, exc)
         if no_data is None:
             raise
-        return no_data
+        raise no_data from exc
 
     result["returned"] = len(patients)
     result["patients"] = [with_url(p, patient_url(tenant_code, p.get("patient_key"))) for p in patients]
+    warnings = []
     if include_filter_values:
         try:
             result["filter_values"] = api.call("patients", "patients_filters", tenant=tenant_code)
         except Exception as exc:  # noqa: BLE001 — the search itself succeeded
-            result["warnings"] = [f"filter_values: {_api.api_error(exc)['error']}"]
-    return result
+            warnings.append(f"filter_values: {describe(exc)}")
+    return ok(result, warnings=warnings, truncated=cut)
+
+
+def _get_patient_context(api: RadiantApi, token: str, patient_key: str, tenant: str | None,
+                         sections: list[str]) -> ToolOutput:
+    context = patient_context(api, token, patient_key, tenant, sections)
+    warnings = context.pop("warnings")
+    return ok(context, warnings=warnings, portal_url=context["patient"].get("portal_url"))
 
 
 # -- tools -------------------------------------------------------------------
@@ -135,7 +143,7 @@ async def search_patients(
     sort_by: str | None = None,
     sort_order: str = "asc",
     include_filter_values: bool = False,
-) -> dict:
+) -> ToolResult:
     """Search the patients of the portal's patient list (clinical data).
 
     Use this to find a patient's ``patient_key`` before calling
@@ -159,7 +167,7 @@ async def search_patients(
         limit: Max patients to return (1–100, default 20).
         offset: Pagination offset (default 0, ignored with ``query``).
             With ``query``, ``count`` is the number of distinct patients found
-            and ``more_results`` is true when some were not returned.
+            and ``truncated`` is set when some were not returned.
         sort_by: Optional sort field: birth_year, can_read_phi,
             cns_integrated_diagnosis, diagnosis_type_cohort, gender,
             organization_code, patient_id, survival_days, vital_status.
@@ -171,8 +179,8 @@ async def search_patients(
     Returns ``count`` and ``patients`` (identifiers, demographics, vital
     status, initial diagnosis, survival, ``case_count``, ``patient_key`` and
     ``portal_url``). Names are placeholders when the user may not read PHI
-    (``can_read_phi``). A tenant without clinical data returns
-    ``clinical_data_available: false``.
+    (``can_read_phi``). A tenant without clinical data fails with the
+    ``unavailable`` error code.
     """
     return await _api.run(
         _search_patients, tenant, filters, query, limit, offset, sort_by, sort_order, include_filter_values,
@@ -183,7 +191,7 @@ async def get_patient_context(
     patient_key: str,
     tenant: str | None = None,
     sections: list[str] | None = None,
-) -> dict:
+) -> ToolResult:
     """Retrieve the clinical context of a patient, as on the portal's patient page.
 
     Use this first for any question about one patient's clinical history. The
@@ -201,7 +209,7 @@ async def get_patient_context(
     section carries the ``portal_url`` of its tab. ``case_ids`` lists the
     patient's cases for ``get_case_context``. A section that fails is listed
     in ``warnings``; the rest is still returned. A tenant without clinical
-    data returns ``clinical_data_available: false``.
+    data fails with the ``unavailable`` error code.
 
     Args:
         patient_key: The patient page key (a UUID).
@@ -212,15 +220,12 @@ async def get_patient_context(
             external_records.
     """
     if not PATIENT_KEY.match(patient_key or ""):
-        return {
-            "error": f"`{patient_key}` is not a patient key (a UUID). "
-                     "Find the key with search_patients(query=<identifier>) first.",
-        }
+        return respond(error("invalid_input", f"`{patient_key}` is not a patient key (a UUID). "
+                                              "Find the key with search_patients(query=<identifier>) first."))
     chosen = list(dict.fromkeys(sections)) if sections else list(DEFAULT_SECTIONS)
     unknown = sorted(set(chosen) - set(PATIENT_SECTIONS))
     if unknown:
-        return {
-            "error": f"Unknown section(s): {', '.join(unknown)}",
-            "allowed_sections": list(PATIENT_SECTIONS),
-        }
-    return await _api.run(patient_context, patient_key, tenant, chosen)
+        return respond(error("invalid_input", f"Unknown section(s): {', '.join(unknown)}",
+                             allowed=list(PATIENT_SECTIONS)))
+    return await _api.run(_get_patient_context, patient_key, tenant, chosen)
+

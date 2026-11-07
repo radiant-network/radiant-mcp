@@ -1,14 +1,13 @@
 """``patient_timeline``: a patient's clinical events on one time axis."""
 
-import json
-from typing import Any
+from fastmcp.tools import ToolResult
 
 from ... import charts
 from ... import portal_api as _api
 from ...portal_api import RadiantApi
+from ...results import ToolOutput, error, ok, respond
 from ...services.patients import PATIENT_KEY, patient_context
 from ._common import DAYS_PER_YEAR
-from ._common import image as _image
 
 _TRACKS = ("Events", "Surgery", "Radiation", "Chemotherapy", "Imaging")
 
@@ -50,25 +49,23 @@ def timeline_items(context: dict) -> list[charts.TimelineItem]:
     return items
 
 
-def _patient_timeline(api: RadiantApi, token: str, patient_key: str, tenant: str | None) -> Any:
+def _patient_timeline(api: RadiantApi, token: str, patient_key: str, tenant: str | None) -> ToolOutput:
     context = patient_context(api, token, patient_key, tenant, ["treatments", "imaging"])
-    if "error" in context or context.get("clinical_data_available") is False:
-        return context
+    portal_url = context["patient"].get("portal_url")
     items = timeline_items(context)
     if not items:
-        return {"tenant": context["tenant"], "message": "No dated event, treatment or imaging for this patient."}
+        return ok({"tenant": context["tenant"], "items_per_track": {}},
+                  warnings=[*context["warnings"], "No dated event, treatment or imaging for this patient: "
+                                                  "no chart drawn."], portal_url=portal_url)
     tracks = [t for t in _TRACKS if any(i.track == t for i in items)]
     png = charts.timeline(items, tracks, "Patient history")
     counts = {t: sum(1 for i in items if i.track == t) for t in tracks}
-    text = json.dumps({
-        "tenant": context["tenant"], "items_per_track": counts,
-        "axis": "age in years (days from birth / 365.25)", "warnings": context.get("warnings"),
-        "portal_url": context.get("patient", {}).get("portal_url"),
-    })
-    return _image(text, png)
+    return ok({"tenant": context["tenant"], "items_per_track": counts,
+               "axis": "age in years (days from birth / 365.25)"},
+              warnings=context["warnings"], portal_url=portal_url, image=png)
 
 
-async def patient_timeline(patient_key: str, tenant: str | None = None) -> Any:
+async def patient_timeline(patient_key: str, tenant: str | None = None) -> ToolResult:
     """A patient's history on one age axis: events (diagnosis, progression,
     recurrence), surgeries, radiation and chemotherapy periods, imaging
     sessions and the vital status, from the portal patient page.
@@ -78,5 +75,6 @@ async def patient_timeline(patient_key: str, tenant: str | None = None) -> Any:
         tenant: Tenant code (auto-resolved when the user has only one).
     """
     if not PATIENT_KEY.match(patient_key or ""):
-        return {"error": f"`{patient_key}` is not a patient key (a UUID). Find it with search_patients first."}
+        return respond(error("invalid_input",
+                             f"`{patient_key}` is not a patient key (a UUID). Find it with search_patients first."))
     return await _api.run(_patient_timeline, patient_key, tenant)

@@ -7,13 +7,13 @@ until the Radiant API returns it with each task.
 """
 
 
-from .. import portal_api as _api
 from .. import sql as _sql
 from ..domain.data_types import CASE_DATA_TYPES, GERMLINE_CASE_DATA_TYPES, SOMATIC_CASE_DATA_TYPES
 from ..domain.keys import variant_part
 from ..portal_api import RadiantApi, resolve_tenant
 from ..portal_links import case_url, occurrence_url, patient_url, with_url
 from ..queries.sequencing import parts_query
+from ..results import describe
 
 
 def search_criteria(filters: dict) -> list:
@@ -62,9 +62,12 @@ def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], 
 
 
 def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) -> dict:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+    """``tenant``, ``case``, ``occurrence_keys`` and ``warnings`` (a list, maybe empty).
+
+    Raises ``ToolFailure`` when the tenant cannot be chosen, and the API error
+    when the case cannot be read.
+    """
+    tenant_code = resolve_tenant(api, tenant)
 
     case = api.call("cases", "case_entity", tenant=tenant_code, case_id=case_id) or {}
     with_url(case, case_url(tenant_code, case_id))
@@ -96,7 +99,7 @@ def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) 
                     )
                 except Exception as exc:  # noqa: BLE001 — surface, don't abort
                     warnings.append(
-                        f"seq_id={seq['seq_id']} data_type={data_type}: {_api.api_error(exc)['error']}"
+                        f"seq_id={seq['seq_id']} data_type={data_type}: {describe(exc)}"
                     )
                     continue
                 for task in tasks or []:
@@ -139,13 +142,11 @@ def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) 
             entry["part"] = part
             entry["variant_part"] = variant_part(part)
 
-    result = {
+    return {
         "tenant": tenant_code,
         "case": case,
         # Flat list of every (case_id, seq_id, task_id, data_type) tuple —
         # the handle for follow-up variant queries.
         "occurrence_keys": occurrence_keys,
+        "warnings": warnings,
     }
-    if warnings:
-        result["warnings"] = warnings
-    return result

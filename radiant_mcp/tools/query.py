@@ -9,9 +9,11 @@ at most ``STARROCKS_MAX_ROWS`` rows and says when it cut the result.
 from collections.abc import Callable
 
 import anyio
+from fastmcp.tools import ToolResult
 
 from .. import portal_api as _api
 from .. import starrocks
+from ..results import AUTH_REQUIRED, ToolOutput, failure, invalid, ok, respond
 from ..settings import get_settings
 from ..sql import plain
 
@@ -26,38 +28,37 @@ def _rows(result: starrocks.Result) -> list[list]:
     return [[plain(v) for v in row] for row in result.rows]
 
 
-async def _run(fn: Callable[..., dict], *args) -> dict:
-    """Run ``fn(token, *args)`` on a worker thread; failures become ``{"error"}``.
+async def _run(fn: Callable[..., ToolOutput], *args) -> ToolResult:
+    """Run ``fn(token, *args)`` on a worker thread; failures become the error result.
 
     The JWT is read on the event loop: the auth context does not follow the
     thread.
     """
     token = _api.get_jwt_token()
     if not token:
-        return {"error": starrocks.AUTH_REQUIRED}
+        return respond(AUTH_REQUIRED)
     try:
-        return await anyio.to_thread.run_sync(lambda: fn(token, *args))
-    except starrocks.StarRocksError as exc:
-        return {"error": f"StarRocks error: {exc}"}
+        return respond(await anyio.to_thread.run_sync(lambda: fn(token, *args)))
+    except Exception as exc:  # noqa: BLE001 — every failure becomes a tool result
+        return respond(failure(exc))
 
 
-def _read_query(token: str, query: str, db: str | None) -> dict:
+def _read_query(token: str, query: str, db: str | None) -> ToolOutput:
     max_rows = _max_rows()
     result = starrocks.query(token, query, database=db, max_rows=max_rows)
-    out = {"columns": result.columns, "rows": _rows(result), "returned": len(result.rows)}
+    truncated = None
     if result.truncated:
-        out["truncated"] = True
-        out["note"] = (f"Only the first {max_rows} rows are returned. Aggregate (COUNT, GROUP BY) "
-                       "or add a narrower WHERE / LIMIT instead of paging.")
-    return out
+        truncated = (f"Only the first {max_rows} rows are returned. Aggregate (COUNT, GROUP BY) "
+                     "or add a narrower WHERE / LIMIT instead of paging.")
+    return ok({"columns": result.columns, "rows": _rows(result), "returned": len(result.rows)}, truncated=truncated)
 
 
-async def read_query(query: str, db: str | None = None) -> dict:
+async def read_query(query: str, db: str | None = None) -> ToolResult:
     """Run one read-only SQL statement in StarRocks, as the caller.
 
     Last resort: call ``describe_schema`` first and prefer the Radiant tools.
     One statement per call. The result holds at most a few hundred rows; when
-    more exist, ``truncated`` is true, so aggregate or filter instead.
+    more exist, ``truncated`` is set, so aggregate or filter instead.
 
     Args:
         query: The SQL statement, e.g. a SELECT with a LIMIT.
@@ -67,11 +68,15 @@ async def read_query(query: str, db: str | None = None) -> dict:
     return await _run(_read_query, query, db)
 
 
-def _table_overview(token: str, table: str) -> dict:
+def _table_overview(token: str, table: str) -> ToolOutput:
     db, _, name = table.rpartition(".")
     db = db or starrocks.default_database()
     if not db:
-        raise starrocks.StarRocksError(f"no database given for table {table!r} (use db.table)")
+        raise invalid(f"no database given for table {table!r} (use db.table)")
+    try:
+        starrocks.database_name(db), starrocks.database_name(name)
+    except starrocks.StarRocksError as exc:
+        raise invalid(str(exc)) from exc
     full = f"`{starrocks.database_name(db)}`.`{starrocks.database_name(name)}`"
     count = starrocks.query(token, f"SELECT COUNT(*) FROM {full}").rows[0][0]
     columns = starrocks.query(token, f"DESCRIBE {full}")
@@ -83,10 +88,10 @@ def _table_overview(token: str, table: str) -> dict:
     if count:
         sample = starrocks.query(token, f"SELECT * FROM {full} LIMIT {_SAMPLE_ROWS}")
         out["sample"] = {"columns": sample.columns, "rows": _rows(sample)}
-    return out
+    return ok(out)
 
 
-async def table_overview(table: str) -> dict:
+async def table_overview(table: str) -> ToolResult:
     """Get a table's columns, total row count and up to 3 sample rows, as the caller.
 
     Prefer ``describe_schema``, which documents the tables to use, their

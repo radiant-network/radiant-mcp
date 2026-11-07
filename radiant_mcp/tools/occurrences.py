@@ -9,12 +9,15 @@ pruning and access control.
 from dataclasses import dataclass
 from typing import Any
 
+from fastmcp.tools import ToolResult
+
 from .. import portal_api as _api
 from ..api_fields import OCCURRENCE_SORT_FIELDS
 from ..domain.data_types import CASE_CNV_DATA_TYPES, CASE_SNV_DATA_TYPES, CaseCnvDataType, CaseSnvDataType
 from ..enums import canonical_values
 from ..portal_api import RadiantApi, clamp, resolve_tenant
 from ..portal_links import occurrence_url, variant_url, with_url
+from ..results import ToolOutput, error, ok, respond
 
 MAX_LIMIT = 100
 # SQON leaf operators accepted by the backend (types/filter.go, sqonToFilter).
@@ -127,12 +130,10 @@ def _list_occurrences(
     limit: int,
     offset: int,
     additional_fields: list[str] | None,
-) -> dict:
+) -> ToolOutput:
     from radiant_python.models import CountBodyWithSqon, ListBodyWithSqon, SortBody
 
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+    tenant_code = resolve_tenant(api, tenant)
 
     kind = _KINDS[data_type]
     keys = {"tenant": tenant_code, "case_id": case_id, "seq_id": seq_id, "task_id": task_id}
@@ -153,20 +154,26 @@ def _list_occurrences(
         if kind.is_snv:
             with_url(row, variant_url(tenant_code, variant_id), key="variant_portal_url")
 
+    total = (count or {}).get("count")
     result = {
         "tenant": tenant_code,
         "case_id": case_id,
         "seq_id": seq_id,
         "task_id": task_id,
         "data_type": data_type,
-        "count": (count or {}).get("count"),
+        "count": total,
         "returned": len(rows),
         "offset": offset,
         "filters": filters,
+        "occurrences": rows,
     }
-    with_url(result, occurrence_url(tenant_code, case_id, seq_id, data_type, task_id=task_id))
-    result["occurrences"] = rows
-    return result
+    more = (total or 0) - offset - len(rows)
+    return ok(
+        result,
+        truncated=f"{more} more occurrences: add filters, sort on what matters, or page with `offset`."
+        if more > 0 else None,
+        portal_url=occurrence_url(tenant_code, case_id, seq_id, data_type, task_id=task_id),
+    )
 
 
 async def _run_list(
@@ -181,14 +188,14 @@ async def _run_list(
     limit: int,
     offset: int,
     additional_fields: list[str] | None,
-) -> dict:
+) -> ToolResult:
     if data_type not in allowed:
-        return {"error": f"Unknown data_type {data_type!r}. Allowed: {', '.join(allowed)}."}
+        return respond(error("invalid_input", f"Unknown data_type {data_type!r}.", allowed=list(allowed)))
     try:
         leaves = normalize_filters(filters)
         order = normalize_sort(sort, OCCURRENCE_SORT_FIELDS[data_type])
     except FilterError as exc:
-        return {"error": str(exc)}
+        return respond(error("invalid_input", str(exc)))
     return await _api.run(
         _list_occurrences, data_type, case_id, seq_id, task_id, tenant, leaves, order,
         clamp(limit, 1, MAX_LIMIT), max(0, int(offset)), additional_fields,
@@ -208,7 +215,7 @@ async def prioritize_snv(
     offset: int = 0,
     additional_fields: list[str] | None = None,
     tenant: str | None = None,
-) -> dict:
+) -> ToolResult:
     """Rank and filter the SNV occurrences of one sequencing of a case.
 
     Same data, filters and order as the SNV table of the case variants tab.
@@ -271,7 +278,7 @@ async def case_cnv(
     offset: int = 0,
     additional_fields: list[str] | None = None,
     tenant: str | None = None,
-) -> dict:
+) -> ToolResult:
     """List and filter the CNV occurrences of one sequencing of a case.
 
     Same data, filters and order as the CNV table of the case variants tab.

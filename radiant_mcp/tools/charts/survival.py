@@ -1,9 +1,9 @@
 """``survival_curve``: Kaplan-Meier curves of patient groups, with a log-rank test."""
 
-import json
 from dataclasses import replace
 from typing import Any
 
+from fastmcp.tools import ToolResult
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 from ... import charts
@@ -13,11 +13,11 @@ from ...domain.criteria import Criteria, build_criteria
 from ...domain.data_types import CohortDataType
 from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.carriers import carrier_patients_query
+from ...results import ToolOutput, failure, invalid, ok, respond
 from ...services.cases import merge_criteria, search_criteria
 from ...services.genes import resolve_gene
 from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, no_clinical_data, unknown_filter_fields
 from ._common import DAYS_PER_YEAR
-from ._common import image as _image
 
 MAX_SURVIVAL_PATIENTS = 5000
 _PAGE = 100
@@ -144,14 +144,6 @@ def parse_groups(groups: Any, others_label: str | None) -> list[GroupSpec]:
     return specs
 
 
-class _NoClinicalData(Exception):
-    """The patient list cannot be read for this tenant; ``result`` says why."""
-
-    def __init__(self, result: dict) -> None:
-        super().__init__(result.get("message"))
-        self.result = result
-
-
 class _PatientReader:
     """Reads patient lists, and records what they left out."""
 
@@ -168,7 +160,7 @@ class _PatientReader:
             no_data = no_clinical_data(self.tenant, exc)
             if no_data is None:
                 raise
-            raise _NoClinicalData(no_data) from exc
+            raise no_data from exc
         self.capped = self.capped or total > MAX_SURVIVAL_PATIENTS
         keyed = {p["patient_key"]: p for p in patients if p.get("patient_key")}
         self.without_key += len(patients) - len(keyed)
@@ -253,10 +245,8 @@ def _resolve_genes(api: RadiantApi, tenant: str, specs: list[GroupSpec]) -> list
 
 def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list[GroupSpec],
                     cohort_filters: dict | None, sequenced_only: bool, others_label: str | None,
-                    title: str) -> Any:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+                    title: str) -> ToolOutput:
+    tenant_code = resolve_tenant(api, tenant)
     reader = _PatientReader(api, tenant_code)
     cohort: dict[str, dict] | None = None
     unsequenced = 0
@@ -275,9 +265,7 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
             members.append((spec.label, found))
             definition[spec.label] = how
     except _sql.InvalidInput as exc:
-        return {"tenant": tenant_code, "error": str(exc)}
-    except _NoClinicalData as exc:
-        return exc.result
+        raise invalid(str(exc), tenant=tenant_code) from exc
 
     warnings: list[str] = []
     if others_label:
@@ -302,7 +290,8 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
         groups.append(group)
         missing[name] = absent
     if not any(g.times for g in groups):
-        return {"tenant": tenant_code, "error": "No patient of these groups has survival data.", "groups": definition}
+        return ok({"tenant": tenant_code, "definition": definition, "excluded_without_survival_data": missing},
+                  warnings=[*warnings, "No patient of these groups has survival data: no chart drawn."])
 
     # Overlap only matters among the patients the curves draw.
     drawn_keys: dict[str, int] = {}
@@ -314,10 +303,11 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
     drawn = [g.name for g in groups if g.times]
     png, stats = charts.survival(groups, title or "Survival from initial diagnosis — " + " vs ".join(drawn),
                                  test=overlapping == 0)
+    truncated = None
     if reader.capped:
-        warnings.append(f"a patient list stopped at {MAX_SURVIVAL_PATIENTS} patients, in the portal's order "
-                        "(patients whose PHI the user can read first, then by organization): the cohort is "
-                        "not representative of the tenant; narrow it with cohort_filters")
+        truncated = (f"A patient list stopped at {MAX_SURVIVAL_PATIENTS} patients, in the portal's order "
+                     "(patients whose PHI the user can read first, then by organization): the cohort is not "
+                     "representative of the tenant; narrow it with cohort_filters.")
     if reader.without_key:
         warnings.append(f"{reader.without_key} patients have no patient key yet and are in no group")
     result: dict[str, Any] = {
@@ -335,11 +325,8 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
                   "variance matrix: a group with nobody at risk at the death times drops out); "
                   "event = deceased, time = survival_days (vital status day minus initial diagnosis day); "
                   "ticks mark censored patients.",
-        "capped_at": MAX_SURVIVAL_PATIENTS if reader.capped else None,
     }
-    if warnings:
-        result["warnings"] = warnings
-    return _image(json.dumps(result), png)
+    return ok(result, warnings=warnings, truncated=truncated, image=png)
 
 
 async def survival_curve(
@@ -349,7 +336,7 @@ async def survival_curve(
     others_label: str | None = None,
     title: str = "",
     tenant: str | None = None,
-) -> Any:
+) -> ToolResult:
     """Kaplan-Meier survival curves of 2 to 6 patient groups, with the log-rank test.
 
     Each group is ``{"label": ..., <one source>}``, the source being one of:
@@ -374,8 +361,8 @@ async def survival_curve(
     the image plus, per group, the patients, deaths and median survival, the
     log-rank p-value (``logrank_skipped`` says why when there is none: the
     groups overlap, a single group, no death...), the patients left out (not
-    found, outside the cohort, no survival data, no patient key) and
-    ``warnings`` (e.g. a cohort cut at 5000 patients). State these when reporting.
+    found, outside the cohort, no survival data, no patient key), ``warnings``
+    and ``truncated`` (a cohort cut at 5000 patients). State these when reporting.
 
     Args:
         groups: 2 to 6 groups, or 1 to 5 with others_label (which adds one), see above.
@@ -391,5 +378,5 @@ async def survival_curve(
         if cohort_filters:
             _patient_filters(cohort_filters, "cohort_filters")
     except _sql.InvalidInput as exc:
-        return {"error": str(exc)}
+        return respond(failure(exc))
     return await _api.run(_survival_curve, tenant, specs, cohort_filters, sequenced_only, others_label, title)

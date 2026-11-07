@@ -10,6 +10,8 @@ caller's JWT, so a user only counts the cases they may see.
 from dataclasses import replace
 from typing import Any
 
+from fastmcp.tools import ToolResult
+
 from .. import portal_api as _api
 from .. import sql as _sql
 from ..domain.criteria import Criteria, build_criteria
@@ -24,20 +26,19 @@ from ..queries.carriers import (
     summary_queries,
     totals_query,
 )
+from ..results import ToolOutput, Truncation, failure, not_found, ok, respond
 from ..services.genes import resolve_gene
 
 CARRIERS_MAX_LIMIT = 200
 PHENOTYPES_MAX_LIMIT = 100
 
 
-def _resolve(api: RadiantApi, tenant: str | None, criteria: Criteria) -> tuple[str | None, Criteria | None, dict | None]:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return None, None, err
+def _resolve(api: RadiantApi, tenant: str | None, criteria: Criteria) -> tuple[str, Criteria]:
+    tenant_code = resolve_tenant(api, tenant)
     gene = resolve_gene(api, tenant_code, criteria.gene)
     if gene is None:
-        return None, None, {"error": f"Gene {criteria.gene!r} not found.", "status": 404}
-    return tenant_code, replace(criteria, gene=_sql.symbol(gene["symbol"])), None
+        raise not_found(f"Gene {criteria.gene!r} not found.")
+    return tenant_code, replace(criteria, gene=_sql.symbol(gene["symbol"]))
 
 
 def _link(tenant: str, criteria: Criteria, row: dict) -> str | None:
@@ -50,10 +51,8 @@ def _link(tenant: str, criteria: Criteria, row: dict) -> str | None:
     return case_url(tenant, row.get("case_id"), tab="variants")
 
 
-def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: str | None, limit: int) -> dict:
-    tenant_code, criteria, err = _resolve(api, tenant, criteria)
-    if err:
-        return err
+def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: str | None, limit: int) -> ToolOutput:
+    tenant_code, criteria = _resolve(api, tenant, criteria)
     totals = _sql.first(_sql.run(token, *totals_query(tenant_code, criteria))) or {}
     carriers = []
     for row in _sql.run(token, *carriers_query(tenant_code, criteria, limit)):
@@ -62,7 +61,7 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
         row.pop("first_variant_id", None)
         carriers.append(row)
     summary = {name: _sql.run(token, sql, params) for name, (sql, params) in summary_queries(tenant_code, criteria).items()}
-    return {
+    data = {
         "tenant": tenant_code,
         "criteria": criteria.describe(),
         "cases": totals.get("cases", 0),
@@ -72,14 +71,18 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
         "carriers": carriers,
         "summary": summary,
     }
+    truncated = None
+    if len(carriers) >= limit:
+        truncated = Truncation(reason=f"`carriers` stops at {limit} rows (most variants first): raise `limit` (up to "
+                                      f"{CARRIERS_MAX_LIMIT}) or add filters; the counts cover every carrier.",
+                               lists=["carriers"])
+    return ok(data, truncated=truncated)
 
 
 def _genotype_phenotype(
     api: RadiantApi, token: str, criteria: Criteria, hpo_term: str | None, tenant: str | None, limit: int,
-) -> dict:
-    tenant_code, criteria, err = _resolve(api, tenant, criteria)
-    if err:
-        return err
+) -> ToolOutput:
+    tenant_code, criteria = _resolve(api, tenant, criteria)
     totals = _sql.first(_sql.run(token, *totals_query(tenant_code, criteria))) or {}
     phenotyped = _sql.first(_sql.run(token, *phenotyped_patients_query(tenant_code, criteria))) or {}
     result: dict[str, Any] = {
@@ -91,11 +94,20 @@ def _genotype_phenotype(
         "phenotype_source": ("positive HPO observations of the carrier patients; observations recorded for a "
                              "fetus are left out, since a fetal sample carries its mother's patient_id"),
     }
+    cut: list[str] = []
     if hpo_term:
         rows = _sql.run(token, *carriers_with_term_query(tenant_code, criteria, hpo_term, CARRIERS_MAX_LIMIT))
         result["hpo_term"] = hpo_term
         result["carriers_with_term"] = [with_url(r, case_url(tenant_code, r.get("case_id"))) for r in rows]
-    return result
+        if len(rows) >= CARRIERS_MAX_LIMIT:
+            cut.append("carriers_with_term")
+    if len(result["phenotypes"]) >= limit:
+        cut.append("phenotypes")
+    truncated = None
+    if cut:
+        truncated = Truncation(reason=f"`phenotypes` stops at {limit} terms (raise `limit`, up to {PHENOTYPES_MAX_LIMIT}) "
+                                      f"and `carriers_with_term` at {CARRIERS_MAX_LIMIT} carriers.", lists=cut)
+    return ok(result, truncated=truncated)
 
 
 # -- tools -------------------------------------------------------------------
@@ -110,7 +122,7 @@ async def cohort_carriers(
     cnv_types: list[str] | None = None,
     limit: int = 50,
     tenant: str | None = None,
-) -> dict:
+) -> ToolResult:
     """The cases and patients of the tenant that carry a variant in a gene.
 
     Returns ``cases``, ``patients`` and ``variants`` (distinct counts over the
@@ -138,7 +150,7 @@ async def cohort_carriers(
     try:
         criteria = build_criteria(data_type, gene, vep_impact, clinvar, max_gnomad_af, zygosity, cnv_types)
     except _sql.InvalidInput as exc:
-        return {"error": str(exc)}
+        return respond(failure(exc))
     return await _api.run(_cohort_carriers, criteria, tenant, clamp(limit, 1, CARRIERS_MAX_LIMIT))
 
 
@@ -153,7 +165,7 @@ async def genotype_phenotype(
     cnv_types: list[str] | None = None,
     limit: int = 30,
     tenant: str | None = None,
-) -> dict:
+) -> ToolResult:
     """The observed HPO phenotypes of a gene's carriers.
 
     Carriers are those of ``cohort_carriers`` with the same filters. Returns
@@ -182,5 +194,5 @@ async def genotype_phenotype(
         criteria = build_criteria(data_type, gene, vep_impact, clinvar, max_gnomad_af, zygosity, cnv_types)
         term = _sql.hpo_id(hpo_term) if hpo_term else None
     except _sql.InvalidInput as exc:
-        return {"error": str(exc)}
+        return respond(failure(exc))
     return await _api.run(_genotype_phenotype, criteria, term, tenant, clamp(limit, 1, PHENOTYPES_MAX_LIMIT))

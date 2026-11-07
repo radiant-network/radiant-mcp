@@ -11,10 +11,10 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from .. import portal_api as _api
 from ..api_fields import PATIENT_FILTER_FIELDS
 from ..portal_api import RadiantApi, is_status, resolve_tenant
 from ..portal_links import case_url, occurrence_url, patient_url, variant_url, with_url
+from ..results import ToolFailure, describe, not_found
 
 # Field aliases accepted by POST /{tenant}/patients/search
 # (backend/internal/types/pcx_patient_query.go: PcxPatientListFields).
@@ -51,9 +51,9 @@ def _route_missing(exc: Exception) -> bool:
     return not (isinstance(body, dict) and "message" in body)
 
 
-def no_clinical_data(tenant: str, exc: Exception) -> dict | None:
-    """The result for a tenant whose clinical data cannot be read, or None
-    when ``exc`` is an ordinary error."""
+def no_clinical_data(tenant: str, exc: Exception) -> ToolFailure | None:
+    """The ``unavailable`` failure of a tenant whose clinical data cannot be
+    read, or None when ``exc`` is an ordinary error."""
     if _route_missing(exc):
         reason = "the portal's patient view is not enabled"
     elif is_status(exc, 500, 502, 503, 504):
@@ -61,15 +61,11 @@ def no_clinical_data(tenant: str, exc: Exception) -> dict | None:
                   "or the portal had a transient error: retry once before concluding)")
     else:
         return None
-    result = {
-        "tenant": tenant,
-        "clinical_data_available": False,
-        "message": f"No clinical data for tenant {tenant}: {reason}.",
-    }
+    details = {"tenant": tenant}
     correlation_id = (getattr(exc, "headers", None) or {}).get("X-Correlation-ID")
     if correlation_id:
-        result["correlation_id"] = correlation_id
-    return result
+        details["correlation_id"] = correlation_id
+    return ToolFailure("unavailable", f"No clinical data for tenant {tenant}: {reason}.", **details)
 
 
 def _link_genomics(tenant: str, genomics: dict) -> None:
@@ -93,22 +89,22 @@ def _link_genomics(tenant: str, genomics: dict) -> None:
 def patient_context(
     api: RadiantApi, _token: str, patient_key: str, tenant: str | None, sections: list[str],
 ) -> dict:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
+    """``tenant``, ``patient``, the ``sections``, ``case_ids`` and ``warnings`` (a list).
+
+    Raises ``ToolFailure``: ``unavailable`` when the tenant has no clinical
+    data, ``not_found`` for an unknown patient.
+    """
+    tenant_code = resolve_tenant(api, tenant)
 
     try:
         patient = api.call("patients", "patient_entity", tenant=tenant_code, patient_key=patient_key) or {}
     except Exception as exc:  # noqa: BLE001
         no_data = no_clinical_data(tenant_code, exc)
         if no_data is not None:
-            return no_data
+            raise no_data from exc
         if is_status(exc, 404):
-            return {
-                "error": f"Patient {patient_key} not found in tenant {tenant_code}, "
-                         "or not visible to the current user.",
-                "status": 404,
-            }
+            raise not_found(f"Patient {patient_key} not found in tenant {tenant_code}, "
+                            "or not visible to the current user.") from exc
         raise
     with_url(patient, patient_url(tenant_code, patient_key))
 
@@ -117,7 +113,7 @@ def patient_context(
         try:
             return section, api.call("patients", operation, tenant=tenant_code, patient_key=patient_key), None
         except Exception as exc:  # noqa: BLE001 — one section never fails the whole context
-            return section, None, f"{section}: {_api.api_error(exc)['error']}"
+            return section, None, f"{section}: {describe(exc)}"
 
     result: dict[str, Any] = {"tenant": tenant_code, "patient": patient}
     warnings: list[str] = []
@@ -136,8 +132,7 @@ def patient_context(
 
     case_ids = [c.get("case_id") for c in (result.get("genomics") or {}).get("cases", [])]
     result["case_ids"] = [c for c in case_ids if c is not None]
-    if warnings:
-        result["warnings"] = warnings
+    result["warnings"] = warnings
     return result
 
 

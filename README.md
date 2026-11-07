@@ -153,12 +153,36 @@ Configure your MCP client to connect to the server:
 
 ## Available MCP Tools
 
+### Result format
+
+Every tool returns the same JSON object, also sent as structured content and
+published as the tool's output schema:
+
+```json
+{
+  "ok": true,
+  "data": {"...": "the tool's own fields"},
+  "warnings": ["what the answer may be missing"],
+  "truncated": {"reason": "what was cut and how to narrow", "lists": ["..."]},
+  "portal_url": "https://portal.example/..."
+}
+```
+
+On failure, `ok` is false, the MCP result has `isError`, and `error` holds a
+`code` (`invalid_input`, `not_found`, `ambiguous_tenant`, `forbidden`,
+`unavailable`, `auth_required`, `upstream`, `internal`), a `message` and
+optional `details` (e.g. the `allowed` values). `warnings` is always a list;
+`truncated` and `portal_url` are present only when they apply. The chart tools
+add the PNG as an image part after the JSON.
+
+### Tools
+
 SQL is the assistant's last resort. Both SQL tools run under the caller's JWT and
 cache nothing, so StarRocks applies the caller's own grants on every call.
 
 | Tool | Description |
 |------|-------------|
-| `read_query` | Run one SQL statement; returns at most `STARROCKS_MAX_ROWS` rows and `truncated: true` when more exist |
+| `read_query` | Run one SQL statement; returns at most `STARROCKS_MAX_ROWS` rows, with `truncated` set when more exist |
 | `table_overview` | Row count, columns and up to 3 sample rows of a `db.table` |
 | `describe_schema` | Curated description of the StarRocks tables of a topic (`germline_snv`, `somatic_snv`, `cnv`, `annotations`, `frequencies`, `clinical`): tables and portal clinical views to use, keys, partitions, stored enum values, join rules, example queries |
 
@@ -173,7 +197,7 @@ variant they return carries a `portal_url` when `RADIANT_PORTAL_URL` is set:
 | `get_case_context` | Full clinical context of a case: metadata, patients with phenotypes, tasks, sequencing experiments, and the `(case_id, seq_id, task_id, data_type)` keys needed to query its variant occurrences. `tenant` is optional and auto-resolved when the user belongs to a single tenant |
 | `list_tenants` | Tenants the authenticated user belongs to (codes to pass as `tenant`) |
 | `search_patients` | Find patients of the portal's patient list by identifier or name prefix and/or clinical filters (diagnosis, vital status, treatments, ...) |
-| `get_patient_context` | Clinical context of a patient, as on the portal's patient page: demographics, diagnoses, treatments, laboratory, imaging, genomic cases and interpretations, trial eligibility. Returns `clinical_data_available: false` for a tenant without clinical data |
+| `get_patient_context` | Clinical context of a patient, as on the portal's patient page: demographics, diagnoses, treatments, laboratory, imaging, genomic cases and interpretations, trial eligibility. Fails with the `unavailable` code for a tenant without clinical data |
 | `prioritize_snv` | Germline or somatic SNV occurrences of a sequencing, filtered and ranked like the case variants tab (Exomiser order by default) |
 | `case_cnv` | Germline or somatic CNV occurrences of a sequencing, filtered and sorted like the case CNV tab |
 | `variant_details` | One SNV's annotations (predictions, OMIM, ClinVar, external and internal frequencies, key transcripts) and, with an occurrence key, its genotype and transmission in a case |

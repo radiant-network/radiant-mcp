@@ -18,7 +18,7 @@ from radiant_mcp.tools.cohort import cohort_carriers, genotype_phenotype
     ({"gene": "SCN1A", "data_type": "rna"}, "invalid data_type"),
 ])
 def test_carriers_validate_before_any_call(fake_api, fake_sql, run, kwargs, message):
-    assert message in run(cohort_carriers(**kwargs))["error"]
+    assert message in run(cohort_carriers(**kwargs))["error"]["message"]
     assert fake_api.calls == [] and fake_sql.queries == []
 
 
@@ -33,12 +33,12 @@ def test_carriers(fake_api, fake_sql, run):
 
     result = run(cohort_carriers("scn1a", vep_impact=["high"], max_gnomad_af=0.01, tenant="demo"))
 
-    assert (result["cases"], result["patients"], result["variants"]) == (2, 2, 3)
-    [carrier] = result["carriers"]
+    assert (result["data"]["cases"], result["data"]["patients"], result["data"]["variants"]) == (2, 2, 3)
+    [carrier] = result["data"]["carriers"]
     assert carrier["variants"] == ["chr2:g.1A>T", "chr2:g.2C>G"] and "first_variant_id" not in carrier
     assert carrier["portal_url"].endswith("seq_id=10&task_id=20&variant_section=snv&selectedVariant=1001")
-    assert result["summary"]["by_consequence"][0]["consequence"] == "stop_gained"
-    assert result["criteria"] == {
+    assert result["data"]["summary"]["by_consequence"][0]["consequence"] == "stop_gained"
+    assert result["data"]["criteria"] == {
         "data_type": "germline_snv", "gene": "SCN1A", "vep_impact": ["HIGH"],
         "max_gnomad_af": "< 0.01 or absent from gnomAD",
         "gene_match": "a consequence on a transcript of the gene (not only the picked one); "
@@ -52,14 +52,15 @@ def test_carriers(fake_api, fake_sql, run):
 
 def test_carriers_unknown_gene(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [])
-    assert run(cohort_carriers("NOPE1", tenant="demo"))["status"] == 404
+    assert run(cohort_carriers("NOPE1", tenant="demo"))["error"]["code"] == "not_found"
     assert fake_sql.queries == []
 
 
 def test_carriers_report_starrocks_errors(fake_api, fake_sql, run):
     echo_gene_search(fake_api)
     fake_sql.on("COUNT(DISTINCT case_id)", _sql.SqlError("Access denied"))
-    assert run(cohort_carriers("SCN1A", tenant="demo")) == {"error": "StarRocks error: Access denied"}
+    assert run(cohort_carriers("SCN1A", tenant="demo"))["error"] == {
+        "code": "upstream", "message": "StarRocks error: Access denied"}
 
 
 def test_genotype_phenotype(fake_api, fake_sql, run):
@@ -71,16 +72,16 @@ def test_genotype_phenotype(fake_api, fake_sql, run):
 
     result = run(genotype_phenotype("SCN1A", hpo_term="HP:0001263", tenant="demo"))
 
-    assert result["carrier_patients"] == 2 and result["carrier_patients_with_phenotypes"] == 2
-    assert result["phenotypes"][0]["hpo_term_id"] == "HP:0001250"
-    assert result["carriers_with_term"] == [{"case_id": 3, "patient_id": 200, "portal_url": f"{PORTAL}/demo/case/entity/3"}]
+    assert result["data"]["carrier_patients"] == 2 and result["data"]["carrier_patients_with_phenotypes"] == 2
+    assert result["data"]["phenotypes"][0]["hpo_term_id"] == "HP:0001250"
+    assert result["data"]["carriers_with_term"] == [{"case_id": 3, "patient_id": 200, "portal_url": f"{PORTAL}/demo/case/entity/3"}]
     for sql, values in fake_sql.matching("obs_categorical"):
         assert bound_value(sql, values, "obs.observation_code = ") == "phenotype"
         assert bound_value(sql, values, "obs.interpretation_code = ") == "positive"
 
 
 def test_genotype_phenotype_rejects_a_bad_hpo_id(fake_api, run):
-    assert "invalid HPO id" in run(genotype_phenotype("SCN1A", hpo_term="seizure"))["error"]
+    assert "invalid HPO id" in run(genotype_phenotype("SCN1A", hpo_term="seizure"))["error"]["message"]
 
 
 def test_carriers_match_any_transcript_of_the_gene_and_the_latest_task():

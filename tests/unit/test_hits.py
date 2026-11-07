@@ -34,13 +34,13 @@ def test_second_hit_germline(fake_api, fake_sql, run, monkeypatch):
 
     result = run(second_hit(1, tenant="demo"))
 
-    [seq] = result["sequencings"]
+    [seq] = result["data"]["sequencings"]
     [hit] = seq["snv_cnv"]
     assert hit["clinvar_interpretation"] == ["Pathogenic"] and hit["snv_inside_cnv"] is False
     assert hit["portal_url"] == f"{PORTAL}/demo/case/entity/1?tab=variants&seq_id=10&task_id=20&variant_section=snv&selectedVariant=1001"
     assert hit["cnv_portal_url"].endswith("task_id=21&variant_section=cnv")
     assert [(p["locus_id"], p["partner_locus_id"]) for p in seq["compound_heterozygous"]] == [(1001, 1002)]
-    assert "rare = gnomAD v3 AF < 0.01" in result["rules"]
+    assert "rare = gnomAD v3 AF < 0.01" in result["data"]["rules"]
     # AC 4: every occurrence table is filtered on the part of its key.
     for sql, values in fake_sql.queries:
         for alias in re.findall(r"\b(o|c)\.part = ", sql):
@@ -51,7 +51,7 @@ def test_second_hit_skips_keys_without_part(fake_api, fake_sql, run, monkeypatch
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({}, "part lookup failed: boom"))
     result = run(second_hit(1, tenant="demo"))
-    assert result["sequencings"] == []
+    assert result["data"]["sequencings"] == []
     assert any("no `part`, skipped" in w for w in result["warnings"])
     assert fake_sql.queries == []
 
@@ -69,12 +69,12 @@ def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
 
     result = run(second_hit(1, tenant="demo"))
 
-    [gene] = result["genes"]
+    [gene] = result["data"]["genes"]
     assert gene["gene"] == "BRCA1" and gene["germline"][0]["interpreted_plp"] is True
     assert gene["germline"][0]["portal_url"].startswith(f"{PORTAL}/demo/case/entity/9?")
     assert [r["locus_id"] for r in gene["somatic_snv"]] == [1005] and gene["somatic_snv"][0]["data_type"] == "somatic_snv_tn"
     assert [r["cnv_id"] for r in gene["somatic_cnv"]] == [601]
-    assert result["germline_plp_without_somatic_event"] == ["SCN1A"]
+    assert result["data"]["germline_plp_without_somatic_event"] == ["SCN1A"]
     [(sql, values)] = fake_sql.matching("germline__snv__occurrence")
     assert bound_value(sql, values, "o.part = ") == 15 and bound_value(sql, values, "v.part = ") == 1
     [(sql, values)] = fake_sql.matching("staging_sequencing_experiment")
@@ -85,11 +85,11 @@ def test_second_hit_somatic_without_germline_sequencing(fake_api, fake_sql, run,
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
     result = run(second_hit(1, tenant="demo"))
-    assert "no germline sequencing" in result["note"]
+    assert result["ok"] and any("no germline sequencing" in w for w in result["warnings"])
 
 
 def test_second_hit_rejects_a_non_numeric_case(fake_api, run):
-    assert "invalid integer" in run(second_hit("1 OR 1=1"))["error"]
+    assert "invalid integer" in run(second_hit("1 OR 1=1"))["error"]["message"]
     assert fake_api.calls == []
 
 
@@ -118,14 +118,14 @@ def test_second_hit_finds_a_hemizygous_snv_inside_a_deletion(fake_api, fake_sql,
 
     result = run(second_hit(1129, tenant="pragmatiq"))
 
-    [proband] = [s for s in result["sequencings"] if s["seq_id"] == 1032]
+    [proband] = [s for s in result["data"]["sequencings"] if s["seq_id"] == 1032]
     [hit] = proband["snv_cnv"]
     assert hit["zygosity"] == "HOM" and hit["snv_inside_cnv"] is True and hit["mechanism"].startswith("hemizygous")
     assert hit["family_deletions"] == [{
         "gene": "CLCNKB", "seq_id": 1033, "cnv_id": 8, "chromosome": "1", "start": 16037075, "end": 16057606,
         "cn": 1, "relationship_to_proband": "mother", "covers_snv": True,
     }]
-    assert "apparent uniparental disomy" in result["rules"]
+    assert "apparent uniparental disomy" in result["data"]["rules"]
     [(sql, values)] = fake_sql.matching("WITH snv AS")
     assert {"HET", "HOM", "HEM"} <= set(values.values())
     assert "snv.zygosity = %(" in sql and "snv.start BETWEEN cnv.start AND cnv.end)" in sql
@@ -147,8 +147,9 @@ def test_second_hit_flags_a_cut_list(fake_api, fake_sql, run, monkeypatch):
         {"gene": g, "locus_id": i, "partner_locus_id": i + 100} for i, g in enumerate(["A", "B", "C"], 1)
     ])
     result = run(second_hit(1, tenant="demo"))
-    assert [p["gene"] for p in result["sequencings"][0]["compound_heterozygous"]] == ["A", "B"]
-    assert result["truncated"] == ["seq_id=10 compound_heterozygous"] and "alphabet" in result["truncated_note"]
+    assert [p["gene"] for p in result["data"]["sequencings"][0]["compound_heterozygous"]] == ["A", "B"]
+    assert result["truncated"]["lists"] == ["seq_id=10 compound_heterozygous"]
+    assert "alphabet" in result["truncated"]["reason"]
     [(sql, values)] = fake_sql.matching("germline__snv__comphet")
     assert "LEAST(c.locus_id, c.partner_locus_id)" in sql and values[re.findall(r"LIMIT %\((p\d+)\)s", sql)[0]] == 201
 
@@ -161,7 +162,7 @@ def test_second_hit_keeps_a_pair_per_gene(fake_api, fake_sql, run, monkeypatch):
         {"gene": "GENE2", "locus_id": 1, "partner_locus_id": 2},
     ])
     result = run(second_hit(1, tenant="demo"))
-    assert [p["gene"] for p in result["sequencings"][0]["compound_heterozygous"]] == ["GENE1", "GENE2"]
+    assert [p["gene"] for p in result["data"]["sequencings"][0]["compound_heterozygous"]] == ["GENE1", "GENE2"]
     assert "truncated" not in result
 
 
@@ -175,8 +176,8 @@ def test_second_hit_reads_the_latest_task_of_a_rerun(fake_api, fake_sql, run, mo
     fake_sql.on("germline__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1003, "clinvar_interpretation": "[]"}])
     fake_sql.on("somatic__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1005}])
     result = run(second_hit(1, tenant="demo"))
-    assert [k["task_id"] for k in result["germline_sequencings"]] == [23]
-    [gene] = result["genes"]
+    assert [k["task_id"] for k in result["data"]["germline_sequencings"]] == [23]
+    [gene] = result["data"]["genes"]
     assert len(gene["germline"]) == 1 and len(gene["somatic_snv"]) == 1
     assert sum("older task" in w for w in result["warnings"]) == 2
     [(sql, values)] = fake_sql.matching("germline__snv__occurrence")

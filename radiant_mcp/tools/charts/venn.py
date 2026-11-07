@@ -1,7 +1,8 @@
 """``family_venn``: the SNVs shared by the members of a trio or a duo."""
 
-import json
 from typing import Any
+
+from fastmcp.tools import ToolResult
 
 from ... import charts
 from ... import portal_api as _api
@@ -11,8 +12,8 @@ from ...domain.keys import variant_part
 from ...enums import ENUMS, canonical_values
 from ...portal_api import RadiantApi
 from ...queries.charts import venn_query
+from ...results import ToolOutput, failure, invalid, ok, respond
 from ...services.cases import case_context
-from ._common import image as _image
 
 
 def _members(case: dict, keys: list[dict]) -> tuple[list[tuple[str, dict]], list[str]]:
@@ -35,17 +36,16 @@ def _members(case: dict, keys: list[dict]) -> tuple[list[tuple[str, dict]], list
 
 
 def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: str | None, rare_only: bool,
-                 vep_impact: list[str]) -> Any:
+                 vep_impact: list[str]) -> ToolOutput:
     context = case_context(api, token, case_id, tenant)
-    if "error" in context:
-        return context
     tenant_code, case = context["tenant"], context["case"]
     members, skipped = _members(case, context["occurrence_keys"])
-    warnings = list(context.get("warnings", [])) + skipped
+    warnings = context["warnings"] + skipped
     if not members or members[0][0] != "proband":
-        return {"error": f"Case {case_id} has no germline SNV analysis of the proband with a known `part`."}
+        raise invalid(f"Case {case_id} has no germline SNV analysis of the proband with a known `part`.",
+                      warnings=warnings)
     if len(members) == 1:
-        return {"error": f"Case {case_id} has no sequenced parent: a Venn diagram needs a trio or a duo."}
+        raise invalid(f"Case {case_id} has no sequenced parent: a Venn diagram needs a trio or a duo.")
     for _, key in members:
         key["variant_part"] = key.get("variant_part", variant_part(key["part"]))
     rows = _sql.run(token, *venn_query(_sql.tenant_db(tenant_code), members, rare_only, vep_impact))
@@ -68,16 +68,12 @@ def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: str | None, 
                          if len(members) == 3 else
                          "de novo candidates OR variants inherited from the parent who is not sequenced: "
                          "a duo cannot tell them apart"),
-        "portal_url": case.get("portal_url"),
     }
-    if warnings:
-        result["warnings"] = warnings
-    text = json.dumps(result)
-    return _image(text, png)
+    return ok(result, warnings=warnings, portal_url=case.get("portal_url"), image=png)
 
 
 async def family_venn(case_id: int, rare_only: bool = False, vep_impact: list[str] | None = None,
-                      tenant: str | None = None) -> Any:
+                      tenant: str | None = None) -> ToolResult:
     """Venn diagram of the SNVs shared by a trio (proband, father, mother) or a duo.
 
     The tool counts, from each member's germline SNV analysis of the case, the
@@ -97,5 +93,5 @@ async def family_venn(case_id: int, rare_only: bool = False, vep_impact: list[st
         case_id = _sql.integer(case_id)
         impacts = _sql.all_of(canonical_values("vep_impact", vep_impact or []), ENUMS["vep_impact"], "vep_impact")
     except _sql.InvalidInput as exc:
-        return {"error": str(exc)}
+        return respond(failure(exc))
     return await _api.run(_family_venn, case_id, tenant, bool(rare_only), impacts)

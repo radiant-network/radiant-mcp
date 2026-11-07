@@ -19,9 +19,9 @@ def test_details_keep_key_transcripts_and_report_failed_sections(fake_api, run):
     _variant_api(fake_api)
     result = run(variant_details("42", tenant="radiant"))
     assert result["portal_url"] == f"{PORTAL}/radiant/variants/entity/42"
-    [gene] = result["consequences"]
+    [gene] = result["data"]["consequences"]
     assert [t["transcript_id"] for t in gene["transcripts"]] == ["T2"] and gene["other_transcripts"] == 4
-    assert result["internal_frequencies"] == {"pc_all": 3}
+    assert result["data"]["internal_frequencies"] == {"pc_all": 3}
     assert result["warnings"] == ["clinvar: Radiant API error 500: error"]
     assert "occurrence" not in result
 
@@ -30,24 +30,24 @@ def test_details_keep_the_picked_transcript(fake_api, run):
     _variant_api(fake_api)
     fake_api.on("variants", "get_germline_variant_overview", {"transcript_id": "T4"})
     result = run(variant_details("42", tenant="radiant"))
-    assert [t["transcript_id"] for t in result["consequences"][0]["transcripts"]] == ["T2", "T4"]
+    assert [t["transcript_id"] for t in result["data"]["consequences"][0]["transcripts"]] == ["T2", "T4"]
 
 
 def test_details_with_an_occurrence_key(fake_api, run):
     _variant_api(fake_api)
     fake_api.on("occurrences", "get_expanded_somatic_snv_occurrence", {"locus_id": "42"})
     result = run(variant_details("42", tenant="radiant", case_id=8, seq_id=21, task_id=3, data_type="somatic_snv_tn"))
-    assert result["occurrence"]["portal_url"].endswith("variant_section=snv-tn&selectedVariant=42")
+    assert result["data"]["occurrence"]["portal_url"].endswith("variant_section=snv-tn&selectedVariant=42")
 
 
 def test_details_need_the_whole_key(fake_api, run):
-    assert "together" in run(variant_details("42", case_id=8))["error"]
+    assert "together" in run(variant_details("42", case_id=8))["error"]["message"]
     assert fake_api.calls == []
 
 
 def test_unknown_variant(fake_api, run):
     fake_api.on("variants", "get_germline_variant_header", api_exception(404))
-    assert run(variant_details("42", tenant="radiant"))["status"] == 404
+    assert run(variant_details("42", tenant="radiant"))["error"]["code"] == "not_found"
 
 
 def test_carriers(fake_api, run):
@@ -55,6 +55,6 @@ def test_carriers(fake_api, run):
     fake_api.on("variants", "get_germline_variant_interpreted_cases", {"count": 1, "list": [{"case_id": 8, "seq_id": 21}]})
     fake_api.on("variants", "get_germline_variant_uninterpreted_cases", {"count": 1, "list": [{"case_id": 9}]})
     result = run(variant_carriers("42", tenant="radiant", limit=1000))
-    assert result["interpreted_cases"][0]["portal_url"].endswith("seq_id=21&variant_section=snv&selectedVariant=42")
-    assert result["uninterpreted_cases"][0]["portal_url"] == f"{PORTAL}/radiant/case/entity/9"
+    assert result["data"]["interpreted_cases"][0]["portal_url"].endswith("seq_id=21&variant_section=snv&selectedVariant=42")
+    assert result["data"]["uninterpreted_cases"][0]["portal_url"] == f"{PORTAL}/radiant/case/entity/9"
     assert fake_api.kwargs("get_germline_variant_interpreted_cases")["list_body_with_criteria"].limit == 100
