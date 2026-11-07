@@ -1,8 +1,8 @@
 """
 Radiant MCP Server — main entrypoint.
 
-Wrapper for mcp-server-starrocks that adds a /health endpoint and mandatory
-OAuth 2.1 authentication via Keycloak (OIDC).
+A FastMCP server with a /health endpoint and mandatory OAuth 2.1
+authentication via Keycloak (OIDC).
 
 KEYCLOAK_REALM_URL is required — the server refuses to boot without it. On
 startup it:
@@ -12,14 +12,12 @@ startup it:
      tokens via Keycloak's own Dynamic Client Registration + PKCE;
      portal clients (LibreChat) present a raw Keycloak token directly.
      Both are accepted by the same verifier.
-  2. Wraps the DB client so each MCP tool call executes queries
-     under the authenticated user's identity (JWT → StarRocks).
-  3. Hides the upstream tools and resources the assistant must not use
-     (writes, internals, model-written Python), turns off the upstream
-     table_overview cache (shared across users), and registers the Radiant
-     tools: describe_schema always, and, if RADIANT_API_URL is set, the tools
-     backed by the Radiant portal API (cases, patients, occurrences,
-     variants) that forward the same JWT as a Bearer token.
+  2. Registers the Radiant tools: describe_schema, bar_chart and the raw SQL
+     tools (read_query, table_overview) always, and, if RADIANT_API_URL is
+     set, the tools backed by the Radiant portal API (cases, patients,
+     occurrences, variants) that forward the same JWT as a Bearer token.
+     Every StarRocks query runs under the authenticated user's identity
+     (JWT → StarRocks, see starrocks.py).
 
 The component holds no StarRocks credentials: there is no static-credential
 fallback and no DB-connection health check.
@@ -30,17 +28,12 @@ import logging
 import os
 
 import uvicorn
+from fastmcp import FastMCP
 
-import mcp_server_starrocks.server as sr_server
-from mcp_server_starrocks.server import mcp
-from mcp_server_starrocks.db_client import get_db_client
-from mcp_server_starrocks.db_summary_manager import DatabaseSummaryManager
-
+from . import starrocks
 from .app import create_app
-from .jwt_db_client import JWTDBClient
 from .portal_links import PORTAL_URL_ENV
 from .tools import register_tools
-from .upstream import disable_table_overview_cache, hide_upstream_tools
 
 
 async def main():
@@ -58,9 +51,9 @@ async def main():
     if not realm_url:
         raise SystemExit("KEYCLOAK_REALM_URL is required")
 
-    db_client = get_db_client()
+    mcp = FastMCP("radiant-mcp")
     print(f"Starting server on {args.host}:{args.port}")
-    print(f"Default database: {db_client.default_database or 'None'}")
+    print(f"Default database: {starrocks.default_database() or 'None'}")
 
     # ---- OAuth 2.1 configuration ----
     from fastmcp.server.auth.providers.keycloak import KeycloakAuthProvider
@@ -85,16 +78,6 @@ async def main():
         required_scopes=required_scopes,
     )
     print("OAuth 2.1 enabled (Keycloak native provider — JWT verifier + DCR)")
-
-    # Monkey-patch: wrap DB client with JWT-aware version. Every query runs
-    # under the caller's identity — this component holds no StarRocks credential.
-    jwt_client = JWTDBClient(db_client)
-    sr_server.db_client = jwt_client
-    sr_server.db_summary_manager = DatabaseSummaryManager(jwt_client)
-    print("JWTDBClient installed — queries will run under user identity")
-
-    print(f"Upstream tools and resources hidden: {', '.join(hide_upstream_tools(mcp)) or 'none'}")
-    disable_table_overview_cache(sr_server)
 
     # Radiant tools. The API-backed ones forward the caller's JWT to the
     # Radiant API — no server-held credential — and are skipped without

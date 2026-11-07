@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 
 import pytest
 
@@ -49,24 +50,18 @@ def test_as_list_reads_starrocks_arrays():
     assert _sql.as_list("plain") == ["plain"]
 
 
-def test_run_binds_params_and_hides_the_statement_in_errors(monkeypatch):
-    import mcp_server_starrocks.server as sr_server
+def test_run_binds_params_and_returns_rows_as_dicts(monkeypatch):
+    from radiant_mcp import starrocks
 
     calls = []
 
-    class Client:
-        def execute_with_token(self, token, sql, params=None):
-            calls.append((token, sql, params))
+    def query(token, sql, params=None):
+        calls.append((token, sql, params))
+        return starrocks.Result(["gene", "n"], [("SCN1A", Decimal("2"))])
 
-            class R:
-                success = False
-                error_message = f"Error executing statement '{sql}': unknown column x"
-            return R()
-
-    monkeypatch.setattr(sr_server, "db_client", Client())
+    monkeypatch.setattr(starrocks, "query", query)
     p = _sql.Params()
-    with pytest.raises(_sql.SqlError, match="^unknown column x$"):
-        _sql.run("jwt", f"SELECT {p('a')}", p)
+    assert _sql.run("jwt", f"SELECT {p('a')}", p) == [{"gene": "SCN1A", "n": 2.0}]
     assert calls == [("jwt", "SELECT %(p0)s", {"p0": "a"})]
 
 

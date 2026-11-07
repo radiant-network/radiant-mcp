@@ -2,9 +2,9 @@
 
 The tools that have no portal API endpoint (``gene_info``, ``second_hit``,
 ``cohort_carriers``, ``genotype_phenotype``) build fixed queries here and run
-them through the JWT-authenticated client installed by ``__main__``, exactly
-like the ``part`` lookup of ``get_case_context``: no service account, the
-caller's StarRocks rights apply.
+them through ``starrocks.query`` under the caller's JWT, exactly like the
+``part`` lookup of ``get_case_context``: no service account, the caller's
+StarRocks rights apply.
 
 Values are bound as parameters (``Params``) and also validated first against
 a strict pattern or a closed list, so a bad value fails with a clear
@@ -16,6 +16,8 @@ import math
 import os
 import re
 from typing import Any, Iterable, Optional
+
+from .. import starrocks
 
 _SHARED_DB_ENV = "RADIANT_SHARED_DB"
 _SHARED_DB_DEFAULT = "radiant"
@@ -32,8 +34,8 @@ class InvalidInput(ValueError):
     """A value that cannot safely go into a query."""
 
 
-class SqlError(RuntimeError):
-    """StarRocks rejected or failed the query."""
+# StarRocks rejected or failed the query.
+SqlError = starrocks.StarRocksError
 
 
 # -- validation ----------------------------------------------------------------
@@ -133,28 +135,12 @@ class Params:
 
 def run(token: str, sql: str, params: Optional[Params] = None) -> list[dict]:
     """Run ``sql`` as the caller and return the rows as JSON-friendly dicts."""
-    import mcp_server_starrocks.server as sr_server
-
-    client = sr_server.db_client
-    if not hasattr(client, "execute_with_token"):
-        raise SqlError("StarRocks client without JWT pass-through")
     values = dict(params.values) if params is not None else None
-    result = client.execute_with_token(token, sql, params=values or None)
-    if not getattr(result, "success", False):
-        raise SqlError(_strip_statement(getattr(result, "error_message", None) or "query failed"))
-    columns = list(result.column_names or [])
-    return [{c: _plain(v) for c, v in zip(columns, row, strict=True)} for row in (result.rows or [])]
+    result = starrocks.query(token, sql, values or None)
+    return [{c: plain(v) for c, v in zip(result.columns, row, strict=True)} for row in result.rows]
 
 
-def _strip_statement(message: str) -> str:
-    """The client prefixes errors with the whole statement: keep the cause."""
-    marker = "': "
-    if message.startswith("Error executing statement '") and marker in message:
-        return message.rsplit(marker, 1)[1]
-    return message
-
-
-def _plain(value: Any) -> Any:
+def plain(value: Any) -> Any:
     from datetime import date, datetime
     from decimal import Decimal
 

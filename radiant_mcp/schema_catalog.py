@@ -1,6 +1,6 @@
 """Curated description of the StarRocks tables, served by ``describe_schema``.
 
-The raw schema (``db_summary``, ``table_overview``) says which columns exist,
+The raw schema (``table_overview``) says which columns exist,
 not which table to use, how to join them, which partition to prune or which
 values a column holds — which is where SQL written by a model goes wrong. This
 catalog says it, per topic.

@@ -23,7 +23,7 @@ Browser ──login──▶ remote Keycloak
 LibreChat (local) ──Authorization: Bearer {{LIBRECHAT_OPENID_ACCESS_TOKEN}}──▶ remote radiant-mcp /mcp
    │ (OPENID_REUSE_TOKENS refreshes the token so it stays valid)              │ KeycloakAuthProvider (JWKS)
    │                                                                          ▼
-Bedrock / Ollama ◀──model calls──┘                                 JWTDBClient → StarRocks (as `sub`)
+Bedrock / Ollama ◀──model calls──┘                                 starrocks.py → StarRocks (as `sub`)
 ```
 
 ## Prerequisites
@@ -102,8 +102,8 @@ open http://localhost:3080
 4. Ask the agent about a case (e.g. "summarize case 1131" → `get_case_context`),
    or ask for `describe_schema` then a `read_query`. Confirm data comes back.
 5. Check the **remote** radiant-mcp logs: the token is accepted by
-   `KeycloakAuthProvider` (no DCR/discovery), and `JWTDBClient` runs under the user
-   identity ("queries will run under user identity").
+   `KeycloakAuthProvider` (no DCR/discovery), and `starrocks.py` runs the queries under
+   the user identity.
 6. **Negative check:** a Keycloak user with no matching StarRocks user should
    fail at the query step — proving the per-user pass-through is live and it is
    not falling back to the static `root` credential.

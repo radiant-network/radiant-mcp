@@ -1,10 +1,9 @@
 """Case tools: tenant discovery, case search and the full case context."""
 
-import os
 from typing import Any, Optional
 
 from ..portal_links import case_url, occurrence_url, patient_url, with_url
-from . import _api
+from . import _api, _sql
 from ._api import RadiantApi, clamp, resolve_tenant
 
 # Non-deprecated occurrence data types accepted by
@@ -45,8 +44,6 @@ _AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
 # part // _VARIANT_PART_DIVISOR — so every efficient occurrence query needs it.
 # TEMPORARY: the Radiant API will eventually return `part` with each task, at
 # which point `_lookup_parts` goes away.
-_SHARED_DB_ENV = "RADIANT_SHARED_DB"
-_SHARED_DB_DEFAULT = "radiant"
 # Mirrors `_magic` in radiant-portal-pipeline/radiant/dags/import_part.py
 # (compute_part): variant_part = part // 10.
 _VARIANT_PART_DIVISOR = 10
@@ -66,49 +63,19 @@ def criteria(filters: dict) -> list:
 def _lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], Optional[str]]:
     """Map every (seq_id, task_id) of ``case_id`` to its StarRocks ``part``.
 
-    Reads the shared ``staging_sequencing_experiment`` table through the
-    JWT-authenticated DB client installed by ``__main__`` (so the query runs
-    under the caller's identity, like every other StarRocks access). Returns
+    Reads the shared ``staging_sequencing_experiment`` table under the
+    caller's identity, like every other StarRocks access. Returns
     ``(mapping, warning)``; on any failure the mapping is empty and the
     warning explains why, so the case context is still returned.
     """
+    p = _sql.Params()
+    sql = (f"SELECT seq_id, task_id, part FROM {_sql.shared_db()}.staging_sequencing_experiment"
+           f" WHERE case_id = {p(int(case_id))} AND deleted = false")
     try:
-        import mcp_server_starrocks.server as sr_server
-        client = sr_server.db_client
+        rows = _sql.run(token, sql, p)
     except Exception as exc:  # noqa: BLE001
-        return {}, f"part lookup skipped: StarRocks client unavailable ({exc})"
-
-    db = os.getenv(_SHARED_DB_ENV, _SHARED_DB_DEFAULT)
-    sql = (
-        "SELECT seq_id, task_id, part "
-        f"FROM `{db}`.staging_sequencing_experiment "
-        f"WHERE case_id = {int(case_id)} AND deleted = false"
-    )
-    try:
-        # JWTDBClient: pass the token explicitly (we are on a worker
-        # thread). Fall back to plain execute() for any other client.
-        if hasattr(client, "execute_with_token"):
-            result = client.execute_with_token(token, sql)
-        else:
-            result = client.execute(sql)
-    except Exception as exc:  # noqa: BLE001
-        return {}, f"part lookup failed: {type(exc).__name__}: {exc}"
-
-    if not getattr(result, "success", False):
-        return {}, f"part lookup failed: {getattr(result, 'error_message', 'unknown error')}"
-
-    cols = result.column_names or []
-    try:
-        i_seq, i_task, i_part = cols.index("seq_id"), cols.index("task_id"), cols.index("part")
-    except ValueError:
-        return {}, f"part lookup failed: unexpected columns {cols}"
-
-    mapping: dict[tuple[int, int], int] = {}
-    for row in result.rows or []:
-        if row[i_part] is None:
-            continue
-        mapping[(int(row[i_seq]), int(row[i_task]))] = int(row[i_part])
-    return mapping, None
+        return {}, f"part lookup failed: {exc}"
+    return {(int(r["seq_id"]), int(r["task_id"])): int(r["part"]) for r in rows if r["part"] is not None}, None
 
 
 def _list_tenants(api: RadiantApi, _token: str) -> dict:
