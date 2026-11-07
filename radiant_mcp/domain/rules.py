@@ -33,6 +33,10 @@ HEMIZYGOUS_CALLS = ("HOM", "HEM")
 # staging_sequencing_experiment.task_type of a germline SNV annotation task.
 GERMLINE_SNV_TASK_TYPE = "radiant_germline_annotation"
 
+# `family_role` of the proband in staging_sequencing_experiment. Parents' sequencings
+# carry the proband's case_id, so a germline count per case keeps the proband only.
+PROBAND = "proband"
+
 # Portal observations: an observed (positive) HPO phenotype.
 PHENOTYPE_OBSERVATION_CODE = "phenotype"
 POSITIVE_INTERPRETATION_CODE = "positive"

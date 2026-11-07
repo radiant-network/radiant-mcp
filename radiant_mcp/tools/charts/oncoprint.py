@@ -7,17 +7,16 @@ from ... import charts
 from ... import portal_api as _api
 from ... import sql as _sql
 from ...domain.consequences import consequence_class
+from ...domain import data_types as _data_types
 from ...domain.data_types import COHORT_DATA_TYPES, CohortDataType
 from ...enums import ENUMS, canonical_values
 from ...portal_api import RadiantApi, resolve_tenant
-from ...queries.charts import oncoprint_query
+from ...queries.charts import ONCOPRINT_ROW_LIMIT, oncoprint_query
 from ...services.genes import resolve_gene
 from ._common import image as _image
 
 
 MAX_ONCOPRINT_GENES = 20
-
-
 MAX_ONCOPRINT_CASES = 100
 
 
@@ -33,12 +32,19 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
             resolved.append(_sql.symbol(found["symbol"]))
         else:
             unknown.append(gene)
+    # Two aliases of one gene (TP53, P53) resolve to the same symbol: one row.
+    resolved = list(dict.fromkeys(resolved))
     if not resolved:
         return {"error": f"No known gene among {genes}.", "status": 404}
     cells: dict[tuple[str, str], set[str]] = {}
+    truncated = []
     for data_type in data_types:
-        for row in _sql.run(token, *oncoprint_query(tenant_code, data_type, resolved, max_gnomad_af, vep_impact)):
-            kind = row["kind"] if data_type.endswith("_cnv") else consequence_class(row["kind"].split(","))
+        rows = _sql.run(token, *oncoprint_query(tenant_code, data_type, resolved, max_gnomad_af, vep_impact))
+        if len(rows) > ONCOPRINT_ROW_LIMIT:
+            truncated.append(data_type)
+            rows = rows[:ONCOPRINT_ROW_LIMIT]
+        for row in rows:
+            kind = consequence_class(row["kind"].split(",")) if _data_types.is_snv(data_type) else row["kind"]
             cells.setdefault((row["gene"], f"case {row['case_id']}"), set()).add(kind)
     altered: dict[str, int] = {}
     for (_, case) in cells:
@@ -50,14 +56,24 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
         return {"tenant": tenant_code, "genes": resolved, "message": "No carrier of these genes with these filters."}
     title = f"Alterations in {', '.join(resolved)} ({', '.join(data_types)})"
     png = charts.oncoprint(resolved, shown, flat, title)
-    per_gene = {g: sum(1 for (gene, _) in flat if gene == g) for g in resolved}
-    text = json.dumps({
+    per_gene = {g: sum(1 for (gene, _) in cells if gene == g) for g in resolved}
+    result: dict[str, Any] = {
         "tenant": tenant_code, "genes": resolved, "unknown_genes": unknown, "data_types": data_types,
         "altered_cases": len(cases), "cases_shown": len(shown), "altered_cases_per_gene": per_gene,
         "filters": {"max_gnomad_af": max_gnomad_af, "vep_impact": vep_impact or None},
-        "classes": "truncating > splice > missense > inframe > other for SNVs; CNV type for CNVs; "
-                   "'multiple' when a case has several classes in a gene",
-    })
+        "classes": "truncating > splice (acceptor / donor) > missense > inframe > other for SNVs; CNV type "
+                   "for CNVs; 'multiple' when a case has several classes in a gene",
+    }
+    if any(not _data_types.is_somatic(t) for t in data_types):
+        result["germline"] = "a germline case counts the proband's variants only, not the parents'"
+        if "germline_snv" in data_types and max_gnomad_af is None and not vep_impact:
+            result["note"] = ("no frequency or impact filter: common germline polymorphisms are counted; "
+                              "pass max_gnomad_af (e.g. 0.01) or vep_impact for rare or damaging variants")
+    if truncated:
+        result["truncated"] = truncated
+        result["warning"] = (f"more than {ONCOPRINT_ROW_LIMIT} rows for {', '.join(truncated)}: the cases with the "
+                             "highest case ids are missing; narrow the genes or add filters")
+    text = json.dumps(result)
     return _image(text, png)
 
 
@@ -71,10 +87,13 @@ async def oncoprint(
     """Oncoprint: which cases of the tenant carry an alteration in each gene, by type.
 
     Rows are genes, columns are cases (most altered first, at most 100);
-    cells are coloured by alteration class: truncating, splice, missense,
-    inframe, other for SNVs; LOSS, GAIN, CNLOH, GAINLOH for CNVs; 'multiple'
-    when a case has several classes in a gene. Returns the image plus the
-    altered cases per gene.
+    cells are coloured by alteration class: truncating, splice (acceptor /
+    donor), missense, inframe, other for SNVs; LOSS, GAIN, CNLOH, GAINLOH for
+    CNVs; 'multiple' when a case has several classes in a gene. A germline
+    case counts the proband's variants only. Returns the image plus the
+    altered cases per gene, over every altered case, not only those shown.
+    Germline SNVs have no default filter: pass max_gnomad_af or vep_impact
+    to leave out common polymorphisms.
 
     Args:
         genes: 1 to 20 gene symbols.
