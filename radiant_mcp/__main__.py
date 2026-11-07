@@ -14,11 +14,12 @@ startup it:
      Both are accepted by the same verifier.
   2. Wraps the DB client so each MCP tool call executes queries
      under the authenticated user's identity (JWT → StarRocks).
-  3. Hides the upstream tools the assistant must not use (writes, internals,
-     model-written Python) and registers the Radiant tools: describe_schema
-     always, and, if RADIANT_API_URL is set, the tools backed by the Radiant
-     portal API (cases, patients, occurrences, variants) that forward the
-     same JWT as a Bearer token.
+  3. Hides the upstream tools and resources the assistant must not use
+     (writes, internals, model-written Python), turns off the upstream
+     table_overview cache (shared across users), and registers the Radiant
+     tools: describe_schema always, and, if RADIANT_API_URL is set, the tools
+     backed by the Radiant portal API (cases, patients, occurrences,
+     variants) that forward the same JWT as a Bearer token.
 
 The component holds no StarRocks credentials: there is no static-credential
 fallback and no DB-connection health check.
@@ -39,7 +40,7 @@ from .app import create_app
 from .jwt_db_client import JWTDBClient
 from .portal_links import PORTAL_URL_ENV
 from .tools import register_tools
-from .upstream import hide_upstream_tools
+from .upstream import disable_table_overview_cache, hide_upstream_tools
 
 
 async def main():
@@ -92,7 +93,8 @@ async def main():
     sr_server.db_summary_manager = DatabaseSummaryManager(jwt_client)
     print("JWTDBClient installed — queries will run under user identity")
 
-    print(f"Upstream tools hidden: {', '.join(hide_upstream_tools(mcp)) or 'none'}")
+    print(f"Upstream tools and resources hidden: {', '.join(hide_upstream_tools(mcp)) or 'none'}")
+    disable_table_overview_cache(sr_server)
 
     # Radiant tools. The API-backed ones forward the caller's JWT to the
     # Radiant API — no server-held credential — and are skipped without
