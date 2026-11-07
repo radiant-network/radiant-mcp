@@ -60,6 +60,12 @@ def criteria(filters: dict) -> list:
     return out
 
 
+def parts_query(case_id: int) -> tuple[str, _sql.Params]:
+    p = _sql.Params()
+    return (f"SELECT seq_id, task_id, part FROM {_sql.shared_db()}.staging_sequencing_experiment"
+            f" WHERE case_id = {p(int(case_id))} AND deleted = false"), p
+
+
 def _lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], Optional[str]]:
     """Map every (seq_id, task_id) of ``case_id`` to its StarRocks ``part``.
 
@@ -68,11 +74,8 @@ def _lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int],
     ``(mapping, warning)``; on any failure the mapping is empty and the
     warning explains why, so the case context is still returned.
     """
-    p = _sql.Params()
-    sql = (f"SELECT seq_id, task_id, part FROM {_sql.shared_db()}.staging_sequencing_experiment"
-           f" WHERE case_id = {p(int(case_id))} AND deleted = false")
     try:
-        rows = _sql.run(token, sql, p)
+        rows = _sql.run(token, *parts_query(case_id))
     except Exception as exc:  # noqa: BLE001
         return {}, f"part lookup failed: {exc}"
     return {(int(r["seq_id"]), int(r["task_id"])): int(r["part"]) for r in rows if r["part"] is not None}, None

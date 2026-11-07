@@ -1,0 +1,113 @@
+"""Every query the curated tools build, checked against the StarRocks schema.
+
+Each builder is called with sample arguments covering its branches. sqlglot
+parses the SQL and resolves every column against the tables the ETL and the
+portal create (``schema_sources``): an unknown table, an unknown column, or a
+column no table of the FROM clause holds fails here, not at runtime in
+production.
+"""
+
+import re
+
+import pytest
+import sqlglot
+from sqlglot import exp
+from sqlglot.optimizer.qualify import qualify
+
+from radiant_mcp.schema_catalog import SHARED_DB, TENANT_DB
+from radiant_mcp.tools import cases, charts, cohort, genes, hits
+from radiant_mcp.tools.cohort import DATA_TYPES, Criteria
+
+TENANT = "t1"
+TENANT_SQL_DB = f"{TENANT}_tenant"
+SNV_KEY = {"seq_id": 10, "task_id": 20, "part": 5, "variant_part": 0, "data_type": "germline_snv"}
+CNV_KEY = {"seq_id": 10, "task_id": 21, "part": 5, "variant_part": 0, "data_type": "germline_cnv"}
+GENES = ["TP53", "BRCA1"]
+
+
+def _criteria() -> list[Criteria]:
+    out = []
+    for data_type in DATA_TYPES:
+        out.append(Criteria(data_type=data_type, gene="TP53"))
+        if data_type.endswith("_snv"):
+            out.append(Criteria(data_type=data_type, gene="TP53", vep_impact=("HIGH",),
+                                clinvar=("Pathogenic",), max_gnomad_af=0.01, zygosity=("HET",)))
+        else:
+            out.append(Criteria(data_type=data_type, gene="TP53", cnv_types=("LOSS",)))
+    return out
+
+
+def _queries():
+    yield "cases.parts", cases.parts_query(1131)
+    yield "hits.snv_cnv", hits.snv_cnv_query(TENANT_SQL_DB, SNV_KEY, CNV_KEY)
+    yield "hits.family_deletions", hits.family_deletions_query(TENANT_SQL_DB, CNV_KEY, GENES)
+    yield "hits.comphet", hits.comphet_query(TENANT_SQL_DB, SNV_KEY)
+    yield "hits.germline_keys", hits.germline_keys_query(SHARED_DB, TENANT, 42)
+    yield "hits.germline_plp", hits.germline_plp_query(TENANT_SQL_DB, SNV_KEY)
+    yield "hits.somatic_snv", hits.somatic_snv_query(TENANT_SQL_DB, SNV_KEY, GENES)
+    yield "hits.somatic_cnv", hits.somatic_cnv_query(TENANT_SQL_DB, CNV_KEY, GENES)
+    for name, query in genes._gene_queries("TP53", "ENSG00000141510", TENANT).items():
+        yield f"genes.{name}", query
+    for c in _criteria():
+        label = f"{c.data_type}{'+filters' if c.vep_impact or c.cnv_types else ''}"
+        yield f"cohort.totals[{label}]", cohort.totals_query(TENANT, c)
+        yield f"cohort.carriers[{label}]", cohort.carriers_query(TENANT, c, 50)
+        for name, query in cohort.summary_queries(TENANT, c).items():
+            yield f"cohort.{name}[{label}]", query
+        yield f"cohort.phenotypes[{label}]", cohort.phenotypes_query(TENANT, c, 50)
+        yield f"cohort.phenotyped_patients[{label}]", cohort.phenotyped_patients_query(TENANT, c)
+        yield f"cohort.carriers_with_term[{label}]", cohort.carriers_with_term_query(TENANT, c, "HP:0001250", 50)
+        yield f"charts.carrier_patients[{label}]", charts.carrier_patients_query(TENANT, c)
+        if c.is_snv:
+            yield f"charts.lollipop[{label}]", charts.lollipop_query(TENANT, c)
+    members = [("proband", SNV_KEY), ("father", {**SNV_KEY, "seq_id": 11}), ("mother", {**SNV_KEY, "seq_id": 12})]
+    yield "charts.venn", charts.venn_query(TENANT_SQL_DB, members, False, [])
+    yield "charts.venn[rare+impact]", charts.venn_query(TENANT_SQL_DB, members, True, ["HIGH"])
+    for data_type in DATA_TYPES:
+        yield f"charts.oncoprint[{data_type}]", charts.oncoprint_query(TENANT, data_type, GENES, 0.01, ["HIGH"])
+    yield "charts.oncoprint[no filter]", charts.oncoprint_query(TENANT, "germline_snv", GENES, None, [])
+
+
+QUERIES = list(_queries())
+
+
+@pytest.fixture(scope="module")
+def schema(etl_tables, portal_tenant_objects) -> dict[str, dict[str, dict[str, str]]]:
+    """``{db: {table: {column: type}}}`` with the tenant placeholder made concrete."""
+    out: dict[str, dict[str, dict[str, str]]] = {}
+    for qualified, columns in {**etl_tables, **portal_tenant_objects}.items():
+        db, table = qualified.split(".", 1)
+        out.setdefault(TENANT_SQL_DB if db == TENANT_DB else db, {})[table] = columns
+    return out
+
+
+def _parse(sql: str) -> exp.Expression:
+    # Bound values become literals: the checks are about tables and columns.
+    return sqlglot.parse_one(re.sub(r"%\(p\d+\)s", "1", sql).replace("%%", "%"), dialect="starrocks")
+
+
+@pytest.mark.parametrize("name, query", QUERIES, ids=[name for name, _ in QUERIES])
+def test_query_uses_only_existing_tables_and_columns(schema, name, query):
+    sql, _params = query
+    tree = _parse(sql)
+    ctes = {cte.alias for cte in tree.find_all(exp.CTE)}
+    for table in tree.find_all(exp.Table):
+        if not table.db and table.name in ctes:
+            continue
+        assert table.name in schema.get(table.db, {}), f"{name}: {table.db}.{table.name} is created by neither the ETL nor the portal"
+    try:
+        qualify(tree, schema=schema, dialect="starrocks", validate_qualify_columns=True)
+    except sqlglot.errors.OptimizeError as exc:
+        pytest.fail(f"{name}: {exc}\n{sql}")
+
+
+def test_every_builder_is_covered():
+    """A new ``*_query`` builder in a curated tool module must be added to ``_queries``."""
+    import inspect
+
+    covered = {name.split("[")[0] for name, _ in QUERIES}
+    for module in (cases, hits, cohort, charts):
+        for fn_name, fn in inspect.getmembers(module, inspect.isfunction):
+            if fn.__module__ == module.__name__ and fn_name.endswith("_query") and not fn_name.startswith("_"):
+                short = f"{module.__name__.rsplit('.', 1)[1]}.{fn_name.removesuffix('_query')}"
+                assert short in covered, f"{short} is not checked against the schema"

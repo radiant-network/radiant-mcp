@@ -21,6 +21,7 @@ dependencies = [
 # Unit tests only; the image installs with --no-dev.
 dev = [
     "pytest>=8",
+    "sqlglot>=30.30.0",
 ]
 
 [tool.pytest.ini_options]
