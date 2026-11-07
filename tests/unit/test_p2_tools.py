@@ -374,7 +374,7 @@ def test_second_hit_matches_every_gene_of_a_variant():
                         hit_queries.germline_plp_query("demo_tenant", SNV_KEY),
                         hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])):
         assert "JOIN radiant.snv__consequence_filter cf ON cf.locus_id = o.locus_id" in sql
-        assert "v.symbol" not in sql
-    sql, values = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])
-    assert bound_value(sql, values, "cf.symbol IN (") == "BRCA1"
-    assert bound_value(sql, values, "cf.vep_impact IN (") == "HIGH"
+        assert not re.search(r"\bv\.symbol", sql)
+    sql, params = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])
+    assert bound_value(sql, params.values, "cf.symbol IN (") == "BRCA1"
+    assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
