@@ -22,6 +22,7 @@ from ..domain.data_types import SOMATIC_SNV_CASE_DATA_TYPES
 from ..domain.keys import with_parts
 from ..portal_links import occurrence_url, variant_url, with_url
 from ..queries.hits import (
+    ROW_LIMIT,
     comphet_query,
     family_deletions_query,
     germline_keys_query,
@@ -43,6 +44,21 @@ def mechanism(zygosity: str, inside: bool) -> str:
     return "SNV and deletion on the same gene: compound heterozygous if they are in trans"
 
 
+def _latest_task(keys: list[dict], what: str, warnings: list[str]) -> list[dict]:
+    """One key per sequencing: its latest task. A re-run adds a task next to the old one,
+    and reading both would list every hit twice."""
+    latest: dict[int, dict] = {}
+    for key in keys:
+        kept = latest.get(key["seq_id"])
+        if kept is None or key["task_id"] > kept["task_id"]:
+            latest[key["seq_id"]] = key
+    for key in keys:
+        if latest[key["seq_id"]] is not key:
+            warnings.append(f"seq_id={key['seq_id']} task_id={key['task_id']} ({what}): older task, "
+                            f"task {latest[key['seq_id']]['task_id']} read instead")
+    return list(latest.values())
+
+
 def _usable(keys: list[dict], data_type: str, warnings: list[str]) -> list[dict]:
     out = []
     for key in keys:
@@ -52,10 +68,20 @@ def _usable(keys: list[dict], data_type: str, warnings: list[str]) -> list[dict]
             warnings.append(f"seq_id={key['seq_id']} task_id={key.get('task_id')} ({data_type}): no `part`, skipped")
             continue
         out.append(key)
-    return out
+    return _latest_task(out, data_type, warnings)
 
 
-def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: list[str]) -> list[dict]:
+def _capped(token: str, query: tuple, what: str, truncated: list[str]) -> list[dict]:
+    """The rows of ``query``, cut at ROW_LIMIT; ``what`` is recorded when rows were left out."""
+    rows = _sql.run(token, *query)
+    if len(rows) > ROW_LIMIT:
+        truncated.append(what)
+        return rows[:ROW_LIMIT]
+    return rows
+
+
+def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: list[str],
+              truncated: list[str]) -> list[dict]:
     tenant_db = _sql.tenant_db(tenant)
     case_id = case.get("case_id")
     seqs = {s.get("seq_id"): s for s in case.get("sequencing_experiments", [])}
@@ -76,7 +102,8 @@ def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: l
         if not same_seq_cnv:
             entry["snv_cnv_note"] = "no germline CNV analysis for this sequencing"
         for cnv_key in same_seq_cnv:
-            for row in _sql.run(token, *snv_cnv_query(tenant_db, snv_key, cnv_key)):
+            for row in _capped(token, snv_cnv_query(tenant_db, snv_key, cnv_key), f"seq_id={seq_id} snv_cnv",
+                               truncated):
                 row["clinvar_interpretation"] = _sql.as_list(row.get("clinvar_interpretation"))
                 row["snv_inside_cnv"] = bool(row.get("snv_inside_cnv"))
                 row["mechanism"] = mechanism(row.get("zygosity"), row["snv_inside_cnv"])
@@ -85,13 +112,16 @@ def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: l
                 with_url(row, occurrence_url(tenant, case_id, seq_id, "germline_cnv", task_id=cnv_key["task_id"]),
                          key="cnv_portal_url")
                 snv_cnv.append(row)
-        _attach_family_deletions(token, tenant_db, snv_cnv, [k for k in cnv_keys if k["seq_id"] != seq_id], seqs)
+        _attach_family_deletions(token, tenant_db, snv_cnv, [k for k in cnv_keys if k["seq_id"] != seq_id], seqs,
+                                 truncated)
         entry["snv_cnv"] = snv_cnv
 
         pairs: list[dict] = []
-        seen: set[frozenset] = set()
-        for row in _sql.run(token, *comphet_query(tenant_db, snv_key)):
-            pair = frozenset((row["locus_id"], row["partner_locus_id"]))
+        seen: set[tuple] = set()
+        for row in _capped(token, comphet_query(tenant_db, snv_key), f"seq_id={seq_id} compound_heterozygous",
+                           truncated):
+            # The same two variants can pair in two overlapping genes: one entry per gene.
+            pair = (row["gene"], frozenset((row["locus_id"], row["partner_locus_id"])))
             if pair in seen:
                 continue
             seen.add(pair)
@@ -106,7 +136,8 @@ def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: l
     return results
 
 
-def _attach_family_deletions(token: str, tenant_db: str, hits: list[dict], other_keys: list[dict], seqs: dict) -> None:
+def _attach_family_deletions(token: str, tenant_db: str, hits: list[dict], other_keys: list[dict], seqs: dict,
+                             truncated: list[str]) -> None:
     """Add, to each SNV + deletion hit, the other members' deletions over the same gene.
 
     A parent's deletion over the SNV explains that parent's WT call, and with it an
@@ -117,7 +148,8 @@ def _attach_family_deletions(token: str, tenant_db: str, hits: list[dict], other
         return
     found: dict[str, list[dict]] = {}
     for key in other_keys:
-        for row in _sql.run(token, *family_deletions_query(tenant_db, key, genes)):
+        for row in _capped(token, family_deletions_query(tenant_db, key, genes),
+                           f"seq_id={key['seq_id']} family_deletions", truncated):
             row["relationship_to_proband"] = seqs.get(row["seq_id"], {}).get("relationship_to_proband")
             found.setdefault(row["gene"], []).append(row)
     for hit in hits:
@@ -138,26 +170,27 @@ def _proband_patient_id(case: dict) -> Optional[int]:
     return None
 
 
-def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: list[str]) -> dict:
+def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: list[str],
+             truncated: list[str]) -> dict:
     tenant_db, shared_db = _sql.tenant_db(tenant), _sql.shared_db()
     case_id = case.get("case_id")
     patient_id = _proband_patient_id(case)
     if patient_id is None:
         return {"note": "no proband patient id in the case: the germline sequencing cannot be found"}
 
-    germline_keys = []
-    for row in _sql.run(token, *germline_keys_query(shared_db, tenant, patient_id)):
-        germline_keys.append(with_parts(
-            {"case_id": row["case_id"], "seq_id": int(row["seq_id"]), "task_id": int(row["task_id"])},
-            int(row["part"]),
-        ))
+    germline_keys = _latest_task([
+        with_parts({"case_id": row["case_id"], "seq_id": int(row["seq_id"]), "task_id": int(row["task_id"])},
+                   int(row["part"]))
+        for row in _sql.run(token, *germline_keys_query(shared_db, tenant, patient_id))
+    ], "germline_snv", warnings)
     if not germline_keys:
         return {"patient_id": patient_id,
                 "note": "no germline sequencing for this patient: the germline first hit cannot be checked"}
 
     germline: dict[str, list[dict]] = {}
     for key in germline_keys:
-        for row in _sql.run(token, *germline_plp_query(tenant_db, key)):
+        for row in _capped(token, germline_plp_query(tenant_db, key), f"seq_id={key['seq_id']} germline P/LP",
+                           truncated):
             row["clinvar_interpretation"] = _sql.as_list(row.get("clinvar_interpretation"))
             row["interpreted_plp"] = bool(row.get("interpreted_plp"))
             with_url(row, occurrence_url(tenant, key["case_id"], key["seq_id"], "germline_snv",
@@ -170,12 +203,14 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
     if genes:
         for data_type in SOMATIC_SNV_CASE_DATA_TYPES:
             for key in _usable(keys, data_type, warnings):
-                for row in _sql.run(token, *somatic_snv_query(tenant_db, key, genes)):
+                for row in _capped(token, somatic_snv_query(tenant_db, key, genes),
+                                   f"seq_id={key['seq_id']} {data_type}", truncated):
                     with_url(row, occurrence_url(tenant, case_id, key["seq_id"], data_type,
                                                  task_id=key["task_id"], variant_id=str(row["locus_id"])))
                     hits[row["gene"]]["somatic_snv"].append({**row, "data_type": data_type})
         for key in _usable(keys, "somatic_cnv", warnings):
-            for row in _sql.run(token, *somatic_cnv_query(tenant_db, key, genes)):
+            for row in _capped(token, somatic_cnv_query(tenant_db, key, genes),
+                               f"seq_id={key['seq_id']} somatic_cnv", truncated):
                 with_url(row, occurrence_url(tenant, case_id, key["seq_id"], "somatic_cnv", task_id=key["task_id"]))
                 hits[row["gene"]]["somatic_cnv"].append(row)
 
@@ -197,6 +232,7 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: Optional
         return context
     tenant_code, case = context["tenant"], context["case"]
     warnings = list(context.get("warnings", []))
+    truncated: list[str] = []
     case_type = (case.get("case_type") or "").lower()
     result: dict[str, Any] = {"tenant": tenant_code, "case_id": case_id, "case_type": case_type}
     with_url(result, case.get("portal_url"))
@@ -206,7 +242,7 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: Optional
             f"Somatic second hit in the same gene: PASS SNV of impact {' or '.join(_rules.QUALIFYING_IMPACTS)}, "
             f"or PASS CNV of type {' or '.join(_rules.SOMATIC_SECOND_HIT_CNV_TYPES)}."
         )
-        result.update(_somatic(token, tenant_code, case, context["occurrence_keys"], warnings))
+        result.update(_somatic(token, tenant_code, case, context["occurrence_keys"], warnings, truncated))
     else:
         result["rules"] = (
             f"SNV + CNV: an SNV ({_rules.RARE_DEFINITION}, impact {' or '.join(_rules.QUALIFYING_IMPACTS)} or P/LP: "
@@ -217,7 +253,11 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: Optional
             "that member's WT call and an apparent uniparental disomy. "
             "Compound heterozygous: the pairs computed by the pipeline."
         )
-        result["sequencings"] = _germline(token, tenant_code, case, context["occurrence_keys"], warnings)
+        result["sequencings"] = _germline(token, tenant_code, case, context["occurrence_keys"], warnings, truncated)
+    if truncated:
+        result["truncated"] = truncated
+        result["truncated_note"] = (f"these lists stop at {ROW_LIMIT} rows, in gene order: genes later in the "
+                                    "alphabet may be missing. Do not conclude that a gene has no second hit.")
     if warnings:
         result["warnings"] = warnings
     return result
@@ -229,10 +269,11 @@ async def second_hit(case_id: int, tenant: Optional[str] = None) -> dict:
     """Find genes hit twice in a case.
 
     Germline case, for each sequencing with variants: ``snv_cnv`` lists the
-    rare HET qualifying SNVs that sit in a gene also covered by a PASS LOSS CNV
-    (a second hit for a recessive presentation), and
-    ``compound_heterozygous`` lists the compound heterozygous pairs computed by
-    the pipeline.
+    rare qualifying SNVs in a gene also covered by a PASS LOSS CNV: a HET SNV
+    anywhere in the gene, or a HOM/HEM SNV inside the deletion (hemizygous:
+    the remaining allele is called homozygous); ``mechanism`` says which.
+    ``compound_heterozygous`` lists the compound heterozygous pairs computed
+    by the pipeline, once per pair and gene.
 
     Somatic case: ``genes`` lists the genes where the patient has a germline
     P/LP variant (from their germline sequencing) and a somatic PASS SNV of
@@ -241,6 +282,8 @@ async def second_hit(case_id: int, tenant: Optional[str] = None) -> dict:
     somatic event.
 
     ``rules`` states the exact criteria applied: quote them when reporting.
+    Each list stops at 200 rows; ``truncated`` names the lists that were cut.
+    When a sequencing was re-analysed, its latest task is read.
     Every variant and CNV carries a ``portal_url``. Use this instead of
     cross-checking SNV and CNV lists by hand.
 

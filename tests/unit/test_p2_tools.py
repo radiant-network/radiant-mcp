@@ -321,3 +321,49 @@ def test_mechanism_wording():
     assert hits.mechanism("HOM", True).startswith("hemizygous")
     assert hits.mechanism("HET", True).startswith("HET call inside")
     assert hits.mechanism("HET", False).startswith("SNV and deletion on the same gene")
+
+
+def test_second_hit_flags_a_cut_list(fake_api, fake_sql, run, monkeypatch):
+    from radiant_mcp.tools import hits as hits_tool
+
+    monkeypatch.setattr(hits_tool, "ROW_LIMIT", 2)
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5}, None))
+    fake_sql.on("germline__snv__comphet", [
+        {"gene": g, "locus_id": i, "partner_locus_id": i + 100} for i, g in enumerate(["A", "B", "C"], 1)
+    ])
+    result = run(second_hit(1, tenant="demo"))
+    assert [p["gene"] for p in result["sequencings"][0]["compound_heterozygous"]] == ["A", "B"]
+    assert result["truncated"] == ["seq_id=10 compound_heterozygous"] and "alphabet" in result["truncated_note"]
+    [(sql, values)] = fake_sql.matching("germline__snv__comphet")
+    assert "LEAST(c.locus_id, c.partner_locus_id)" in sql and values[re.findall(r"LIMIT %\((p\d+)\)s", sql)[0]] == 201
+
+
+def test_second_hit_keeps_a_pair_per_gene(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5}, None))
+    fake_sql.on("germline__snv__comphet", [
+        {"gene": "GENE1", "locus_id": 1, "partner_locus_id": 2},
+        {"gene": "GENE2", "locus_id": 1, "partner_locus_id": 2},
+    ])
+    result = run(second_hit(1, tenant="demo"))
+    assert [p["gene"] for p in result["sequencings"][0]["compound_heterozygous"]] == ["GENE1", "GENE2"]
+    assert "truncated" not in result
+
+
+def test_second_hit_reads_the_latest_task_of_a_rerun(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}, {"id": 42}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7, (10, 42): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [
+        {"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15},
+        {"case_id": 9, "seq_id": 11, "task_id": 23, "part": 15},
+    ])
+    fake_sql.on("germline__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1003, "clinvar_interpretation": "[]"}])
+    fake_sql.on("somatic__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1005}])
+    result = run(second_hit(1, tenant="demo"))
+    assert [k["task_id"] for k in result["germline_sequencings"]] == [23]
+    [gene] = result["genes"]
+    assert len(gene["germline"]) == 1 and len(gene["somatic_snv"]) == 1
+    assert sum("older task" in w for w in result["warnings"]) == 2
+    [(sql, values)] = fake_sql.matching("germline__snv__occurrence")
+    assert bound_value(sql, values, "o.task_id = ") == 23
