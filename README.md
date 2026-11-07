@@ -1,10 +1,10 @@
-# StarRocks MCP Server Docker Image
+# Radiant MCP Server
 
-A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for [StarRocks](https://www.starrocks.io/), enabling AI assistants to interact with StarRocks databases.
+A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI assistants (the Radiant D.A.V.I.D agents) access to Radiant data: curated tools over the Radiant portal API and [StarRocks](https://www.starrocks.io/), plus read-only SQL as a last resort.
 
 ## Overview
 
-This Docker image packages the [mcp-server-starrocks](https://github.com/StarRocks/mcp-server-starrocks) Python package with a custom wrapper that adds:
+The server provides:
 
 - **Health check endpoints** (`/health`, `/ready`) for container orchestration.
 - **Mandatory OAuth 2.1 authentication** via Keycloak (OIDC), in front of the MCP endpoint.
@@ -55,7 +55,9 @@ this component holds no StarRocks credentials.
 | `STARROCKS_HOST` | Yes | - | StarRocks FE (Frontend) hostname or IP (connection target only) |
 | `STARROCKS_PORT` | No | `9030` | StarRocks FE query port |
 | `STARROCKS_DB` | No | - | Default database to use |
-| `STARROCKS_OVERVIEW_LIMIT` | No | - | Limit for overview queries (memory management) |
+| `STARROCKS_CONNECTION_TIMEOUT` | No | `10` | Connection timeout, in seconds |
+| `STARROCKS_QUERY_TIMEOUT` | No | `60` | StarRocks `query_timeout` of every statement, in seconds |
+| `STARROCKS_MAX_ROWS` | No | `500` | Maximum rows returned by `read_query` (more rows set `truncated: true`) |
 | `RADIANT_API_URL` | No | - | Radiant portal API base URL. When set, registers the Radiant API tools below (the caller's JWT is forwarded as a Bearer token) |
 | `RADIANT_API_TIMEOUT` | No | `60` | Timeout of one Radiant API request, in seconds |
 | `RADIANT_PORTAL_URL` | No | - | Radiant portal base URL. When set, the tools return a `portal_url` for every case, patient, occurrence and variant |
@@ -146,14 +148,13 @@ Configure your MCP client to connect to the server:
 
 ## Available MCP Tools
 
-SQL is the assistant's last resort: of the upstream `mcp-server-starrocks` tools,
-only the read-only ones stay exposed. `write_query`, `db_summary`, `analyze_query`,
-`collect_query_dump_and_profile` and `query_and_plotly_chart` are removed at startup.
+SQL is the assistant's last resort. Both SQL tools run under the caller's JWT and
+cache nothing, so StarRocks applies the caller's own grants on every call.
 
 | Tool | Description |
 |------|-------------|
-| `read_query` | Execute SELECT queries |
-| `table_overview` | Get table schema and sample data |
+| `read_query` | Run one SQL statement; returns at most `STARROCKS_MAX_ROWS` rows and `truncated: true` when more exist |
+| `table_overview` | Row count, columns and up to 3 sample rows of a `db.table` |
 | `describe_schema` | Curated description of the StarRocks tables of a topic (`germline_snv`, `somatic_snv`, `cnv`, `annotations`, `frequencies`, `clinical`): tables and portal clinical views to use, keys, partitions, stored enum values, join rules, example queries |
 
 With `RADIANT_API_URL` set, the tools backed by the Radiant portal API are
@@ -249,7 +250,3 @@ docker compose --profile test run --rm test-runner
 ```
 
 > Use `run --rm test-runner`, not `up --abort-on-container-exit` — the one-shot `starrocks-init` container exits 0 on success, which would abort the whole stack before the test runs.
-
-## License
-
-See the [upstream repository](https://github.com/StarRocks/mcp-server-starrocks) for license information.

@@ -46,3 +46,17 @@ def test_case_context_links_the_case_members_and_keys(fake_api, run, monkeypatch
     assert key["part"] == 154 and key["variant_part"] == 15
     assert key["portal_url"] == f"{PORTAL}/radiant/case/entity/8?tab=variants&seq_id=21&task_id=3&variant_section=snv"
     assert "warnings" not in result
+
+
+def test_part_lookup_binds_the_case_and_skips_tasks_without_part(fake_sql):
+    from radiant_mcp.tools import _sql
+
+    fake_sql.on("staging_sequencing_experiment", [
+        {"seq_id": 21, "task_id": 3, "part": 154}, {"seq_id": 22, "task_id": 4, "part": None},
+    ])
+    assert cases._lookup_parts("jwt", 1131) == ({(21, 3): 154}, None)
+    ((sql, values),) = fake_sql.queries
+    assert "radiant.staging_sequencing_experiment" in sql and values == {"p0": 1131}
+    fake_sql.on("staging_sequencing_experiment", _sql.SqlError("Access denied"))
+    fake_sql.rules.reverse()
+    assert cases._lookup_parts("jwt", 1131) == ({}, "part lookup failed: Access denied")

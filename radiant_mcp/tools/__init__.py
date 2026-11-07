@@ -1,8 +1,9 @@
-"""Radiant tools registered on the upstream FastMCP instance.
+"""Radiant tools registered on the server's FastMCP instance.
 
-``describe_schema`` is always registered. The tools backed by the Radiant
+``describe_schema``, ``bar_chart`` and the raw SQL tools (``read_query``,
+``table_overview``) are always registered. The tools backed by the Radiant
 portal API are registered only when ``RADIANT_API_URL`` is set, so the server
-still boots as a pure StarRocks MCP server without it.
+still boots as a StarRocks SQL server without it.
 """
 
 from ._api import api_enabled
@@ -12,6 +13,7 @@ from .cohort import cohort_carriers, genotype_phenotype
 from .genes import gene_info, lookup_terms
 from .occurrences import case_cnv, prioritize_snv
 from .patients import get_patient_context, search_patients
+from .query import read_query, table_overview
 from .schema import describe_schema
 from .hits import second_hit
 from .variants import variant_carriers, variant_details
@@ -41,8 +43,9 @@ API_TOOLS = (
 
 def register_tools(mcp) -> list[str]:
     """Register the Radiant tools on ``mcp`` and return their names."""
-    # bar_chart draws numbers the agent passes: no API needed.
-    tools = [describe_schema, bar_chart]
+    # bar_chart draws numbers the agent passes, and the SQL tools only need
+    # StarRocks: no API needed.
+    tools = [describe_schema, bar_chart, read_query, table_overview]
     if api_enabled():
         # Fail fast at boot if the client isn't installed rather than on first call.
         import radiant_python  # noqa: F401

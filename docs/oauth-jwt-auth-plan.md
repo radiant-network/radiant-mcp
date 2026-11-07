@@ -1,5 +1,7 @@
 # OAuth 2.1 + StarRocks JWT Authentication for Radiant MCP
 
+> Historical design doc. The `JWTDBClient` wrapper and the monkey-patch of `mcp_server_starrocks` it describes were replaced by `radiant_mcp/starrocks.py` (RAD-259); the server no longer depends on `mcp-server-starrocks`.
+
 ## Context
 
 Currently, the MCP server (`server.py`) has no authentication layer. MCP requests are processed directly and StarRocks connections use static credentials (env vars). We want to:

@@ -1,6 +1,6 @@
 """Shared plumbing for the tools backed by the Radiant portal API.
 
-Every tool follows the same per-user pass-through model as ``JWTDBClient``:
+Every tool follows the same per-user pass-through model as ``starrocks``:
 the caller's Keycloak JWT is forwarded verbatim as a Bearer token, so the
 Radiant API enforces its own per-user / per-organization authorization. This
 component holds no Radiant API credential.
@@ -45,7 +45,7 @@ def api_enabled() -> bool:
 
 
 def get_jwt_token() -> Optional[str]:
-    """Raw JWT from the current MCP auth context (same as JWTDBClient)."""
+    """Raw JWT from the current MCP auth context."""
     try:
         from fastmcp.server.dependencies import get_access_token
         access_token = get_access_token()
