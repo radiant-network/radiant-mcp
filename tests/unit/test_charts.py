@@ -375,4 +375,4 @@ def test_a_chart_tool_answers_with_text_and_png_content():
 
     result = asyncio.run(call())
     assert [part.type for part in result.content] == ["text", "image"]
-    assert result.content[1].mimeType == "image/png"
+    assert result.content[1].mime_type == "image/png"

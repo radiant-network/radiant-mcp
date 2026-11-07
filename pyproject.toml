@@ -4,8 +4,8 @@ version = "0.4.1"
 description = "Radiant MCP server — StarRocks SQL and Radiant portal API tools behind Keycloak OAuth"
 requires-python = ">=3.11"
 dependencies = [
-    # 3.x is the tested major (KeycloakAuthProvider); move to 4 in its own change.
-    "fastmcp>=3,<4",
+    # 4.x: MCP Python SDK v2, negotiates the protocol version per connection.
+    "fastmcp>=4.1,<5",
     # >= 9.1: authentication_openid_connect_client plugin (JWT login to StarRocks).
     "mysql-connector-python>=9.1",
     # Tool argument models (survival groups); fastmcp builds the tool schemas with it.
