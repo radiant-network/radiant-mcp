@@ -22,7 +22,7 @@ from .cases import SEARCH_MAX_LIMIT, criteria
 PATIENT_SEARCH_FILTER_FIELDS = (
     "age_at_initial_dx_group", "chemotherapy_agents", "cns_integrated_diagnosis",
     "diagnosis_type_cohort", "got_radiation_ever", "organization_code", "patient_id",
-    "patient_key", "patient_name", "vital_status",
+    "patient_name", "vital_status",
 )
 PATIENT_SEARCH_SORT_FIELDS = (
     "birth_year", "cns_integrated_diagnosis", "diagnosis_type_cohort", "gender",
@@ -267,7 +267,7 @@ async def search_patients(
             AND-ed; several values for one field are OR-ed. Allowed fields:
             age_at_initial_dx_group, chemotherapy_agents,
             cns_integrated_diagnosis, diagnosis_type_cohort,
-            got_radiation_ever, organization_code, patient_id, patient_key,
+            got_radiation_ever, organization_code, patient_id,
             patient_name, vital_status. Values are matched exactly: call once
             with ``include_filter_values=True`` to get the accepted values.
         tenant: Tenant code. Optional — auto-resolved when the user belongs to

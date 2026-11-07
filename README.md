@@ -154,7 +154,7 @@ only the read-only ones stay exposed. `write_query`, `db_summary`, `analyze_quer
 |------|-------------|
 | `read_query` | Execute SELECT queries |
 | `table_overview` | Get table schema and sample data |
-| `describe_schema` | Curated description of the StarRocks tables of a topic (`germline_snv`, `somatic_snv`, `cnv`, `annotations`, `frequencies`): tables to use, keys, partitions, stored enum values, join rules, example queries |
+| `describe_schema` | Curated description of the StarRocks tables of a topic (`germline_snv`, `somatic_snv`, `cnv`, `annotations`, `frequencies`, `clinical`): tables and portal clinical views to use, keys, partitions, stored enum values, join rules, example queries |
 
 With `RADIANT_API_URL` set, the tools backed by the Radiant portal API are
 registered. They forward the caller's Keycloak JWT as a Bearer token, so the API
@@ -178,7 +178,7 @@ variant they return carries a `portal_url` when `RADIANT_PORTAL_URL` is set:
 | `gene_info` | A gene's OMIM, HPO, Orphanet, DDD and COSMIC associations, tenant gene panels and gnomAD pLI/LOEUF |
 | `lookup_terms` | HPO or MONDO terms and ids from a name |
 | `family_venn` | Image: Venn diagram of the SNVs shared by a trio or a duo of a case, with the counts |
-| `survival_curve` | Image: Kaplan-Meier curves of a gene's carriers vs the other sequenced patients, or of two clinical groups, with the log-rank test |
+| `survival_curve` | Image: Kaplan-Meier curves of 2 to 6 patient groups (patient keys, patient filters or a gene's carriers, optionally within a cohort and against its other patients), with the k-sample log-rank test |
 | `oncoprint` | Image: gene x case matrix of the alteration types in a gene list |
 | `lollipop` | Image: the carriers' variants along a gene's protein |
 | `patient_timeline` | Image: a patient's events, treatments and imaging on one age axis |

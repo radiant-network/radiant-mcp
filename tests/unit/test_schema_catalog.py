@@ -1,8 +1,11 @@
-"""``describe_schema`` against the ETL, which owns the StarRocks schema.
+"""``describe_schema`` against the owners of the StarRocks schema: the ETL
+for the tables, the portal for the clinical views.
 
 The ETL checkout comes from ``RADIANT_ETL_DIR``, or a sibling ``etl`` /
-``radiant-portal-pipeline`` folder (the hub layout). Without one, the ETL
-checks are skipped, unless ``RADIANT_REQUIRE_ETL=1`` (CI), where they fail.
+``radiant-portal-pipeline`` folder (the hub layout); the portal checkout from
+``RADIANT_PORTAL_DIR``, or a sibling ``portal`` / ``radiant-portal`` folder.
+Without one, its checks are skipped, unless ``RADIANT_REQUIRE_ETL=1`` /
+``RADIANT_REQUIRE_PORTAL=1`` (CI), where they fail.
 """
 
 import ast
@@ -24,6 +27,8 @@ _CREATE = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\{\{\s*mapping\.(\w+)\s*\}\}\s*\(", re.I,
 )
 _TABLE_REF = re.compile(r"(<tenant>_tenant|\bradiant)\.(\w+)")
+_VIEW = re.compile(r"CREATE\s+OR\s+REPLACE\s+VIEW\s+\S+?_tenant\.(\w+)\s+AS\s+SELECT\b", re.I)
+_PORTAL_VIEW_DIRS = ("backend/scripts/seed/views", "backend/scripts/pcx_tables/access_controlled_views")
 
 
 def _etl_dir() -> Path | None:
@@ -42,6 +47,81 @@ def etl() -> Path:
             pytest.fail("RADIANT_REQUIRE_ETL=1 but no ETL checkout found (set RADIANT_ETL_DIR)")
         pytest.skip("no ETL checkout: set RADIANT_ETL_DIR to check describe_schema against the ETL")
     return path
+
+
+def _portal_dir() -> Path | None:
+    candidates = [os.getenv("RADIANT_PORTAL_DIR"), REPO.parent / "portal", REPO.parent / "radiant-portal"]
+    for candidate in candidates:
+        if candidate and all((Path(candidate) / d).is_dir() for d in _PORTAL_VIEW_DIRS):
+            return Path(candidate)
+    return None
+
+
+@pytest.fixture(scope="module")
+def portal() -> Path:
+    path = _portal_dir()
+    if path is None:
+        if os.getenv("RADIANT_REQUIRE_PORTAL") == "1":
+            pytest.fail("RADIANT_REQUIRE_PORTAL=1 but no portal checkout found (set RADIANT_PORTAL_DIR)")
+        pytest.skip("no portal checkout: set RADIANT_PORTAL_DIR to check the clinical views against the portal")
+    return path
+
+
+def _top_level_split(text: str) -> list[str]:
+    depth, quote, current, parts = 0, None, "", []
+    for ch in text:
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(current)
+            current = ""
+            continue
+        current += ch
+    return parts + [current]
+
+
+def _view_columns(sql: str) -> tuple[str, list[str]] | None:
+    """``(view name, column names)`` of a create-view statement: the select list up to its top-level FROM."""
+    sql = re.sub(r"/\*.*?\*/", "", re.sub(r"--[^\n]*", "", sql), flags=re.S)
+    match = _VIEW.search(sql)
+    if not match:
+        return None
+    body = sql[match.end():]
+    depth, end = 0, len(body)
+    for m in re.finditer(r"\(|\)|\bFROM\b", body, re.I):
+        token = m.group(0)
+        if token == "(":
+            depth += 1
+        elif token == ")":
+            depth -= 1
+        elif depth == 0:
+            end = m.start()
+            break
+    columns = []
+    for item in _top_level_split(body[:end]):
+        names = re.findall(r"[A-Za-z_]\w*", item.split(" AS ")[-1] if " AS " in item.upper() else item)
+        alias = re.search(r"\bAS\s+([A-Za-z_]\w*)\s*$", item.strip(), re.I)
+        columns.append(alias.group(1) if alias else names[-1])
+    return match.group(1), columns
+
+
+@pytest.fixture(scope="module")
+def portal_views(portal) -> dict[str, set[str]]:
+    views = {}
+    for directory in _PORTAL_VIEW_DIRS:
+        for path in (portal / directory).glob("*.sql.tmpl"):
+            parsed = _view_columns(path.read_text())
+            if parsed:
+                views[f"{TENANT_DB}.{parsed[0]}"] = set(parsed[1])
+    assert views, "no view definition found in the portal checkout"
+    return views
 
 
 def _ddl_columns(sql: str) -> tuple[str, list[str]] | None:
@@ -127,7 +207,22 @@ def _catalog_tables():
                 yield topic_name, table
 
 
-@pytest.mark.parametrize("topic_name, table", list(_catalog_tables()), ids=lambda v: getattr(v, "qualified", v))
+def _owned_by(owner: str):
+    return [(name, table) for name, table in _catalog_tables() if table.owner == owner]
+
+
+def test_every_table_has_a_known_owner():
+    assert {table.owner for _, table in _catalog_tables()} == {"etl", "portal"}
+
+
+@pytest.mark.parametrize("topic_name, table", _owned_by("portal"), ids=lambda v: getattr(v, "qualified", v))
+def test_clinical_views_and_columns_exist_in_the_portal(portal_views, topic_name, table):
+    assert table.qualified in portal_views, f"{topic_name}: {table.qualified} is not created by the portal"
+    missing = sorted(set(table.columns) - portal_views[table.qualified])
+    assert not missing, f"{table.qualified}: columns not in the portal view: {missing}"
+
+
+@pytest.mark.parametrize("topic_name, table", _owned_by("etl"), ids=lambda v: getattr(v, "qualified", v))
 def test_catalog_tables_and_columns_exist_in_the_etl(etl_tables, topic_name, table):
     assert table.qualified in etl_tables, f"{topic_name}: {table.qualified} is not created by the ETL"
     missing = sorted(set(table.columns) - etl_tables[table.qualified])

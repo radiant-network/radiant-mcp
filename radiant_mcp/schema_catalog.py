@@ -5,10 +5,11 @@ not which table to use, how to join them, which partition to prune or which
 values a column holds — which is where SQL written by a model goes wrong. This
 catalog says it, per topic.
 
-It is data, not prose, so the unit tests can check it against the ETL, which
-owns the schema: every table and column below must exist in the ETL's
-create-table DDL, every enum must match an ETL data QA dictionary, and every
-table named in an example query must be in the catalog.
+It is data, not prose, so the unit tests can check it against the owner of
+each table: every table and column below must exist in the ETL's create-table
+DDL, or, for the clinical views, in the portal's view definitions; every enum
+must match an ETL data QA dictionary, and every table named in an example
+query must be in the catalog.
 """
 
 from dataclasses import dataclass, field
@@ -30,6 +31,8 @@ class Table:
     partition: str = ""
     # column -> enums.ENUMS key, rendered as the stored values.
     enums: dict[str, str] = field(default_factory=dict)
+    # Who creates it: the ETL (tables) or the portal (the clinical views).
+    owner: str = "etl"
 
     @property
     def qualified(self) -> str:
@@ -236,6 +239,50 @@ SNV_VARIANT_FREQUENCIES = Table(
     partition="part (= the key's variant_part)",
 )
 
+PATIENT_KEY = Table(
+    TENANT_DB, "v_pcx_30_patient_key",
+    "One row per patient: the patient_key of the portal patient page, under the identifier the caller may see.",
+    {
+        "patient_key": "patient page key (UUID), the key the chart and patient tools take",
+        "organization_code": "enrolling institution", "patient_id_type": "'mrn' or 'research_id'",
+        "patient_id": "MRN or research id: join key only, never select or show it",
+        "radiant_patient_id": "Radiant patient id (cases, cohort_carriers); NULL when not sequenced",
+    },
+    keys="organization_code, patient_id_type, patient_id",
+    owner="portal",
+)
+PATIENT_LIST = Table(
+    TENANT_DB, "v_pcx_30_patient_list",
+    "One row per patient: the portal patient list (search_patients reads it).",
+    {
+        "patient_key": "patient page key (UUID)", "organization_code": "enrolling institution",
+        "radiant_patient_id": "Radiant patient id; NULL when not sequenced",
+        "diagnosis_type_cohort": "diagnosis cohort", "cns_integrated_diagnosis": "CNS integrated diagnosis",
+        "vital_status": "'alive' or 'deceased'", "age_at_initial_dx_days": "age at initial diagnosis (days)",
+        "survival_days": "days from initial diagnosis to the vital status", "got_radiation_ever": "ever irradiated",
+        "chemotherapy_agents": "chemotherapy agents received (array)", "case_count": "Radiant cases",
+    },
+    keys="patient_key",
+    owner="portal",
+)
+MEDICAL_THERAPY = Table(
+    TENANT_DB, "v_pcx_30_medical_therapy_level_combined",
+    "One row per systemic therapy regimen (chemotherapy, protocols) of a patient.",
+    {
+        "organization_code": "enrolling institution", "patient_id_type": "join key with v_pcx_30_patient_key",
+        "patient_id": "join key only, never select or show it",
+        "radiant_patient_id": "Radiant patient id; NULL when not sequenced",
+        "protocol_name_and_arm": "protocol and arm, e.g. 'ACNS0331: ...'; 'Not Applicable' = no therapy record, "
+                                 "'Not Reported' = protocol not recorded, 'Other' = protocol outside CBTN's list",
+        "protocol_name": "protocol, the part before the first colon", "protocol_arm": "arm, the part after it",
+        "chemotherapy_type": "type of regimen", "chemotherapy_agents": "agents of the regimen (text)",
+        "age_at_regimen_start_days": "age at regimen start (days)", "age_at_regimen_stop_days": "age at regimen stop (days)",
+        "is_initial_treatment": "'yes' = frontline; 'no' = not known to be frontline",
+    },
+    keys="organization_code, patient_id_type, patient_id (several rows per patient)",
+    owner="portal",
+)
+
 TOPICS: dict[str, Topic] = {
     "germline_snv": Topic(
         "Germline SNVs",
@@ -365,6 +412,42 @@ TOPICS: dict[str, Topic] = {
              "SELECT locus_id, gnomad_v3_af, germline_pc_wgs, germline_pn_wgs, germline_pf_wgs\n"
              "FROM <tenant>_tenant.snv__variant_partitioned\n"
              "WHERE part = <variant_part> AND locus_id IN (<locus_id>, <locus_id>);"),
+        ),
+    ),
+    "clinical": Topic(
+        "Clinical views",
+        "Per-tenant patient views of the portal (diagnosis, survival, treatments). Use SQL here to build a "
+        "group of patients that search_patients cannot filter (e.g. a treatment protocol), then pass its "
+        "patient_key list to survival_curve. Prefer search_patients and get_patient_context otherwise.",
+        (PATIENT_KEY, PATIENT_LIST, MEDICAL_THERAPY),
+        rules=(
+            _TENANT_RULE,
+            "The views apply the caller's PHI rights. Select patient_key, codes, protocols and ages in days "
+            "only: never names, MRNs (patient_id) or dates.",
+            "Join a level view to its patient_key with v_pcx_30_patient_key on "
+            "(organization_code, patient_id_type, patient_id).",
+            "The therapy view has one row per regimen: count patients with COUNT(DISTINCT k.patient_key).",
+            "Match protocols with protocol_name (e.g. = 'ACNS0334') and list the arms before choosing one; "
+            "values are free text, check them with a GROUP BY first.",
+            "Never compute survival in SQL: pass the groups to survival_curve.",
+            ARRAY_RULE,
+        ),
+        queries=(
+            ("Arms of a protocol, with their patients",
+             "SELECT mt.protocol_name_and_arm, COUNT(DISTINCT k.patient_key) AS patients\n"
+             "FROM <tenant>_tenant.v_pcx_30_medical_therapy_level_combined mt\n"
+             "JOIN <tenant>_tenant.v_pcx_30_patient_key k ON k.organization_code = mt.organization_code\n"
+             "  AND k.patient_id_type = mt.patient_id_type AND k.patient_id = mt.patient_id\n"
+             "WHERE mt.protocol_name = 'ACNS0334'\n"
+             "GROUP BY mt.protocol_name_and_arm ORDER BY patients DESC;"),
+            ("Patient keys of one arm, in one diagnosis (for survival_curve)",
+             "SELECT DISTINCT k.patient_key\n"
+             "FROM <tenant>_tenant.v_pcx_30_medical_therapy_level_combined mt\n"
+             "JOIN <tenant>_tenant.v_pcx_30_patient_key k ON k.organization_code = mt.organization_code\n"
+             "  AND k.patient_id_type = mt.patient_id_type AND k.patient_id = mt.patient_id\n"
+             "JOIN <tenant>_tenant.v_pcx_30_patient_list pl ON pl.patient_key = k.patient_key\n"
+             "WHERE mt.protocol_name_and_arm = '<arm from the query above>'\n"
+             "  AND pl.cns_integrated_diagnosis LIKE '%edulloblastoma%';"),
         ),
     ),
 }
