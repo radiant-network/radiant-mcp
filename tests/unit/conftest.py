@@ -21,6 +21,10 @@ from schema_sources import (  # noqa: F401
 
 PORTAL = "https://portal.example"
 
+# Occurrence keys as get_case_context returns them, for the SQL query builders.
+SNV_KEY = {"seq_id": 10, "task_id": 20, "part": 5, "variant_part": 0}
+CNV_KEY = {"seq_id": 10, "task_id": 21, "part": 5, "variant_part": 0}
+
 
 class FakeApi:
     """Stands in for ``_api.RadiantApi``.
@@ -54,6 +58,12 @@ class FakeApi:
 
     def kwargs(self, operation: str) -> dict:
         return next(kwargs for _, op, kwargs in self.calls if op == operation)
+
+
+def echo_gene_search(fake: FakeApi) -> None:
+    """The portal gene search finds every symbol it is given, upper-cased."""
+    fake.on("genes", "gene_search", lambda gene_search_body, **_: [
+        {"symbol": i.upper(), "ensembl_gene_id": "ENSG1"} for i in gene_search_body.inputs])
 
 
 def api_exception(status: int, body: str = "", headers: dict | None = None) -> ApiException:

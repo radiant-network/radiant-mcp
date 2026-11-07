@@ -1,0 +1,45 @@
+"""``gene_info`` and ``lookup_terms``."""
+
+from conftest import bound_value, echo_gene_search
+
+from radiant_mcp import sql as _sql
+from radiant_mcp.tools.genes import gene_info, lookup_terms
+
+
+def test_gene_info(fake_api, fake_sql, run):
+    echo_gene_search(fake_api)
+    fake_sql.on("omim_gene_panel", [{"condition_name": "Dravet", "inheritance_code": '["AD"]'}])
+    fake_sql.on("hpo_gene_panel", [{"hpo_term_id": f"HP:{i:07d}"} for i in range(150)])
+    fake_sql.on("gene_panel_mv", _sql.SqlError("Unknown table gene_panel_mv"))
+    fake_sql.on("gnomad_constraint", [{"transcript_id": "ENST1", "pli": 1.0, "loeuf": 0.1}])
+
+    result = run(gene_info("scn1a", tenant="demo"))
+
+    assert result["symbol"] == "SCN1A" and result["ensembl_gene_id"] == "ENSG1"
+    assert result["omim_conditions"] == [{"condition_name": "Dravet", "inheritance_code": ["AD"]}]
+    assert result["hpo_terms_count"] == 150 and len(result["hpo_terms"]) == 100
+    assert result["gnomad_constraint"][0]["pli"] == 1.0
+    assert "tenant_gene_panels" not in result
+    assert result["warnings"] == ["tenant_panels: Unknown table gene_panel_mv"]
+    [(sql, values)] = fake_sql.matching("ensembl_exon_by_gene")
+    assert bound_value(sql, values, "e.gene_id = ") == "ENSG1"
+
+
+def test_gene_info_unknown_gene(fake_api, fake_sql, run):
+    fake_api.on("genes", "gene_search", [])
+    assert "not found" in run(gene_info("NOPE1", tenant="demo"))["error"]
+
+
+def test_lookup_terms(fake_api, run):
+    fake_api.on("mondo", "mondo_term_auto_complete", [
+        {"highlight": {"id": "x"}, "source": {"id": "MONDO:0100135", "name": "Dravet syndrome"}},
+        {"source": {}},
+    ])
+    result = run(lookup_terms("mondo", " dravet ", tenant="demo", limit=500))
+    assert result["terms"] == [{"id": "MONDO:0100135", "name": "Dravet syndrome"}]
+    assert fake_api.kwargs("mondo_term_auto_complete") == {"tenant": "demo", "prefix": "dravet", "limit": "50"}
+
+
+def test_lookup_terms_validates(fake_api, run):
+    assert "Unknown ontology" in run(lookup_terms("go", "x"))["error"]
+    assert "non-empty" in run(lookup_terms("hpo", "  "))["error"]
