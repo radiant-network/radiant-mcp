@@ -3,8 +3,11 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
-from . import _api, _sql
-from ._api import RadiantApi, clamp, resolve_tenant
+from .. import portal_api as _api
+from .. import sql as _sql
+from ..portal_api import RadiantApi, clamp, resolve_tenant
+from ..queries.genes import gene_queries
+from ..services.genes import resolve_gene
 
 ONTOLOGIES = {
     "hpo": ("hpo", "hpo_term_auto_complete"),
@@ -15,58 +18,6 @@ _HPO_TERMS_SHOWN = 100
 _WORKERS = 3
 
 
-def resolve_gene(api: RadiantApi, tenant: str, symbol: str) -> Optional[dict]:
-    """``{symbol, ensembl_gene_id}`` of a gene name, through the portal gene
-    search (it knows the current HGNC symbols); None when unknown.
-
-    An exact match on the symbol wins (case-insensitive), otherwise the first
-    result: the search also matches aliases and Ensembl ids.
-    """
-    from radiant_python.models.gene_search_body import GeneSearchBody
-
-    _sql.symbol(symbol)
-    results = api.call("genes", "gene_search", tenant=tenant, gene_search_body=GeneSearchBody(inputs=[symbol])) or []
-    results = [r for r in results if r.get("symbol")]
-    if not results:
-        return None
-    exact = [r for r in results if r["symbol"].lower() == symbol.lower()]
-    return (exact or results)[0]
-
-
-def _gene_queries(gene: str, ensembl_gene_id: Optional[str], tenant: str) -> dict[str, tuple[str, _sql.Params]]:
-    shared, tenant_db = _sql.shared_db(), _sql.tenant_db(tenant)
-    queries: dict[str, tuple[str, _sql.Params]] = {}
-
-    def add(name: str, build) -> None:
-        p = _sql.Params()
-        queries[name] = (build(p), p)
-
-    add("omim", lambda p: (
-        f"SELECT panel AS condition_name, omim_phenotype_id, omim_gene_id, inheritance_code "
-        f"FROM {shared}.omim_gene_panel WHERE symbol = {p(gene)} ORDER BY panel LIMIT 50"))
-    add("hpo", lambda p: (
-        f"SELECT hpo_term_id, hpo_term_name FROM {shared}.hpo_gene_panel "
-        f"WHERE symbol = {p(gene)} ORDER BY hpo_term_id"))
-    add("orphanet", lambda p: (
-        f"SELECT panel AS disorder, disorder_id, inheritance_code FROM {shared}.orphanet_gene_panel "
-        f"WHERE symbol = {p(gene)} ORDER BY panel LIMIT 50"))
-    add("ddd", lambda p: f"SELECT panel FROM {shared}.ddd_gene_panel WHERE symbol = {p(gene)} ORDER BY panel")
-    add("cosmic", lambda p: f"SELECT panel FROM {shared}.cosmic_gene_panel WHERE symbol = {p(gene)} ORDER BY panel")
-    add("tenant_panels", lambda p: (
-        f"SELECT DISTINCT panel FROM {tenant_db}.gene_panel_mv WHERE symbol = {p(gene)} ORDER BY panel"))
-    if ensembl_gene_id:
-        # gnomAD constraint is per transcript: the gene's transcripts come from
-        # the Ensembl exon table (keyed by gene_id); versions are ignored.
-        add("constraint", lambda p: (
-            "SELECT DISTINCT c.transcript_id, c.pli, c.loeuf "
-            f"FROM (SELECT DISTINCT split_part(t.transcript_id, '.', 1) AS transcript_id "
-            f"      FROM {shared}.ensembl_exon_by_gene e, unnest(e.transcript_ids) AS t(transcript_id) "
-            f"      WHERE e.gene_id = {p(ensembl_gene_id)}) g "
-            f"JOIN {shared}.gnomad_constraint c ON split_part(c.transcript_id, '.', 1) = g.transcript_id "
-            "ORDER BY c.pli DESC LIMIT 10"))
-    return queries
-
-
 def _gene_info(api: RadiantApi, token: str, gene: str, tenant: Optional[str]) -> dict:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
@@ -75,7 +26,7 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: Optional[str]) ->
     if resolved is None:
         return {"error": f"Gene {gene!r} not found.", "status": 404}
     symbol = _sql.symbol(resolved["symbol"])
-    queries = _gene_queries(symbol, resolved.get("ensembl_gene_id"), tenant_code)
+    queries = gene_queries(symbol, resolved.get("ensembl_gene_id"), tenant_code)
 
     def _fetch(item: tuple[str, tuple[str, _sql.Params]]) -> tuple[str, Any, Optional[str]]:
         name, (sql, params) = item

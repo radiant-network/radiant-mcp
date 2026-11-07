@@ -125,7 +125,7 @@ def api_error(exc: Exception) -> dict:
     """Normalize an exception into a tool-friendly error dict."""
     from radiant_python.exceptions import ApiException
 
-    from ._sql import InvalidInput, SqlError
+    from .sql import InvalidInput, SqlError
 
     if isinstance(exc, InvalidInput):
         return {"error": str(exc)}
@@ -176,6 +176,10 @@ def resolve_tenant(api: RadiantApi, tenant: Optional[str]) -> tuple[Optional[str
                  "pass the `tenant` argument explicitly.",
         "tenants": [{"code": m.get("code"), "name": m.get("name")} for m in memberships],
     }
+
+
+# Page size cap of the case and patient searches.
+SEARCH_MAX_LIMIT = 100
 
 
 def clamp(value: int, low: int, high: int) -> int:

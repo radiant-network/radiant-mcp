@@ -12,8 +12,8 @@ from typing import Callable, Optional
 import anyio
 
 from .. import starrocks
-from . import _api
-from ._sql import plain
+from .. import portal_api as _api
+from ..sql import plain
 
 _MAX_ROWS_ENV = "STARROCKS_MAX_ROWS"
 _MAX_ROWS_DEFAULT = 500

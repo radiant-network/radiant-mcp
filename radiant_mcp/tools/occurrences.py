@@ -9,10 +9,11 @@ pruning and access control.
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
+from ..domain.data_types import CASE_CNV_DATA_TYPES, CASE_SNV_DATA_TYPES, CaseCnvDataType, CaseSnvDataType
 from ..enums import canonical_values
 from ..portal_links import occurrence_url, variant_url, with_url
-from . import _api
-from ._api import RadiantApi, clamp, resolve_tenant
+from .. import portal_api as _api
+from ..portal_api import RadiantApi, clamp, resolve_tenant
 
 MAX_LIMIT = 100
 # SQON leaf operators accepted by the backend (types/filter.go, sqonToFilter).
@@ -37,8 +38,8 @@ _KINDS = {
     "germline_cnv": _Kind("list_germline_cnv_occurrences", "count_germline_cnv_occurrences", "cnv_id", False),
     "somatic_cnv": _Kind("list_somatic_cnv_occurrences", "count_somatic_cnv_occurrences", "cnv_id", False),
 }
-SNV_DATA_TYPES = tuple(k for k, v in _KINDS.items() if v.is_snv)
-CNV_DATA_TYPES = tuple(k for k, v in _KINDS.items() if not v.is_snv)
+SNV_DATA_TYPES = CASE_SNV_DATA_TYPES
+CNV_DATA_TYPES = CASE_CNV_DATA_TYPES
 
 Filters = Union[list[dict[str, Any]], dict[str, Any], None]
 Sort = Optional[list[dict[str, str]]]
@@ -195,7 +196,7 @@ async def prioritize_snv(
     case_id: int,
     seq_id: int,
     task_id: int,
-    data_type: str = "germline_snv",
+    data_type: CaseSnvDataType = "germline_snv",
     filters: Filters = None,
     sort: Sort = None,
     limit: int = 20,
@@ -255,7 +256,7 @@ async def case_cnv(
     case_id: int,
     seq_id: int,
     task_id: int,
-    data_type: str = "germline_cnv",
+    data_type: CaseCnvDataType = "germline_cnv",
     filters: Filters = None,
     sort: Sort = None,
     limit: int = 20,

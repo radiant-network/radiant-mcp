@@ -7,9 +7,10 @@ the ones a geneticist sees there.
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
+from ..domain.data_types import CaseSnvDataType
 from ..portal_links import case_url, occurrence_url, variant_url, with_url
-from . import _api
-from ._api import RadiantApi, clamp, is_status, resolve_tenant
+from .. import portal_api as _api
+from ..portal_api import RadiantApi, clamp, is_status, resolve_tenant
 
 # Section -> (variants API operation, extra arguments).
 _VARIANT_SECTIONS = {
@@ -153,7 +154,7 @@ async def variant_details(
     case_id: Optional[int] = None,
     seq_id: Optional[int] = None,
     task_id: Optional[int] = None,
-    data_type: str = "germline_snv",
+    data_type: CaseSnvDataType = "germline_snv",
 ) -> dict:
     """Everything the portal knows about one SNV, optionally in one case.
 
