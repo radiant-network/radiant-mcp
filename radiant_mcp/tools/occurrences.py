@@ -9,6 +9,7 @@ pruning and access control.
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
+from ..api_fields import OCCURRENCE_SORT_FIELDS
 from ..domain.data_types import CASE_CNV_DATA_TYPES, CASE_SNV_DATA_TYPES, CaseCnvDataType, CaseSnvDataType
 from ..enums import canonical_values
 from ..portal_links import occurrence_url, variant_url, with_url
@@ -83,7 +84,9 @@ def normalize_filters(filters: Filters) -> list[dict]:
     return out
 
 
-def normalize_sort(sort: Sort) -> list[dict]:
+def normalize_sort(sort: Sort, sortable: Optional[tuple[str, ...]] = None) -> list[dict]:
+    """``sort`` as ``[{field, order}]``. With ``sortable``, an unknown field is an error:
+    the backend would drop it silently, and its default sort with it."""
     if not sort:
         return []
     if not isinstance(sort, list):
@@ -95,6 +98,8 @@ def normalize_sort(sort: Sort) -> list[dict]:
         order = (item.get("order") or "desc").lower()
         if order not in ("asc", "desc"):
             raise FilterError(f"Sort order must be asc or desc, got {item.get('order')!r}.")
+        if sortable is not None and item["field"] not in sortable:
+            raise FilterError(f"Cannot sort on {item['field']!r}. Sortable fields: {', '.join(sortable)}.")
         out.append({"field": item["field"], "order": order})
     return out
 
@@ -181,7 +186,7 @@ async def _run_list(
         return {"error": f"Unknown data_type {data_type!r}. Allowed: {', '.join(allowed)}."}
     try:
         leaves = normalize_filters(filters)
-        order = normalize_sort(sort)
+        order = normalize_sort(sort, OCCURRENCE_SORT_FIELDS[data_type])
     except FilterError as exc:
         return {"error": str(exc)}
     return await _api.run(
@@ -234,7 +239,10 @@ async def prioritize_snv(
             variants absent from gnomAD (their AF is NULL); filter on the
             internal frequency or sort instead when they matter.
         sort: List of ``{"field", "order"}`` (``desc`` by default), e.g.
-            ``[{"field": "max_impact_score"}]``.
+            ``[{"field": "exomiser_gene_combined_score"}]``. Only sortable
+            fields: some filter fields (cadd_phred, revel_score) cannot sort,
+            and the error lists the ones that can. Without ``sort``, the
+            portal's default order (Exomiser gene score, then impact).
         limit: Max occurrences returned (1–100, default 20).
         offset: Pagination offset.
         additional_fields: Extra fields to return beyond the defaults, e.g.
@@ -279,7 +287,8 @@ async def case_cnv(
             matches any), chromosome, start, end, length, cn, filter (PASS),
             quality, nb_genes, cytoband, hpo_gene_panel, omim_gene_panel,
             tenant_gene_panel.
-        sort: List of ``{"field", "order"}``, e.g. ``[{"field": "length"}]``.
+        sort: List of ``{"field", "order"}``, e.g. ``[{"field": "length"}]``;
+            an unsortable field is rejected with the list of sortable ones.
         limit: Max occurrences returned (1–100, default 20).
         offset: Pagination offset.
         additional_fields: Extra fields to return beyond the defaults.

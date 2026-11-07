@@ -125,3 +125,12 @@ def test_no_token_no_call(fake_api, run, monkeypatch):
     monkeypatch.setattr(_api, "get_jwt_token", lambda: None)
     assert run(prioritize_snv(**KEY)) == _api.AUTH_REQUIRED
     assert fake_api.calls == []
+
+
+def test_an_unsortable_field_is_rejected_before_any_call(fake_api, run):
+    result = run(prioritize_snv(case_id=1, seq_id=2, task_id=3, sort=[{"field": "cadd_phred"}], tenant="demo"))
+    assert "Cannot sort on 'cadd_phred'" in result["error"] and "exomiser_gene_combined_score" in result["error"]
+    result = run(prioritize_snv(case_id=1, seq_id=2, task_id=3, data_type="somatic_snv_tn",
+                                sort=[{"field": "max_impact_score"}], tenant="demo"))
+    assert "Cannot sort on 'max_impact_score'" in result["error"]
+    assert fake_api.calls == []

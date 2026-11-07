@@ -9,7 +9,15 @@ import pytest
 from radiant_python.exceptions import ApiException
 
 from radiant_mcp import portal_api as _api
-from schema_sources import etl, etl_dictionaries, etl_tables, portal, portal_tenant_objects, portal_views  # noqa: F401
+from schema_sources import (  # noqa: F401
+    etl,
+    etl_dictionaries,
+    etl_tables,
+    portal,
+    portal_fields,
+    portal_tenant_objects,
+    portal_views,
+)
 
 PORTAL = "https://portal.example"
 

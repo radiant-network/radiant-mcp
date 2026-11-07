@@ -28,6 +28,25 @@ def search_criteria(filters: dict) -> list:
     return out
 
 
+def merge_criteria(filters: dict, extra: dict) -> Optional[dict]:
+    """``filters`` AND ``extra``; None when a field of both has no value in common.
+
+    The API takes one criterion per field, so the user's filter and an
+    autocomplete match on the same field are intersected, not overwritten.
+    """
+    merged = dict(filters)
+    for field, value in extra.items():
+        values = value if isinstance(value, (list, tuple)) else [value]
+        if field in merged:
+            wanted = merged[field] if isinstance(merged[field], (list, tuple)) else [merged[field]]
+            keep = {str(v) for v in wanted}
+            values = [v for v in values if str(v) in keep]
+            if not values:
+                return None
+        merged[field] = list(values)
+    return merged
+
+
 def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], Optional[str]]:
     """Map every (seq_id, task_id) of ``case_id`` to its StarRocks ``part``.
 

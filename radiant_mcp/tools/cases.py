@@ -5,28 +5,14 @@ from typing import Any, Optional
 from .. import portal_api as _api
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import case_url, with_url
-from ..services.cases import case_context, search_criteria
+from ..api_fields import CASE_FILTER_FIELDS as CASE_SEARCH_FILTER_FIELDS
+from ..api_fields import CASE_SORT_FIELDS as CASE_SEARCH_SORT_FIELDS
+from ..services.cases import case_context, merge_criteria, search_criteria
 
-# Field aliases accepted as `search_criteria[].field` by POST /{tenant}/cases/search
-# (backend/internal/types/case.go: CasesFields entries with CanBeFiltered).
-# Kept explicit so the model gets a clear error instead of an opaque API 500.
-CASE_SEARCH_FILTER_FIELDS = (
-    "case_id", "submitter_case_id", "patient_id", "mrn", "sequencing_experiment_id",
-    "case_type_code", "status_code", "resolution_status_code", "priority_code",
-    "case_category_code", "analysis_catalog_code", "panel_code", "project_code",
-    "primary_condition_id", "primary_condition_name", "prescriber",
-    "ordering_organization_code", "diagnosis_lab_code", "organization_code",
-    "proband_life_status_code", "created_on", "updated_on",
-)
-CASE_SEARCH_SORT_FIELDS = (
-    "case_id", "proband_id", "submitter_proband_id", "priority_code", "status_code",
-    "resolution_status_code", "case_type_code", "case_category_code",
-    "analysis_catalog_code", "panel_code", "project_code", "primary_condition_id",
-    "primary_condition_name", "prescriber", "ordering_organization_code",
-    "diagnosis_lab_code", "created_on", "updated_on",
-)
 # Autocomplete match types that are integer ids AND directly filterable fields.
 _AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
+# Autocomplete match types that are filterable fields with string values.
+_AUTOCOMPLETE_TEXT_FIELDS = ("proband_submitter_sample_ids",)
 
 
 
@@ -72,8 +58,11 @@ def _search_cases(
         return err
 
     def _search(extra: dict) -> dict:
+        merged_filters = merge_criteria(filters, extra)
+        if merged_filters is None:
+            return {"count": 0, "list": []}
         body = ListBodyWithCriteria(
-            search_criteria=search_criteria({**filters, **extra}),
+            search_criteria=search_criteria(merged_filters),
             limit=limit,
             offset=offset,
             sort=[SortBody(field=sort_by, order=sort_order)],
@@ -101,11 +90,10 @@ def _search_cases(
     #
     # Autocomplete match types (backend CasesRepository.SearchById):
     #   case_id, patient_id, sequencing_experiment_id (internal integer
-    #   ids) and the patient's submitter_patient_id_type (e.g. "mrn")
-    #   for submitter patient ids. Anything else in that last group is
-    #   still a submitter patient id, so it goes through the `mrn` filter
-    #   (alias of patient.submitter_patient_id). Sample identifiers
-    #   (submitter_sample_id, aliquot) are NOT covered by the API.
+    #   ids), proband_submitter_sample_ids (the proband's sample ids) and
+    #   the patient's submitter_patient_id_type (e.g. "mrn") for submitter
+    #   patient ids. Anything else is still a submitter patient id, so it
+    #   goes through the `mrn` filter (alias of patient.submitter_patient_id).
     matches = api.call(
         "cases", "autocomplete_cases", tenant=tenant_code, prefix=query, limit=str(SEARCH_MAX_LIMIT),
     ) or []
@@ -116,6 +104,8 @@ def _search_cases(
             # integer columns; autocomplete returns every value as a string
             if isinstance(value, str) and value.isdigit():
                 value = int(value)
+            by_field.setdefault(match_type, []).append(value)
+        elif match_type in _AUTOCOMPLETE_TEXT_FIELDS:
             by_field.setdefault(match_type, []).append(value)
         else:
             by_field.setdefault("mrn", []).append(value)
@@ -212,30 +202,31 @@ async def search_cases(
         filters: Mapping of field → value or list of values. Several fields are
             AND-ed; several values for one field are OR-ed (``in``). Allowed
             fields: case_id, submitter_case_id, patient_id, mrn (submitter
-            patient id), sequencing_experiment_id, case_type_code
-            (germline/somatic), status_code, resolution_status_code,
-            priority_code, case_category_code, analysis_catalog_code,
-            panel_code, project_code, primary_condition_id,
-            primary_condition_name, prescriber, ordering_organization_code,
-            diagnosis_lab_code, organization_code, proband_life_status_code,
-            created_on, updated_on.
+            patient id), submitter_patient_id, proband_submitter_sample_ids,
+            sequencing_experiment_id, case_type_code (germline/somatic),
+            status_code, priority_code, case_category_code,
+            analysis_catalog_code, panel_code, project_code, project_name,
+            case_group, primary_condition_id, primary_condition_name,
+            prescriber, ordering_organization_code, diagnosis_lab_code,
+            organization_code, proband_life_status_code, created_on, updated_on.
         query: Free-text prefix matched against case id, internal patient id,
-            submitter patient id (MRN) and internal sequencing experiment id
-            (seq_id). Resolved via autocomplete, then the matching cases are
-            returned. Combine with ``filters`` to narrow. NOT matched: sample
-            identifiers (submitter_sample_id, aliquot) — resolve those to a
-            seq_id first, then filter on ``sequencing_experiment_id``.
+            submitter patient id (MRN), internal sequencing experiment id
+            (seq_id) and the proband's sample ids. Resolved via autocomplete,
+            then the matching cases are returned. Combine with ``filters`` to
+            narrow: a filter on the same field as a match keeps the values
+            both allow.
         tenant: Tenant code. Optional — auto-resolved when the user belongs to
             a single tenant; otherwise the response lists the choices.
         limit: Max cases to return (1–100, default 20).
         offset: Pagination offset (default 0).
         sort_by: Sort field (default ``updated_on``). Allowed: case_id,
-            proband_id, submitter_proband_id, priority_code, status_code,
-            resolution_status_code, case_type_code, case_category_code,
-            analysis_catalog_code, panel_code, project_code,
-            primary_condition_id, primary_condition_name, prescriber,
-            ordering_organization_code, diagnosis_lab_code, created_on,
-            updated_on.
+            proband_id, submitter_proband_id, proband_first_name,
+            proband_last_name, proband_jhn, proband_life_status_code,
+            priority_code, status_code, case_type_code, case_category_code,
+            analysis_catalog_code, panel_code, panel_name, project_code,
+            project_name, primary_condition_id, primary_condition_name,
+            prescriber, ordering_organization_code, organization_code,
+            diagnosis_lab_code, created_on, updated_on.
         sort_order: ``asc`` or ``desc`` (default ``desc``).
 
     Returns ``count`` (total matches; with ``query``, the distinct cases found,
