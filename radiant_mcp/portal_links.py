@@ -12,10 +12,9 @@ cross-module boundary: when the portal renames a route or a parameter, update
 this module and its tests.
 """
 
-import os
 from urllib.parse import quote, urlencode
 
-PORTAL_URL_ENV = "RADIANT_PORTAL_URL"
+from .settings import get_settings
 
 # Occurrence data type -> `variant_section` value of the case variants tab.
 _VARIANT_SECTIONS = {
@@ -36,8 +35,7 @@ PATIENT_TABS = (
 
 
 def _base() -> str | None:
-    base = os.getenv(PORTAL_URL_ENV, "").strip()
-    return base.rstrip("/") or None
+    return get_settings().radiant_portal_url
 
 
 def _build(tenant: str | None, path: str, params: dict | None = None) -> str | None:

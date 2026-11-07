@@ -13,18 +13,14 @@ a strict pattern or a closed list, so a bad value fails with a clear
 """
 
 import math
-import os
 import re
 from collections.abc import Iterable
 from typing import Any
 
 from . import starrocks
-
-_SHARED_DB_ENV = "RADIANT_SHARED_DB"
-_SHARED_DB_DEFAULT = "radiant"
+from .settings import get_settings
 
 _TENANT = re.compile(r"^[a-z0-9_]{1,64}$")
-_DB_NAME = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 # HGNC symbols: letters, digits, '-', '.', '@' (e.g. C9orf72, HLA-A, IGH@).
 _SYMBOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.@-]{0,39}$")
 _HPO_ID = re.compile(r"^HP:\d{7}$")
@@ -48,10 +44,8 @@ def tenant_db(tenant: str) -> str:
 
 
 def shared_db() -> str:
-    name = os.getenv(_SHARED_DB_ENV, _SHARED_DB_DEFAULT)
-    if not _DB_NAME.match(name):
-        raise InvalidInput(f"invalid {_SHARED_DB_ENV}: {name!r}")
-    return name
+    """The shared database, validated as a name when the settings load."""
+    return get_settings().radiant_shared_db
 
 
 def symbol(value: Any) -> str:

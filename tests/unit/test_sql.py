@@ -26,11 +26,11 @@ def test_other_validators_reject(call, value):
         call(value)
 
 
-def test_tenant_db_and_shared_db(monkeypatch):
+def test_tenant_db_and_shared_db(configure):
     assert _sql.tenant_db("pragmatiq") == "pragmatiq_tenant"
-    monkeypatch.setenv("RADIANT_SHARED_DB", "radiant; DROP")
-    with pytest.raises(_sql.InvalidInput):
-        _sql.shared_db()
+    assert _sql.shared_db() == "radiant"
+    configure(radiant_shared_db="radiant_qa")
+    assert _sql.shared_db() == "radiant_qa"
 
 
 def test_params_are_named_so_build_order_does_not_matter():

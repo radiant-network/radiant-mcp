@@ -92,7 +92,6 @@ def starrocks_server(monkeypatch):
 
     Server.data, Server.connections, Server.token_files = {}, [], []
     monkeypatch.setattr(starrocks.mysql.connector, "connect", connect)
-    monkeypatch.delenv("STARROCKS_DB", raising=False)
     return Server
 
 
@@ -102,9 +101,8 @@ def test_a_query_without_jwt_never_connects(starrocks_server):
     assert starrocks_server.connections == []
 
 
-def test_connects_as_the_jwt_subject_with_timeouts(starrocks_server, monkeypatch):
-    monkeypatch.setenv("STARROCKS_QUERY_TIMEOUT", "30")
-    monkeypatch.setenv("STARROCKS_DB", "radiant")
+def test_connects_as_the_jwt_subject_with_timeouts(starrocks_server, configure):
+    configure(starrocks_query_timeout=30, starrocks_db="radiant")
     token = jwt("alice-sub")
     starrocks.query(token, "SELECT 1")
     (conn,) = starrocks_server.connections
@@ -145,8 +143,8 @@ def call_as(monkeypatch, user, tool, *args):
     return asyncio.run(tool(*args))
 
 
-def test_read_query_returns_rows_and_says_when_it_cut_them(starrocks_server, monkeypatch):
-    monkeypatch.setenv("STARROCKS_MAX_ROWS", "2")
+def test_read_query_returns_rows_and_says_when_it_cut_them(starrocks_server, monkeypatch, configure):
+    configure(starrocks_max_rows=2)
     starrocks_server.data = {"alice": [("a",), ("b",), ("c",)]}
     out = call_as(monkeypatch, "alice", query.read_query, "SELECT patient_id FROM t")
     assert out["columns"] == ["patient_id"] and out["rows"] == [["a"], ["b"]]

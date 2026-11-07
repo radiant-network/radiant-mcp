@@ -25,14 +25,13 @@ fallback and no DB-connection health check.
 
 import argparse
 import logging
-import os
 
 import uvicorn
 from fastmcp import FastMCP
 
 from . import starrocks
 from .app import create_app
-from .portal_links import PORTAL_URL_ENV
+from .settings import load_or_exit
 from .tools import register_tools
 
 
@@ -46,10 +45,9 @@ async def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    # OAuth is mandatory — refuse to boot without a Keycloak realm.
-    realm_url = os.getenv("KEYCLOAK_REALM_URL")
-    if not realm_url:
-        raise SystemExit("KEYCLOAK_REALM_URL is required")
+    # Every variable is validated here: a missing KEYCLOAK_REALM_URL (OAuth is
+    # mandatory) or a malformed value stops the server before it serves anything.
+    settings = load_or_exit()
 
     mcp = FastMCP("radiant-mcp")
     print(f"Starting server on {args.host}:{args.port}")
@@ -58,14 +56,11 @@ async def main():
     # ---- OAuth 2.1 configuration ----
     from fastmcp.server.auth.providers.keycloak import KeycloakAuthProvider
 
-    # audience is optional: StarRocks' authentication_jwt only checks `aud`
+    # KEYCLOAK_AUDIENCE is optional: StarRocks' authentication_jwt only checks `aud`
     # when its user is created with `required_audience`, which we don't set.
     # Leaving this None lets DCR-registered clients (each with their own
     # client_id and no per-client audience mapper) validate too.
-    audience = os.getenv("KEYCLOAK_AUDIENCE", None)
-    # "openid, profile" must not require the scope " profile".
-    required_scopes = [s.strip() for s in os.getenv("OAUTH_REQUIRED_SCOPES", "openid").split(",") if s.strip()]
-
+    #
     # Native fastmcp Keycloak provider: a pure JWT resource server. It holds
     # no client secret and mints no tokens — it only validates incoming
     # Bearer JWTs against Keycloak's JWKS (RS256, issuer, exp, scopes, and
@@ -73,10 +68,10 @@ async def main():
     # via Keycloak's own DCR + PKCE; portal clients (LibreChat) present a raw
     # Keycloak token. Both hit the same verifier, so no MultiAuth is needed.
     mcp.auth = KeycloakAuthProvider(
-        realm_url=realm_url,
-        base_url=os.getenv("MCP_BASE_URL", "http://localhost:8000"),
-        audience=audience,
-        required_scopes=required_scopes,
+        realm_url=settings.keycloak_realm_url,
+        base_url=settings.mcp_base_url,
+        audience=settings.keycloak_audience,
+        required_scopes=settings.oauth_required_scopes,
     )
     print("OAuth 2.1 enabled (Keycloak native provider — JWT verifier + DCR)")
 
@@ -84,10 +79,10 @@ async def main():
     # Radiant API — no server-held credential — and are skipped without
     # RADIANT_API_URL.
     print(f"Radiant tools registered: {', '.join(register_tools(mcp))}")
-    if not os.getenv("RADIANT_API_URL"):
+    if not settings.radiant_api_url:
         print("RADIANT_API_URL unset — Radiant API tools not registered")
-    if not os.getenv(PORTAL_URL_ENV):
-        print(f"{PORTAL_URL_ENV} unset — tools return no portal links")
+    if not settings.radiant_portal_url:
+        print("RADIANT_PORTAL_URL unset — tools return no portal links")
 
     # Get the MCP ASGI app for streamable-http transport
     mcp_app = mcp.http_app(path="/")
@@ -107,7 +102,7 @@ async def main():
         port=args.port,
         log_level="info",
         proxy_headers=True,
-        forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "*"),
+        forwarded_allow_ips=settings.forwarded_allow_ips,
     )
     server = uvicorn.Server(config)
     await server.serve()

@@ -1802,6 +1802,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "mysql-connector-python" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "radiant-python-cli" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1820,6 +1821,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "mysql-connector-python", specifier = ">=9.1" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "radiant-python-cli", git = "https://github.com/radiant-network/radiant-portal.git?subdirectory=cli%2Fpython&rev=616ace048346981e008b8db1e1ac9993e26fb088" },
     { name = "scipy", specifier = ">=1.12" },
 ]

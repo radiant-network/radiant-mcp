@@ -1,14 +1,13 @@
 import pytest
 
-from radiant_mcp import portal_links
 from radiant_mcp.portal_links import case_url, occurrence_url, patient_url, variant_url, with_url
 
 BASE = "https://portal.example"
 
 
 @pytest.fixture(autouse=True)
-def portal(monkeypatch):
-    monkeypatch.setenv(portal_links.PORTAL_URL_ENV, BASE + "/")
+def portal(configure):
+    configure(radiant_portal_url=BASE + "/")
 
 
 def test_case_url():
@@ -56,8 +55,8 @@ def test_missing_ids_give_no_link():
     assert case_url(None, 1) is None
 
 
-def test_no_link_without_portal_url(monkeypatch):
-    monkeypatch.delenv(portal_links.PORTAL_URL_ENV)
+def test_no_link_without_portal_url(configure):
+    configure(radiant_portal_url="")
     assert case_url("t", 1) is None
     assert with_url({"a": 1}, case_url("t", 1)) == {"a": 1}
 

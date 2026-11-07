@@ -19,6 +19,7 @@ from schema_sources import (  # noqa: F401
 )
 
 from radiant_mcp import portal_api as _api
+from radiant_mcp.settings import Settings, use_settings
 
 PORTAL = "https://portal.example"
 
@@ -73,8 +74,37 @@ def api_exception(status: int, body: str = "", headers: dict | None = None) -> A
     return exc
 
 
+class _TestSettings(Settings):
+    """``Settings`` built from its arguments only: the developer's environment never leaks in."""
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings, **_sources):
+        return (init_settings,)
+
+
+def _test_settings(**values) -> Settings:
+    return _TestSettings(**{"keycloak_realm_url": "https://kc.example/realms/radiant", **values})
+
+
+# Installed at import: some test modules build queries while pytest collects them.
+use_settings(_test_settings())
+
+
+@pytest.fixture(autouse=True)
+def configure() -> Callable[..., Settings]:
+    """Call ``configure(field=value, ...)`` to change the test settings; reset after each test."""
+
+    def _configure(**values) -> Settings:
+        settings = _test_settings(**values)
+        use_settings(settings)
+        return settings
+
+    yield _configure
+    use_settings(_test_settings())
+
+
 @pytest.fixture
-def fake_api(monkeypatch) -> FakeApi:
+def fake_api(monkeypatch, configure) -> FakeApi:
     fake = FakeApi()
 
     @contextmanager
@@ -83,8 +113,7 @@ def fake_api(monkeypatch) -> FakeApi:
 
     monkeypatch.setattr(_api, "connect", _connect)
     monkeypatch.setattr(_api, "get_jwt_token", lambda: "jwt")
-    monkeypatch.setenv("RADIANT_API_URL", "http://api.example")
-    monkeypatch.setenv("RADIANT_PORTAL_URL", PORTAL)
+    configure(radiant_api_url="http://api.example", radiant_portal_url=PORTAL)
     return fake
 
 

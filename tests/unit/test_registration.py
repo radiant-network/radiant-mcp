@@ -19,8 +19,8 @@ def _names(mcp) -> set[str]:
     return {tool.name for tool in asyncio.run(mcp.list_tools())}
 
 
-def test_the_assistant_sees_the_radiant_tools_and_the_read_only_sql(monkeypatch):
-    monkeypatch.setenv("RADIANT_API_URL", "http://api.example")
+def test_the_assistant_sees_the_radiant_tools_and_the_read_only_sql(configure):
+    configure(radiant_api_url="http://api.example")
     mcp = FastMCP("test")
     register_tools(mcp)
     assert _names(mcp) == API_TOOLS | ALWAYS
@@ -28,8 +28,7 @@ def test_the_assistant_sees_the_radiant_tools_and_the_read_only_sql(monkeypatch)
     assert asyncio.run(mcp.list_resource_templates()) == []
 
 
-def test_without_the_api_only_the_schema_chart_and_sql_tools_are_added(monkeypatch):
-    monkeypatch.delenv("RADIANT_API_URL", raising=False)
+def test_without_the_api_only_the_schema_chart_and_sql_tools_are_added():
     mcp = FastMCP("test")
     assert set(register_tools(mcp)) == ALWAYS
 

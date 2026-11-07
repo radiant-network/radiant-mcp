@@ -12,12 +12,17 @@ must match an ETL data QA dictionary, and every table named in an example
 query must be in the catalog.
 """
 
+import re
 from dataclasses import dataclass, field
 
 from .enums import ENUMS
+from .settings import get_settings
 
 TENANT_DB = "<tenant>_tenant"
+# The shared database as the ETL names it. The catalog is written with it, and
+# render() swaps in RADIANT_SHARED_DB when the deployment uses another name.
 SHARED_DB = "radiant"
+_SHARED_PREFIX = re.compile(rf"\b{SHARED_DB}\.(?=[\w`])")
 
 
 @dataclass(frozen=True)
@@ -488,4 +493,6 @@ def render(topic_name: str) -> str:
         lines += ["## Example queries", ""]
         for title, sql in topic.queries:
             lines += [f"{title}:", "", "```sql", sql, "```", ""]
-    return "\n".join(lines).rstrip() + "\n"
+    text = "\n".join(lines).rstrip() + "\n"
+    shared = get_settings().radiant_shared_db
+    return text if shared == SHARED_DB else _SHARED_PREFIX.sub(f"{shared}.", text)

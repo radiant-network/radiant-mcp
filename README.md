@@ -61,6 +61,10 @@ this component holds no StarRocks credentials.
 | `RADIANT_API_URL` | No | - | Radiant portal API base URL. When set, registers the Radiant API tools below (the caller's JWT is forwarded as a Bearer token) |
 | `RADIANT_API_TIMEOUT` | No | `60` | Timeout of one Radiant API request, in seconds |
 | `RADIANT_PORTAL_URL` | No | - | Radiant portal base URL. When set, the tools return a `portal_url` for every case, patient, occurrence and variant |
+| `RADIANT_SHARED_DB` | No | `radiant` | StarRocks database of the shared tables (annotations, `staging_sequencing_experiment`) |
+| `FORWARDED_ALLOW_IPS` | No | `*` | Proxies whose `X-Forwarded-*` headers are trusted (needed behind a TLS-terminating load balancer) |
+
+Every variable is validated at startup: a missing `KEYCLOAK_REALM_URL` or a malformed value (a non-numeric port, a negative timeout) stops the server with one line per variable.
 
 > No `STARROCKS_USER` / `STARROCKS_PASSWORD`: this component authenticates to
 > StarRocks with each caller's JWT, never a static credential. `STARROCKS_HOST`
@@ -85,6 +89,7 @@ The server uses fastmcp's native `KeycloakAuthProvider` — a pure JWT resource 
 | `MCP_BASE_URL` | No | `http://localhost:8000` | Server **root** URL (not `/mcp`); the provider derives the resource + metadata URLs from it |
 | `OAUTH_REQUIRED_SCOPES` | No | `openid` | Comma-separated scopes required on tokens |
 | `KEYCLOAK_AUDIENCE` | No | - | Expected JWT `aud` claim (leave unset unless you add a matching audience mapper) |
+| `OAUTH_SUPPORTED_SCOPES` | No | `openid,offline_access` | Comma-separated scopes advertised in the protected-resource metadata (clients register with them) |
 
 ## Building the Image
 

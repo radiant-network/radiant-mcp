@@ -6,25 +6,20 @@ grants on every call: nothing is cached across calls. ``read_query`` returns
 at most ``STARROCKS_MAX_ROWS`` rows and says when it cut the result.
 """
 
-import os
 from collections.abc import Callable
 
 import anyio
 
 from .. import portal_api as _api
 from .. import starrocks
+from ..settings import get_settings
 from ..sql import plain
 
-_MAX_ROWS_ENV = "STARROCKS_MAX_ROWS"
-_MAX_ROWS_DEFAULT = 500
 _SAMPLE_ROWS = 3
 
 
 def _max_rows() -> int:
-    try:
-        return max(1, int(os.getenv(_MAX_ROWS_ENV, _MAX_ROWS_DEFAULT)))
-    except ValueError:
-        return _MAX_ROWS_DEFAULT
+    return get_settings().starrocks_max_rows
 
 
 def _rows(result: starrocks.Result) -> list[list]:
