@@ -42,6 +42,10 @@ class Criteria:
             out["max_gnomad_af"] = f"< {self.max_gnomad_af:g} or absent from gnomAD"
         if not self.is_snv or self.is_somatic:
             out["filter"] = _rules.PASS
+        if self.is_snv:
+            out["gene_match"] = ("a consequence on a transcript of the gene (not only the picked one); "
+                                 "vep_impact is the impact on that gene")
+        out["reruns"] = "the latest task of each sequencing"
         return out
 
 

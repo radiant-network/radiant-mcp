@@ -15,23 +15,41 @@ from .sequencing import sequencing_join
 _SUMMARY_LIMIT = 30
 
 
+def _latest_task(columns: str, source: str) -> str:
+    """``columns`` of ``source`` rows, keeping the latest task of each (sequencing, variant):
+    a re-run adds a task next to the old one, which would list the carrier twice."""
+    names = ", ".join(c.strip().split(".")[-1] for c in columns.split(","))
+    return (
+        f"SELECT {names} FROM (SELECT {columns},"
+        " ROW_NUMBER() OVER (PARTITION BY x.seq_id, x.variant_id ORDER BY x.task_id DESC) AS rerun"
+        f" {source}) r WHERE r.rerun = 1"
+    )
+
+
 def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
-    """``WITH ... car AS (...)``: one row per (sequencing, task, variant) of a
-    carrier, with its case and patient. SNV CTEs also define ``v``."""
-    tenant_db = _sql.tenant_db(tenant)
+    """``WITH ... car AS (...)``: one row per (sequencing, variant) of a carrier, from
+    the sequencing's latest task, with its case and patient. SNV CTEs also define ``v``.
+
+    An SNV is in the gene when one of its consequences is on a transcript of the
+    gene (``snv__consequence_filter``), not only its picked one, so a variant of two
+    overlapping genes counts for both; ``vep_impact`` is its impact on that gene.
+    """
+    tenant_db, shared_db = _sql.tenant_db(tenant), _sql.shared_db()
     sequencing = sequencing_join(p, tenant)
     carrier_columns = (
         "s.case_id, s.patient_id, s.family_role, s.affected_status, s.experimental_strategy,"
         " x.seq_id, x.task_id, x.variant_id"
     )
     if criteria.is_snv:
-        where = [f"symbol = {p(criteria.gene)}"]
+        gene_where = [f"cf.symbol = {p(criteria.gene)}"]
         if criteria.vep_impact:
-            where.append(f"vep_impact IN ({p.list(criteria.vep_impact)})")
+            gene_where.append(f"cf.vep_impact IN ({p.list(criteria.vep_impact)})")
+        where = []
         if criteria.clinvar:
-            where.append(f"arrays_overlap(clinvar_interpretation, [{p.list(criteria.clinvar)}])")
+            where.append(f"arrays_overlap(sv.clinvar_interpretation, [{p.list(criteria.clinvar)}])")
         if criteria.max_gnomad_af is not None:
-            where.append(f"(gnomad_v3_af IS NULL OR gnomad_v3_af < {p(criteria.max_gnomad_af)})")
+            where.append(f"(sv.gnomad_v3_af IS NULL OR sv.gnomad_v3_af < {p(criteria.max_gnomad_af)})")
+        variant_filter = (" WHERE " + " AND ".join(where)) if where else ""
         if criteria.is_somatic:
             occurrence, seq_column, zygosity_column = "somatic__snv__occurrence", "tumor_seq_id", "tumor_zygosity"
         else:
@@ -43,13 +61,15 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
             occ_where.append(f"o.filter = {p(_rules.PASS)}")
         occ_filter = (" WHERE " + " AND ".join(occ_where)) if occ_where else ""
         return (
-            "WITH v AS ("
-            " SELECT locus_id, hgvsg, vep_impact, variant_class, consequences"
-            f" FROM {tenant_db}.snv__variant_partitioned WHERE {' AND '.join(where)}"
+            "WITH g AS ("
+            f" SELECT DISTINCT cf.locus_id FROM {shared_db}.snv__consequence_filter cf WHERE {' AND '.join(gene_where)}"
+            "), v AS ("
+            " SELECT sv.locus_id, sv.hgvsg, sv.vep_impact, sv.variant_class, sv.consequences"
+            f" FROM {tenant_db}.snv__variant sv JOIN g ON g.locus_id = sv.locus_id{variant_filter}"
             "), x AS ("
             f" SELECT o.{seq_column} AS seq_id, o.task_id, o.locus_id AS variant_id"
             f" FROM {tenant_db}.{occurrence} o JOIN v ON v.locus_id = o.locus_id{occ_filter}"
-            f"), car AS (SELECT {carrier_columns} FROM x {sequencing})"
+            f"), car AS ({_latest_task(carrier_columns, f'FROM x {sequencing}')})"
         )
     table = "somatic__cnv__occurrence" if criteria.is_somatic else "germline__cnv__occurrence"
     types = criteria.cnv_types or tuple(ENUMS["cnv_type"])
@@ -58,7 +78,7 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
         " SELECT c.seq_id, c.task_id, c.cnv_id AS variant_id, c.type"
         f" FROM {tenant_db}.{table} c, unnest(c.symbol) AS g(symbol)"
         f" WHERE g.symbol = {p(criteria.gene)} AND c.filter = {p(_rules.PASS)} AND c.type IN ({p.list(types)})"
-        f"), car AS (SELECT {carrier_columns}, x.type FROM x {sequencing})"
+        f"), car AS ({_latest_task(carrier_columns + ', x.type', f'FROM x {sequencing}')})"
     )
 
 
@@ -130,7 +150,7 @@ def phenotypes_query(tenant: str, criteria: Criteria, limit: int) -> tuple[str, 
         f" FROM {tenant_db}.obs_categorical obs JOIN pat ON pat.patient_id = obs.patient_id"
         f" LEFT JOIN {shared_db}.hpo_term h ON h.id = obs.code_value"
         f" WHERE obs.observation_code = {p(_rules.PHENOTYPE_OBSERVATION_CODE)}"
-        f"  AND obs.interpretation_code = {p(_rules.POSITIVE_INTERPRETATION_CODE)}"
+        f"  AND obs.interpretation_code = {p(_rules.POSITIVE_INTERPRETATION_CODE)} AND obs.fetus_id IS NULL"
         f" GROUP BY obs.code_value ORDER BY patients DESC, hpo_term_id LIMIT {p(limit)}"
     )
     return sql, p
@@ -144,7 +164,7 @@ def phenotyped_patients_query(tenant: str, criteria: Criteria) -> tuple[str, _sq
         + " SELECT COUNT(DISTINCT obs.patient_id) AS patients"
         f" FROM {tenant_db}.obs_categorical obs JOIN (SELECT DISTINCT patient_id FROM car) pat ON pat.patient_id = obs.patient_id"
         f" WHERE obs.observation_code = {p(_rules.PHENOTYPE_OBSERVATION_CODE)}"
-        f"  AND obs.interpretation_code = {p(_rules.POSITIVE_INTERPRETATION_CODE)}"
+        f"  AND obs.interpretation_code = {p(_rules.POSITIVE_INTERPRETATION_CODE)} AND obs.fetus_id IS NULL"
     )
     return sql, p
 
@@ -157,7 +177,7 @@ def carriers_with_term_query(tenant: str, criteria: Criteria, hpo_term: str, lim
         + " SELECT DISTINCT car.case_id, car.patient_id, car.affected_status"
         f" FROM car JOIN {tenant_db}.obs_categorical obs ON obs.patient_id = car.patient_id"
         f" WHERE obs.observation_code = {p(_rules.PHENOTYPE_OBSERVATION_CODE)}"
-        f"  AND obs.interpretation_code = {p(_rules.POSITIVE_INTERPRETATION_CODE)}"
+        f"  AND obs.interpretation_code = {p(_rules.POSITIVE_INTERPRETATION_CODE)} AND obs.fetus_id IS NULL"
         f"  AND obs.code_value = {p(hpo_term)}"
         f" ORDER BY car.case_id LIMIT {p(limit)}"
     )
@@ -175,7 +195,7 @@ def lollipop_query(tenant: str, criteria_: Criteria) -> tuple[str, _sql.Params]:
     tenant_db = _sql.tenant_db(tenant)
     return (
         cte + ", va AS (SELECT locus_id, transcript_id, aa_change, array_join(consequences, ',') AS kind"
-        f" FROM {tenant_db}.snv__variant_partitioned WHERE symbol = {p(criteria_.gene)})"
+        f" FROM {tenant_db}.snv__variant WHERE symbol = {p(criteria_.gene)})"
         " SELECT va.locus_id, va.transcript_id, va.aa_change, va.kind, COUNT(DISTINCT car.patient_id) AS carriers"
         " FROM car JOIN va ON va.locus_id = car.variant_id WHERE va.aa_change IS NOT NULL"
         f" GROUP BY va.locus_id, va.transcript_id, va.aa_change, va.kind ORDER BY carriers DESC LIMIT {p(5000)}"
