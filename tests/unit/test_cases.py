@@ -60,3 +60,34 @@ def test_part_lookup_binds_the_case_and_skips_tasks_without_part(fake_sql):
     fake_sql.on("staging_sequencing_experiment", _sql.SqlError("Access denied"))
     fake_sql.rules.reverse()
     assert case_service.lookup_parts("jwt", 1131) == ({}, "part lookup failed: Access denied")
+
+
+def _criteria_of(body) -> dict:
+    return {d["field"]: d["value"] for d in (c.to_dict() for c in body.search_criteria)}
+
+
+def test_search_cases_finds_a_case_by_sample_id(fake_api, run):
+    searched = []
+    fake_api.on("cases", "autocomplete_cases", [{"type": "proband_submitter_sample_ids", "value": "S12345"}])
+    fake_api.on("cases", "search_cases", lambda list_body_with_criteria, **_: (
+        searched.append(_criteria_of(list_body_with_criteria)) or {"count": 1, "list": [{"case_id": 7}]}))
+    result = run(search_cases(query="S12345", tenant="t"))
+    assert searched == [{"proband_submitter_sample_ids": ["S12345"]}]
+    assert [c["case_id"] for c in result["cases"]] == [7]
+
+
+def test_search_cases_intersects_a_filter_with_a_match_on_the_same_field(fake_api, run):
+    searched = []
+    fake_api.on("cases", "autocomplete_cases", [{"type": "patient_id", "value": "12"}, {"type": "case_id", "value": "12"}])
+    fake_api.on("cases", "search_cases", lambda list_body_with_criteria, **_: (
+        searched.append(_criteria_of(list_body_with_criteria)) or {"count": 0, "list": []}))
+    run(search_cases(query="12", filters={"patient_id": [5]}, tenant="t"))
+    # patient_id 12 and the filter patient_id 5 have nothing in common: no search for that match.
+    assert searched == [{"patient_id": [5], "case_id": [12]}]
+
+
+def test_search_cases_rejects_a_retired_field(fake_api, run):
+    result = run(search_cases(filters={"resolution_status_code": "solved"}, tenant="t"))
+    assert "Unknown filter field" in result["error"] and "project_name" in result["allowed_filter_fields"]
+    assert "Unknown sort field" in run(search_cases(query="1", sort_by="resolution_status_code", tenant="t"))["error"]
+    assert fake_api.calls == []

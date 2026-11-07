@@ -10,9 +10,10 @@ show the same user.
 from typing import Any, Optional
 
 from .. import portal_api as _api
+from ..api_fields import PATIENT_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import patient_url, with_url
-from ..services.cases import search_criteria
+from ..services.cases import merge_criteria, search_criteria
 from ..services.patients import (
     PATIENT_KEY,
     PATIENT_SEARCH_FILTER_FIELDS,
@@ -22,10 +23,7 @@ from ..services.patients import (
     unknown_filter_fields,
 )
 
-PATIENT_SEARCH_SORT_FIELDS = (
-    "birth_year", "cns_integrated_diagnosis", "diagnosis_type_cohort", "gender",
-    "organization_code", "patient_id", "patient_key", "survival_days", "vital_status",
-)
+PATIENT_SEARCH_SORT_FIELDS = PATIENT_SORT_FIELDS
 # Autocomplete match types of GET /{tenant}/patients/autocomplete, which are
 # also filter fields.
 _AUTOCOMPLETE_FIELDS = ("patient_id", "patient_name")
@@ -71,8 +69,11 @@ def _search_patients(
         return err
 
     def _search(extra: dict, page_offset: int) -> dict:
+        merged_filters = merge_criteria(filters, extra)
+        if merged_filters is None:
+            return {"count": 0, "list": []}
         body = ListBodyWithCriteria(
-            search_criteria=search_criteria({**filters, **extra}),
+            search_criteria=search_criteria(merged_filters),
             limit=limit,
             offset=page_offset,
             sort=[SortBody(field=sort_by, order=sort_order)] if sort_by else None,
@@ -159,10 +160,10 @@ async def search_patients(
         offset: Pagination offset (default 0, ignored with ``query``).
             With ``query``, ``count`` is the number of distinct patients found
             and ``more_results`` is true when some were not returned.
-        sort_by: Optional sort field: birth_year, cns_integrated_diagnosis,
-            diagnosis_type_cohort, gender, organization_code, patient_id,
-            patient_key, survival_days, vital_status. Default: the portal's
-            list order.
+        sort_by: Optional sort field: birth_year, can_read_phi,
+            cns_integrated_diagnosis, diagnosis_type_cohort, gender,
+            organization_code, patient_id, survival_days, vital_status.
+            Default: the portal's list order.
         sort_order: ``asc`` (default) or ``desc``.
         include_filter_values: Also return ``filter_values``, the values each
             filter accepts.

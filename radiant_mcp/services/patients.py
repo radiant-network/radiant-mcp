@@ -12,17 +12,14 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 from .. import portal_api as _api
+from ..api_fields import PATIENT_FILTER_FIELDS
 from ..portal_api import RadiantApi, is_status, resolve_tenant
 from ..portal_links import case_url, occurrence_url, patient_url, variant_url, with_url
 
 
 # Field aliases accepted by POST /{tenant}/patients/search
 # (backend/internal/types/pcx_patient_query.go: PcxPatientListFields).
-PATIENT_SEARCH_FILTER_FIELDS = (
-    "age_at_initial_dx_group", "chemotherapy_agents", "cns_integrated_diagnosis",
-    "diagnosis_type_cohort", "got_radiation_ever", "organization_code", "patient_id",
-    "patient_name", "vital_status",
-)
+PATIENT_SEARCH_FILTER_FIELDS = PATIENT_FILTER_FIELDS
 
 
 # Section name -> (patients API operation, patient page tab).

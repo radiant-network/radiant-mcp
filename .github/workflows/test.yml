@@ -44,7 +44,7 @@ jobs:
             backend/scripts/seed/views
             backend/scripts/pcx_tables/access_controlled_views
             backend/scripts/init-sql/migrations
-            backend/internal/types/tenant.go
+            backend/internal/types
             backend/internal/repository/starrocks/starrocks_tenant.go
           sparse-checkout-cone-mode: false
 
