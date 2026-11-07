@@ -13,18 +13,15 @@ bodies still go through the generated models.
 
 import json
 import logging
-import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import anyio
 
-logger = logging.getLogger(__name__)
+from .settings import get_settings
 
-API_URL_ENV = "RADIANT_API_URL"
-_TIMEOUT_ENV = "RADIANT_API_TIMEOUT"
-_TIMEOUT_DEFAULT = 60.0
+logger = logging.getLogger(__name__)
 
 AUTH_REQUIRED = {"error": "Authentication required: no JWT in request context"}
 
@@ -42,7 +39,7 @@ _API_CLASSES = {
 
 def api_enabled() -> bool:
     """True when the Radiant API tools can be registered."""
-    return bool(os.getenv(API_URL_ENV))
+    return get_settings().radiant_api_url is not None
 
 
 def get_jwt_token() -> str | None:
@@ -58,10 +55,7 @@ def get_jwt_token() -> str | None:
 
 
 def _timeout() -> float:
-    try:
-        return float(os.getenv(_TIMEOUT_ENV, _TIMEOUT_DEFAULT))
-    except ValueError:
-        return _TIMEOUT_DEFAULT
+    return get_settings().radiant_api_timeout
 
 
 class RadiantApi:
@@ -102,7 +96,7 @@ def connect(token: str) -> Iterator[RadiantApi]:
     """Open a ``RadiantApi`` that forwards the caller's JWT. Tests replace it."""
     import radiant_python
 
-    host = os.environ[API_URL_ENV].rstrip("/")
+    host = get_settings().radiant_api_url
     configuration = radiant_python.Configuration(host=host, access_token=token)
     client = radiant_python.ApiClient(configuration)
     try:

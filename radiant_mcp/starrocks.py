@@ -26,13 +26,8 @@ from typing import Any
 import mysql.connector
 from mysql.connector.errors import Error as MySQLError
 
-_HOST_ENV = "STARROCKS_HOST"
-_PORT_ENV = "STARROCKS_PORT"
-_DB_ENV = "STARROCKS_DB"
-_CONNECT_TIMEOUT_ENV = "STARROCKS_CONNECTION_TIMEOUT"
-_QUERY_TIMEOUT_ENV = "STARROCKS_QUERY_TIMEOUT"
+from .settings import get_settings
 
-_QUERY_TIMEOUT_DEFAULT = 60
 # Extra seconds the socket waits beyond query_timeout, so StarRocks' own
 # timeout error normally arrives first.
 _READ_TIMEOUT_MARGIN = 5
@@ -53,19 +48,12 @@ class Result:
     truncated: bool = False
 
 
-def _int_env(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, default))
-    except ValueError:
-        return default
-
-
 def default_database() -> str | None:
-    return os.getenv(_DB_ENV) or None
+    return get_settings().starrocks_db
 
 
 def query_timeout() -> int:
-    return _int_env(_QUERY_TIMEOUT_ENV, _QUERY_TIMEOUT_DEFAULT)
+    return get_settings().starrocks_query_timeout
 
 
 def database_name(value: str) -> str:
@@ -102,19 +90,20 @@ def connect(token: str | None, database: str | None = None) -> Iterator[Any]:
     finally:
         os.close(fd)
 
-    timeout = query_timeout()
+    settings = get_settings()
+    timeout = settings.starrocks_query_timeout
     try:
         conn = mysql.connector.connect(
-            host=os.getenv(_HOST_ENV, "localhost"),
-            port=_int_env(_PORT_ENV, 9030),
+            host=settings.starrocks_host,
+            port=settings.starrocks_port,
             user=_username(token),
             auth_plugin="authentication_openid_connect_client",
             openid_token_file=token_path,
-            database=database or default_database() or "",
+            database=database or settings.starrocks_db or "",
             autocommit=True,
             ssl_verify_cert=False,
             ssl_verify_identity=False,
-            connect_timeout=_int_env(_CONNECT_TIMEOUT_ENV, 10),
+            connect_timeout=settings.starrocks_connection_timeout,
             read_timeout=timeout + _READ_TIMEOUT_MARGIN,
             init_command=f"SET query_timeout = {int(timeout)}",
         )

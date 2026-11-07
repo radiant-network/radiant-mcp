@@ -7,9 +7,10 @@ authorization server, which is where clients then run OIDC discovery + DCR.
 """
 
 import json
-import os
 
 from starlette.responses import Response
+
+from .settings import get_settings
 
 
 async def protected_resource_metadata(request):
@@ -32,15 +33,11 @@ async def protected_resource_metadata(request):
     """
     # MCP_BASE_URL is the server root (e.g. http://localhost:8000); the MCP
     # resource itself lives under /mcp.
-    resource = os.getenv("MCP_BASE_URL", "http://localhost:8000").rstrip("/") + "/mcp"
-    realm = os.getenv("KEYCLOAK_REALM_URL", "").rstrip("/")
-    scopes_supported = os.getenv(
-        "OAUTH_SUPPORTED_SCOPES", "openid,offline_access"
-    ).split(",")
+    settings = get_settings()
     body = json.dumps({
-        "resource": resource,
-        "authorization_servers": [realm],
-        "scopes_supported": scopes_supported,
+        "resource": settings.mcp_base_url + "/mcp",
+        "authorization_servers": [settings.keycloak_realm_url],
+        "scopes_supported": settings.oauth_supported_scopes,
         "bearer_methods_supported": ["header"],
     })
     return Response(body, media_type="application/json")

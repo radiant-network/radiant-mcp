@@ -80,6 +80,7 @@ Keycloak is the IdP for **both** hops: it issues the token to the client, and St
 - `starrocks.py` — StarRocks access under the caller's JWT: `connect(token, database)` and `query(token, sql, params, database=, max_rows=)`. See below.
 - `oauth.py` — hand-rolled RFC 9728 protected-resource metadata endpoint (workaround, see below). Advertises the Keycloak realm as the authorization server.
 - `health.py` — unauthenticated liveness/readiness handlers (no StarRocks probe).
+- `settings.py` — every environment variable, as one pydantic-settings `Settings` model: typed, validated, read once. `__main__` calls `load_or_exit()` first, so a missing `KEYCLOAK_REALM_URL` or a malformed value (a non-numeric port, a bad database name) stops the server with one line per variable. Modules call `get_settings()`, never `os.getenv` (the one exception is `MPLCONFIGDIR`, set for matplotlib before its import). Tests install their own instance through the autouse `configure` fixture of `tests/unit/conftest.py`, which ignores the developer's environment.
 - `portal_links.py` — builds the `portal_url` of cases, occurrences, patients and variants from `RADIANT_PORTAL_URL`.
 - `enums.py` — stored values of the enum columns; `canonical_values()` maps filter values onto them case-insensitively (StarRocks compares case-sensitively).
 - `schema_catalog.py` — the curated tables, rules and example queries rendered by `describe_schema`.
@@ -139,9 +140,13 @@ FastMCP serves protected-resource metadata under `/mcp/.well-known/...` and Pyda
 
 Connection **target** (no credentials): `STARROCKS_HOST`, `STARROCKS_PORT` (9030), `STARROCKS_DB`, `STARROCKS_CONNECTION_TIMEOUT` (seconds, default 10). There is intentionally **no** `STARROCKS_USER` / `STARROCKS_PASSWORD` — access is per-user via JWT. Limits: `STARROCKS_QUERY_TIMEOUT` (seconds, default 60), `STARROCKS_MAX_ROWS` (rows returned by `read_query`, default 500).
 
-Radiant API (optional): `RADIANT_API_URL` — base URL of the Radiant portal API; enables the Radiant API tools. No API credential: the caller's JWT is forwarded. `RADIANT_API_TIMEOUT` (seconds, default 60) — per-request timeout. `RADIANT_PORTAL_URL` — portal base URL; when set, tools return a `portal_url` for every case, patient, occurrence and variant. `RADIANT_SHARED_DB` (default `radiant`) — StarRocks database holding the shared tables, used by `get_case_context` to read `staging_sequencing_experiment` for the per-task `part`.
+Radiant API (optional): `RADIANT_API_URL` — base URL of the Radiant portal API; enables the Radiant API tools. No API credential: the caller's JWT is forwarded. `RADIANT_API_TIMEOUT` (seconds, default 60) — per-request timeout. `RADIANT_PORTAL_URL` — portal base URL; when set, tools return a `portal_url` for every case, patient, occurrence and variant. `RADIANT_SHARED_DB` (default `radiant`) — StarRocks database holding the shared tables: every curated query reads them there, and `describe_schema` names it in place of `radiant.`.
 
-OAuth (required): `KEYCLOAK_REALM_URL` (bare realm URL, e.g. `http://keycloak:8080/realms/radiant`) — the server refuses to boot without it; `MCP_BASE_URL` (server **root**, not `/mcp`), `OAUTH_REQUIRED_SCOPES` (comma-separated, default `openid`), `KEYCLOAK_AUDIENCE` (optional; leave unset — see the audience gotcha above). The server needs no client id/secret.
+OAuth (required): `KEYCLOAK_REALM_URL` (bare realm URL, e.g. `http://keycloak:8080/realms/radiant`) — the server refuses to boot without it; `MCP_BASE_URL` (server **root**, not `/mcp`), `OAUTH_REQUIRED_SCOPES` (comma-separated, default `openid`), `KEYCLOAK_AUDIENCE` (optional; leave unset — see the audience gotcha above), `OAUTH_SUPPORTED_SCOPES` (comma-separated, default `openid,offline_access`; advertised in the protected-resource metadata). The server needs no client id/secret.
+
+Proxy: `FORWARDED_ALLOW_IPS` (default `*`) — the proxies whose `X-Forwarded-*` headers uvicorn trusts.
+
+All of them are fields of `settings.Settings`: add a new variable there, never as an `os.getenv` in a module.
 
 ## Other
 
