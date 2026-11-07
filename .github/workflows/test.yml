@@ -1,6 +1,7 @@
-# Unit tests. describe_schema is checked against the ETL (radiant-portal-pipeline),
-# which owns the StarRocks schema: its main branch is checked out next to this repo,
-# so a schema change in the ETL that breaks the curated catalog fails here.
+# Unit tests. describe_schema is checked against the owners of the StarRocks schema:
+# the ETL (radiant-portal-pipeline) for the tables, the portal for the clinical views.
+# Their main branches are checked out next to this repo, so a schema change that breaks
+# the curated catalog fails here.
 name: Unit tests
 
 on:
@@ -32,6 +33,17 @@ jobs:
             radiant/tasks/data/radiant_tables.py
           sparse-checkout-cone-mode: false
 
+      - name: Checkout the portal (clinical views owner)
+        uses: actions/checkout@v4
+        with:
+          repository: radiant-network/radiant-portal
+          ref: main
+          path: portal
+          sparse-checkout: |
+            backend/scripts/seed/views
+            backend/scripts/pcx_tables/access_controlled_views
+          sparse-checkout-cone-mode: false
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -44,4 +56,6 @@ jobs:
         env:
           RADIANT_ETL_DIR: ${{ github.workspace }}/etl
           RADIANT_REQUIRE_ETL: "1"
+          RADIANT_PORTAL_DIR: ${{ github.workspace }}/portal
+          RADIANT_REQUIRE_PORTAL: "1"
         run: uv run pytest

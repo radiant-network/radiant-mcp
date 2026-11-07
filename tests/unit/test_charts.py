@@ -45,10 +45,48 @@ def test_kaplan_meier_and_logrank_match_the_published_example():
     assert [g["deaths"] for g in stats.groups] == [9, 21]
 
 
+def test_logrank_matches_scipy_for_two_groups():
+    from scipy.stats import CensoredData, logrank
+
+    drug = charts.SurvivalGroup("6-MP", DRUG_T, [bool(e) for e in DRUG_E])
+    placebo = charts.SurvivalGroup("Placebo", PLACEBO_T, [True] * 21)
+    statistic, df, p = charts.logrank([drug, placebo])
+    reference = logrank(
+        x=CensoredData(uncensored=[t for t, e in zip(DRUG_T, DRUG_E) if e], right=[t for t, e in zip(DRUG_T, DRUG_E) if not e]),
+        y=CensoredData(uncensored=PLACEBO_T),
+    )
+    assert df == 1 and statistic == pytest.approx(16.79, abs=0.01)
+    assert p == pytest.approx(reference.pvalue, rel=1e-6)
+
+
+def test_logrank_with_three_groups_does_not_depend_on_the_group_order():
+    groups = [
+        charts.SurvivalGroup("A", DRUG_T[:11], [bool(e) for e in DRUG_E[:11]]),
+        charts.SurvivalGroup("B", DRUG_T[11:], [bool(e) for e in DRUG_E[11:]]),
+        charts.SurvivalGroup("C", PLACEBO_T, [True] * 21),
+    ]
+    statistic, df, p = charts.logrank(groups)
+    assert df == 2 and 0 < p < 0.001
+    for order in ([2, 0, 1], [1, 2, 0]):
+        assert charts.logrank([groups[i] for i in order])[0] == pytest.approx(statistic)
+
+
+def test_survival_draws_six_groups_and_tests_them():
+    groups = [charts.SurvivalGroup(f"G{i}", [1.0 + i, 2.0 + i, 3.0], [True, False, True]) for i in range(6)]
+    png, stats = charts.survival(groups, "t")
+    assert png.startswith(PNG) and len(stats.groups) == 6 and stats.logrank_df == 5
+
+
 def test_survival_without_deaths_draws_a_flat_curve_and_no_test():
     _, stats = charts.survival([charts.SurvivalGroup("A", [1.0, 2.0], [False, False]),
-                                charts.SurvivalGroup("B", [1.5], [True])], "t")
+                                charts.SurvivalGroup("B", [1.5], [False])], "t")
     assert stats.logrank_p is None and stats.groups[0]["median_survival_years"] is None
+
+
+def test_survival_can_skip_the_test():
+    _, stats = charts.survival([charts.SurvivalGroup("A", DRUG_T, [bool(e) for e in DRUG_E]),
+                                charts.SurvivalGroup("B", PLACEBO_T, [True] * 21)], "t", test=False)
+    assert stats.logrank_p is None
 
 
 @pytest.mark.parametrize("draw", [
@@ -128,6 +166,10 @@ def test_family_venn_needs_a_parent(fake_api, fake_sql, run, monkeypatch):
 
 # -- survival_curve ------------------------------------------------------------------
 
+def _key(i: int) -> str:
+    return f"00000000-0000-4000-8000-{i:012d}"
+
+
 def _patients(fake_api, rows):
     def search(list_body_with_criteria, **_):
         offset = list_body_with_criteria.offset or 0
@@ -135,46 +177,111 @@ def _patients(fake_api, rows):
     fake_api.on("patients", "search_patients", search)
 
 
-def test_survival_by_genotype(fake_api, fake_sql, run):
+def _searches(fake_api) -> list:
+    return [c for c in fake_api.calls if c[1] == "search_patients"]
+
+
+def test_survival_of_a_key_group_against_the_rest_of_a_cohort(fake_api, run):
+    rows = [{"patient_key": _key(i), "survival_days": 365 * (i + 1), "vital_status": "deceased" if i % 2 else "alive"}
+            for i in range(10)]
+    _patients(fake_api, rows)
+
+    data, png = _parts(run(survival_curve(
+        groups=[{"label": "ACNS0334 Regimen B", "patient_keys": [_key(i) for i in range(4)] + [_key(99)]}],
+        cohort_filters={"cns_integrated_diagnosis": ["Medulloblastoma"]}, others_label="Other protocols",
+        tenant="demo")))
+
+    assert png.startswith(PNG)
+    assert {g["group"]: g["patients"] for g in data["groups"]} == {"ACNS0334 Regimen B": 4, "Other protocols": 6}
+    assert data["definition"]["ACNS0334 Regimen B"] == {"patient_keys": 5, "not_found_or_not_in_cohort": 1}
+    assert data["cohort"]["patients"] == 10 and data["logrank_df"] == 1
+    [call] = _searches(fake_api)
+    body = call[2]["list_body_with_criteria"]
+    assert [c.to_dict() for c in body.search_criteria] == [{"field": "cns_integrated_diagnosis", "value": ["Medulloblastoma"]}]
+
+
+def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [{"symbol": "SCN1A"}])
-    rows = [{"radiant_patient_id": i, "survival_days": 365 * (i % 7 + 1), "vital_status": "deceased" if i % 2 else "alive"}
-            for i in range(1, 151)]
-    rows += [{"radiant_patient_id": None, "survival_days": 100, "vital_status": "alive"},
-             {"radiant_patient_id": 999, "survival_days": None, "vital_status": "alive"}]
+    rows = [{"patient_key": _key(i), "radiant_patient_id": i, "survival_days": 365 * (i % 7 + 1),
+             "vital_status": "deceased" if i % 2 else "alive"} for i in range(1, 151)]
+    rows += [{"patient_key": _key(500), "radiant_patient_id": None, "survival_days": 100, "vital_status": "alive"},
+             {"patient_key": _key(999), "radiant_patient_id": 999, "survival_days": None, "vital_status": "alive"}]
     _patients(fake_api, rows)
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": str(i)} for i in range(1, 21)])
 
-    data, png = _parts(run(survival_curve(gene="scn1a", tenant="demo")))
+    data, _ = _parts(run(survival_curve(groups=[{"label": "SCN1A carriers", "carriers": {"gene": "scn1a"}}],
+                                        sequenced_only=True, others_label="Other sequenced patients", tenant="demo")))
 
-    assert png.startswith(PNG)
-    patients = {g["group"]: g["patients"] for g in data["groups"]}
-    assert patients == {"SCN1A carriers": 20, "Other sequenced patients": 130}
+    assert {g["group"]: g["patients"] for g in data["groups"]} == {"SCN1A carriers": 20, "Other sequenced patients": 130}
     assert data["excluded_without_survival_data"] == {"SCN1A carriers": 0, "Other sequenced patients": 1}
-    assert data["definition"]["excluded_not_sequenced"] == 1
-    assert data["logrank_p"] is not None and "scipy.stats.logrank" in data["method"]
-    assert len([c for c in fake_api.calls if c[1] == "search_patients"]) == 2  # paged by 100
+    assert data["definition"]["SCN1A carriers"]["carrier_patients"] == 20
+    assert data["cohort"] == {"filters": "all patients", "sequenced_only": True, "patients": 151}
+    assert len(_searches(fake_api)) == 2  # the cohort, paged by 100
 
 
-def test_survival_by_clinical_groups(fake_api, run):
-    _patients(fake_api, [{"survival_days": 400, "vital_status": "deceased"}, {"survival_days": 800, "vital_status": "alive"}])
-    data, _ = _parts(run(survival_curve(group_a={"vital_status": "alive"}, group_b={"organization_code": "X"},
-                                        label_a="A", label_b="B", tenant="demo")))
-    assert [g["group"] for g in data["groups"]] == ["A", "B"]
+def test_survival_of_filter_groups_needs_no_cohort(fake_api, run):
+    _patients(fake_api, [{"patient_key": _key(1), "survival_days": 400, "vital_status": "deceased"},
+                         {"patient_key": _key(2), "survival_days": 800, "vital_status": "alive"}])
+    data, _ = _parts(run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "alive"}},
+                                                {"label": "B", "filters": {"organization_code": "X"}}], tenant="demo")))
+    assert [g["group"] for g in data["groups"]] == ["A", "B"] and data["cohort"] is None
+    assert len(_searches(fake_api)) == 2
+
+
+def test_survival_skips_the_test_when_groups_overlap(fake_api, run):
+    _patients(fake_api, [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 7)])
+    data, _ = _parts(run(survival_curve(groups=[
+        {"label": "A", "patient_keys": [_key(1), _key(2), _key(3)]},
+        {"label": "B", "patient_keys": [_key(3), _key(4)]},
+        {"label": "C", "patient_keys": [_key(5), _key(6)]},
+    ], tenant="demo")))
+    assert data["overlapping_patients"] == 1
+    assert data["logrank_p"] is None and data["logrank_skipped"] == "groups overlap"
+
+
+def test_survival_of_three_groups(fake_api, run):
+    _patients(fake_api, [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased" if i % 3 else "alive"}
+                         for i in range(1, 10)])
+    data, _ = _parts(run(survival_curve(groups=[{"label": n, "patient_keys": [_key(i) for i in r]}
+                                                for n, r in (("A", range(1, 4)), ("B", range(4, 7)), ("C", range(7, 10)))],
+                                        tenant="demo")))
+    assert data["logrank_df"] == 2 and data["overlapping_patients"] == 0
 
 
 @pytest.mark.parametrize("kwargs, message", [
-    ({}, "give `gene`"),
-    ({"gene": "SCN1A", "group_a": {"vital_status": "alive"}}, "either"),
-    ({"group_a": {"mrn": "1"}, "group_b": {"vital_status": "alive"}}, "unknown patient filter"),
+    ({"groups": []}, "give `groups`"),
+    ({"groups": [{"label": "A", "filters": {"vital_status": "alive"}}]}, "at least two groups"),
+    ({"groups": [{"label": "A", "patient_keys": [KEY], "filters": {"vital_status": "alive"}}],
+      "others_label": "B"}, "exactly one of"),
+    ({"groups": [{"label": "A", "patient_keys": ["123"]}], "others_label": "B"}, "not patient keys"),
+    ({"groups": [{"label": "A", "filters": {"mrn": "1"}}], "others_label": "B"}, "unknown patient filter"),
+    ({"groups": [{"label": "A", "filters": {"patient_key": KEY}}], "others_label": "B"}, "unknown patient filter"),
+    ({"groups": [{"label": "A", "patient_keys": [KEY]}], "others_label": "A"}, "distinct"),
+    ({"groups": [{"label": str(i), "patient_keys": [KEY]} for i in range(6)], "others_label": "rest"}, "at most 6"),
+    ({"groups": [{"label": "A", "carriers": {"data_type": "germline_snv"}}], "others_label": "B"}, "at least a gene"),
+    ({"groups": [{"label": "A", "carriers": {"gene": "TP53", "af": 1}}], "others_label": "B"}, "unknown carriers"),
+    ({"groups": [{"label": "A", "carriers": {"gene": "TP53", "cnv_types": ["LOSS"]}}], "others_label": "B"},
+     "cnv_types only applies"),
+    ({"groups": [{"label": "A", "sex": "f"}], "others_label": "B"}, "unknown field"),
+    ({"groups": [{"label": "A", "patient_keys": [KEY]}], "others_label": "B", "cohort_filters": {"mrn": "1"}},
+     "cohort_filters"),
 ])
 def test_survival_validates(fake_api, run, kwargs, message):
     assert message in run(survival_curve(tenant="demo", **kwargs))["error"]
     assert fake_api.calls == []
 
 
+def test_survival_reports_an_unknown_gene(fake_api, run):
+    fake_api.on("genes", "gene_search", [])
+    _patients(fake_api, [{"patient_key": _key(1), "radiant_patient_id": 1, "survival_days": 10, "vital_status": "alive"}])
+    result = run(survival_curve(groups=[{"label": "A", "carriers": {"gene": "NOPE1"}}], others_label="B", tenant="demo"))
+    assert "not found" in result["error"]
+
+
 def test_survival_without_clinical_data(fake_api, run):
     fake_api.on("patients", "search_patients", api_exception(404, "404 page not found"))
-    result = run(survival_curve(group_a={"vital_status": "alive"}, group_b={"vital_status": "deceased"}, tenant="x"))
+    result = run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "alive"}},
+                                        {"label": "B", "filters": {"vital_status": "deceased"}}], tenant="x"))
     assert result["clinical_data_available"] is False
 
 
