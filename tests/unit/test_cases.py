@@ -1,6 +1,6 @@
 from conftest import PORTAL
 
-from radiant_mcp.tools import cases
+from radiant_mcp.services import cases as case_service
 from radiant_mcp.tools.cases import get_case_context, search_cases
 
 
@@ -26,7 +26,7 @@ def test_search_cases_validates_before_calling(fake_api, run):
 
 
 def test_case_context_links_the_case_members_and_keys(fake_api, run, monkeypatch):
-    monkeypatch.setattr(cases, "_lookup_parts", lambda token, case_id: ({(21, 3): 154}, None))
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(21, 3): 154}, None))
     fake_api.on("cases", "case_entity", {
         "case_id": 8,
         "case_type": "germline",
@@ -49,14 +49,14 @@ def test_case_context_links_the_case_members_and_keys(fake_api, run, monkeypatch
 
 
 def test_part_lookup_binds_the_case_and_skips_tasks_without_part(fake_sql):
-    from radiant_mcp.tools import _sql
+    from radiant_mcp import sql as _sql
 
     fake_sql.on("staging_sequencing_experiment", [
         {"seq_id": 21, "task_id": 3, "part": 154}, {"seq_id": 22, "task_id": 4, "part": None},
     ])
-    assert cases._lookup_parts("jwt", 1131) == ({(21, 3): 154}, None)
+    assert case_service.lookup_parts("jwt", 1131) == ({(21, 3): 154}, None)
     ((sql, values),) = fake_sql.queries
     assert "radiant.staging_sequencing_experiment" in sql and values == {"p0": 1131}
     fake_sql.on("staging_sequencing_experiment", _sql.SqlError("Access denied"))
     fake_sql.rules.reverse()
-    assert cases._lookup_parts("jwt", 1131) == ({}, "part lookup failed: Access denied")
+    assert case_service.lookup_parts("jwt", 1131) == ({}, "part lookup failed: Access denied")

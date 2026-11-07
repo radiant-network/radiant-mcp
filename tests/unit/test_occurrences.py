@@ -120,7 +120,7 @@ def test_api_errors_become_tool_errors(fake_api, run):
 
 
 def test_no_token_no_call(fake_api, run, monkeypatch):
-    from radiant_mcp.tools import _api
+    from radiant_mcp import portal_api as _api
 
     monkeypatch.setattr(_api, "get_jwt_token", lambda: None)
     assert run(prioritize_snv(**KEY)) == _api.AUTH_REQUIRED

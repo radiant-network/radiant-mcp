@@ -10,7 +10,8 @@ import pytest
 from mysql.connector.errors import DatabaseError
 
 from radiant_mcp import starrocks
-from radiant_mcp.tools import _api, query
+from radiant_mcp import portal_api as _api
+from radiant_mcp.tools import query
 
 
 def jwt(sub: str) -> str:

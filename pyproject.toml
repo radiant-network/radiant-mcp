@@ -8,6 +8,8 @@ dependencies = [
     "fastmcp>=3,<4",
     # >= 9.1: authentication_openid_connect_client plugin (JWT login to StarRocks).
     "mysql-connector-python>=9.1",
+    # Tool argument models (survival groups); fastmcp builds the tool schemas with it.
+    "pydantic>=2",
     # Radiant portal API client (generated, not on PyPI) — pinned to a commit SHA
     # because the generated code floats with the upstream OpenAPI spec.
     "radiant-python-cli @ git+https://github.com/radiant-network/radiant-portal.git@616ace048346981e008b8db1e1ac9993e26fb088#subdirectory=cli/python",

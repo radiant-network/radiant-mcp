@@ -6,7 +6,13 @@ import pytest
 from conftest import PORTAL, bound_value
 
 from radiant_mcp.enums import ENUMS
-from radiant_mcp.tools import _rules, _sql, cases, cohort, hits
+from radiant_mcp import sql as _sql
+from radiant_mcp.domain import rules as _rules
+from radiant_mcp.domain.criteria import build_criteria
+from radiant_mcp.queries import carriers as carrier_queries
+from radiant_mcp.queries import hits as hit_queries
+from radiant_mcp.services import cases as case_service
+from radiant_mcp.tools import hits
 from radiant_mcp.tools.cohort import cohort_carriers, genotype_phenotype
 from radiant_mcp.tools.genes import gene_info, lookup_terms
 from radiant_mcp.tools.hits import second_hit
@@ -34,25 +40,25 @@ def test_rules_use_stored_values():
 
 def _all_queries():
     criteria = [
-        cohort.build_criteria("germline_snv", "SCN1A", ["HIGH"], ["Pathogenic"], 0.01, ["HET"], None),
-        cohort.build_criteria("somatic_snv", "TP53", None, None, None, None, None),
-        cohort.build_criteria("germline_cnv", "DMD", None, None, None, None, ["LOSS"]),
-        cohort.build_criteria("somatic_cnv", "CDKN2A", None, None, None, None, None),
+        build_criteria("germline_snv", "SCN1A", ["HIGH"], ["Pathogenic"], 0.01, ["HET"], None),
+        build_criteria("somatic_snv_all", "TP53", None, None, None, None, None),
+        build_criteria("germline_cnv", "DMD", None, None, None, None, ["LOSS"]),
+        build_criteria("somatic_cnv", "CDKN2A", None, None, None, None, None),
     ]
-    yield "snv_cnv", hits.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY)
-    yield "comphet", hits.comphet_query("demo_tenant", SNV_KEY)
-    yield "germline_keys", hits.germline_keys_query("radiant", "demo", 100)
-    yield "germline_plp", hits.germline_plp_query("demo_tenant", SNV_KEY)
-    yield "somatic_snv", hits.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1", "TP53"])
-    yield "somatic_cnv", hits.somatic_cnv_query("demo_tenant", CNV_KEY, ["BRCA1"])
+    yield "snv_cnv", hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY)
+    yield "comphet", hit_queries.comphet_query("demo_tenant", SNV_KEY)
+    yield "germline_keys", hit_queries.germline_keys_query("radiant", "demo", 100)
+    yield "germline_plp", hit_queries.germline_plp_query("demo_tenant", SNV_KEY)
+    yield "somatic_snv", hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1", "TP53"])
+    yield "somatic_cnv", hit_queries.somatic_cnv_query("demo_tenant", CNV_KEY, ["BRCA1"])
     for c in criteria:
-        yield f"totals {c.data_type}", cohort.totals_query("demo", c)
-        yield f"carriers {c.data_type}", cohort.carriers_query("demo", c, 10)
-        for name, query in cohort.summary_queries("demo", c).items():
+        yield f"totals {c.data_type}", carrier_queries.totals_query("demo", c)
+        yield f"carriers {c.data_type}", carrier_queries.carriers_query("demo", c, 10)
+        for name, query in carrier_queries.summary_queries("demo", c).items():
             yield f"{name} {c.data_type}", query
-        yield f"phenotypes {c.data_type}", cohort.phenotypes_query("demo", c, 10)
-        yield f"phenotyped {c.data_type}", cohort.phenotyped_patients_query("demo", c)
-        yield f"with_term {c.data_type}", cohort.carriers_with_term_query("demo", c, "HP:0001250", 10)
+        yield f"phenotypes {c.data_type}", carrier_queries.phenotypes_query("demo", c, 10)
+        yield f"phenotyped {c.data_type}", carrier_queries.phenotyped_patients_query("demo", c)
+        yield f"with_term {c.data_type}", carrier_queries.carriers_with_term_query("demo", c, "HP:0001250", 10)
 
 
 @pytest.mark.parametrize("name, query", list(_all_queries()), ids=lambda v: v if isinstance(v, str) else "")
@@ -63,8 +69,8 @@ def test_each_query_binds_exactly_its_placeholders(name, query):
 
 
 def test_carrier_query_binds_the_gene_and_the_tenant_to_their_own_slots():
-    criteria = cohort.build_criteria("germline_snv", "SCN1A", None, None, None, None, None)
-    sql, params = cohort.totals_query("demo", criteria)
+    criteria = build_criteria("germline_snv", "SCN1A", None, None, None, None, None)
+    sql, params = carrier_queries.totals_query("demo", criteria)
     assert bound_value(sql, params.values, "WHERE symbol = ") == "SCN1A"
     assert bound_value(sql, params.values, "s.tenant_code = ") == "demo"
 
@@ -83,7 +89,7 @@ def _case_api(fake_api, case_type, keys):
 
 def test_second_hit_germline(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}], "germline_cnv": [{"id": 21}]})
-    monkeypatch.setattr(cases, "_lookup_parts", lambda token, case_id: ({(10, 20): 5, (10, 21): 5}, None))
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5, (10, 21): 5}, None))
     fake_sql.on("germline__cnv__occurrence", [{
         "gene": "SCN1A", "locus_id": 1001, "clinvar_interpretation": '["Pathogenic"]', "cnv_id": 501,
         "snv_inside_cnv": 0,
@@ -110,7 +116,7 @@ def test_second_hit_germline(fake_api, fake_sql, run, monkeypatch):
 
 def test_second_hit_skips_keys_without_part(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
-    monkeypatch.setattr(cases, "_lookup_parts", lambda token, case_id: ({}, "part lookup failed: boom"))
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({}, "part lookup failed: boom"))
     result = run(second_hit(1, tenant="demo"))
     assert result["sequencings"] == []
     assert any("no `part`, skipped" in w for w in result["warnings"])
@@ -119,7 +125,7 @@ def test_second_hit_skips_keys_without_part(fake_api, fake_sql, run, monkeypatch
 
 def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}], "somatic_cnv": [{"id": 41}]})
-    monkeypatch.setattr(cases, "_lookup_parts", lambda token, case_id: ({(10, 40): 7, (10, 41): 7}, None))
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7, (10, 41): 7}, None))
     fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
     fake_sql.on("germline__snv__occurrence", [
         {"gene": "BRCA1", "locus_id": 1003, "clinvar_interpretation": "[]", "interpreted_plp": 1},
@@ -144,7 +150,7 @@ def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
 
 def test_second_hit_somatic_without_germline_sequencing(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
-    monkeypatch.setattr(cases, "_lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
     result = run(second_hit(1, tenant="demo"))
     assert "no germline sequencing" in result["note"]
 
@@ -286,7 +292,7 @@ def test_second_hit_finds_a_hemizygous_snv_inside_a_deletion(fake_api, fake_sql,
         {"id": snv if data_type == "germline_snv" else cnv} for s, _, snv, cnv in seqs
         if s == seq_id and (snv if data_type == "germline_snv" else cnv)])
     parts = {(s, t): 2 for s, _, snv, cnv in seqs for t in (snv, cnv) if t}
-    monkeypatch.setattr(cases, "_lookup_parts", lambda token, case_id: (parts, None))
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: (parts, None))
     fake_sql.on("WITH snv AS", [{
         "gene": "CLCNKB", "locus_id": 42, "hgvsg": "chr1:g.16045686G>C", "snv_start": 16045686, "zygosity": "HOM",
         "transmission_mode": "uniparental_disomy", "clinvar_interpretation": '["Pathogenic"]', "cnv_id": 7,

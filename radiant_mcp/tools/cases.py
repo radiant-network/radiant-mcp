@@ -2,17 +2,10 @@
 
 from typing import Any, Optional
 
-from ..portal_links import case_url, occurrence_url, patient_url, with_url
-from . import _api, _sql
-from ._api import RadiantApi, clamp, resolve_tenant
-
-# Non-deprecated occurrence data types accepted by
-# GET /{tenant}/cases/{case_id}/{seq_id}/tasks_with_occurrences, grouped by
-# case type. "somatic_snv" is a deprecated alias of "somatic_snv_tn" and is
-# intentionally omitted.
-_GERMLINE_DATA_TYPES = ("germline_snv", "germline_cnv")
-_SOMATIC_DATA_TYPES = ("somatic_snv_tn", "somatic_snv_to", "somatic_cnv")
-_ALL_DATA_TYPES = _GERMLINE_DATA_TYPES + _SOMATIC_DATA_TYPES
+from .. import portal_api as _api
+from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
+from ..portal_links import case_url, with_url
+from ..services.cases import case_context, search_criteria
 
 # Field aliases accepted as `search_criteria[].field` by POST /{tenant}/cases/search
 # (backend/internal/types/case.go: CasesFields entries with CanBeFiltered).
@@ -32,147 +25,13 @@ CASE_SEARCH_SORT_FIELDS = (
     "primary_condition_name", "prescriber", "ordering_organization_code",
     "diagnosis_lab_code", "created_on", "updated_on",
 )
-SEARCH_MAX_LIMIT = 100
 # Autocomplete match types that are integer ids AND directly filterable fields.
 _AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
 
-# StarRocks database holding the shared (non per-tenant) Radiant tables, in
-# particular `staging_sequencing_experiment`, which is the only place that
-# currently maps (case_id, seq_id, task_id) -> `part`. The occurrence tables
-# (germline/somatic snv/cnv, exomiser, snv__consequence_filter_partitioned)
-# are PARTITION BY (part), and snv__variant_partitioned by
-# part // _VARIANT_PART_DIVISOR — so every efficient occurrence query needs it.
-# TEMPORARY: the Radiant API will eventually return `part` with each task, at
-# which point `_lookup_parts` goes away.
-# Mirrors `_magic` in radiant-portal-pipeline/radiant/dags/import_part.py
-# (compute_part): variant_part = part // 10.
-_VARIANT_PART_DIVISOR = 10
-
-
-def criteria(filters: dict) -> list:
-    """``{field: value | [values]}`` -> ``SearchCriterion`` list (default op: in)."""
-    from radiant_python.models.search_criterion import SearchCriterion
-
-    out = []
-    for field, value in filters.items():
-        values = value if isinstance(value, (list, tuple)) else [value]
-        out.append(SearchCriterion(field=field, value=list(values)))
-    return out
-
-
-def parts_query(case_id: int) -> tuple[str, _sql.Params]:
-    p = _sql.Params()
-    return (f"SELECT seq_id, task_id, part FROM {_sql.shared_db()}.staging_sequencing_experiment"
-            f" WHERE case_id = {p(int(case_id))} AND deleted = false"), p
-
-
-def _lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], Optional[str]]:
-    """Map every (seq_id, task_id) of ``case_id`` to its StarRocks ``part``.
-
-    Reads the shared ``staging_sequencing_experiment`` table under the
-    caller's identity, like every other StarRocks access. Returns
-    ``(mapping, warning)``; on any failure the mapping is empty and the
-    warning explains why, so the case context is still returned.
-    """
-    try:
-        rows = _sql.run(token, *parts_query(case_id))
-    except Exception as exc:  # noqa: BLE001
-        return {}, f"part lookup failed: {exc}"
-    return {(int(r["seq_id"]), int(r["task_id"])): int(r["part"]) for r in rows if r["part"] is not None}, None
 
 
 def _list_tenants(api: RadiantApi, _token: str) -> dict:
     return {"tenants": _api.list_tenants(api)}
-
-
-def _get_case_context(api: RadiantApi, token: str, case_id: int, tenant: Optional[str]) -> dict:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
-
-    case = api.call("cases", "case_entity", tenant=tenant_code, case_id=case_id) or {}
-    with_url(case, case_url(tenant_code, case_id))
-    for member in case.get("members", []):
-        with_url(member, patient_url(tenant_code, member.get("patient_key")))
-
-    case_type = (case.get("case_type") or "").lower()
-    if case_type == "germline":
-        data_types = _GERMLINE_DATA_TYPES
-    elif case_type == "somatic":
-        data_types = _SOMATIC_DATA_TYPES
-    else:
-        data_types = _ALL_DATA_TYPES
-
-    # For every sequencing experiment that has variants, find the task(s)
-    # that produced occurrences of each data type. (case_id, seq_id,
-    # task_id, data_type) is the key needed by every occurrence endpoint
-    # and by the StarRocks occurrence tables.
-    occurrence_keys: list[dict] = []
-    warnings: list[str] = []
-    for seq in case.get("sequencing_experiments", []):
-        seq_tasks: list[dict] = []
-        if seq.get("has_variants"):
-            for data_type in data_types:
-                try:
-                    tasks = api.call(
-                        "cases", "case_tasks_with_occurrences",
-                        tenant=tenant_code, case_id=case_id, seq_id=seq["seq_id"], data_type=data_type,
-                    )
-                except Exception as exc:  # noqa: BLE001 — surface, don't abort
-                    warnings.append(
-                        f"seq_id={seq['seq_id']} data_type={data_type}: {_api.api_error(exc)['error']}"
-                    )
-                    continue
-                for task in tasks or []:
-                    entry = {
-                        "case_id": case_id,
-                        "seq_id": seq["seq_id"],
-                        "task_id": task.get("id"),
-                        "data_type": data_type,
-                        "task_type_code": task.get("task_type_code"),
-                        "task_type_name": task.get("task_type_name"),
-                        "pipeline_name": task.get("pipeline_name"),
-                        "pipeline_version": task.get("pipeline_version"),
-                        "genome_build": task.get("genome_build"),
-                        "created_on": task.get("created_on"),
-                    }
-                    entry = {k: v for k, v in entry.items() if v is not None}
-                    with_url(entry, occurrence_url(
-                        tenant_code, case_id, seq["seq_id"], data_type, task_id=entry.get("task_id"),
-                    ))
-                    seq_tasks.append(entry)
-                    occurrence_keys.append(entry)
-        seq["occurrence_tasks"] = seq_tasks
-
-    # Attach the StarRocks partition of every task. `entry` dicts are shared
-    # between `occurrence_keys` and `seq["occurrence_tasks"]`, so mutating
-    # them in place updates both views.
-    if occurrence_keys:
-        parts, part_warning = _lookup_parts(token, case_id)
-        if part_warning:
-            warnings.append(part_warning)
-        for entry in occurrence_keys:
-            part = parts.get((entry["seq_id"], entry.get("task_id")))
-            if part is None:
-                if not part_warning:
-                    warnings.append(
-                        f"seq_id={entry['seq_id']} task_id={entry.get('task_id')}: "
-                        "no `part` found in staging_sequencing_experiment"
-                    )
-                continue
-            entry["part"] = part
-            entry["variant_part"] = part // _VARIANT_PART_DIVISOR
-
-    result = {
-        "tenant": tenant_code,
-        "case": case,
-        # Flat list of every (case_id, seq_id, task_id, data_type) tuple —
-        # the handle for follow-up variant queries.
-        "occurrence_keys": occurrence_keys,
-    }
-    if warnings:
-        result["warnings"] = warnings
-    return result
 
 
 def _search_cases(
@@ -214,7 +73,7 @@ def _search_cases(
 
     def _search(extra: dict) -> dict:
         body = ListBodyWithCriteria(
-            search_criteria=criteria({**filters, **extra}),
+            search_criteria=search_criteria({**filters, **extra}),
             limit=limit,
             offset=offset,
             sort=[SortBody(field=sort_by, order=sort_order)],
@@ -331,7 +190,7 @@ async def get_case_context(case_id: int, tenant: Optional[str] = None) -> dict:
             single tenant it is auto-selected; if the user belongs to several
             the response lists them and asks for an explicit value.
     """
-    return await _api.run(_get_case_context, case_id, tenant)
+    return await _api.run(case_context, case_id, tenant)
 
 
 async def search_cases(

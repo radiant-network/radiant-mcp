@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from radiant_mcp.tools import _sql
+from radiant_mcp import sql as _sql
 
 
 @pytest.mark.parametrize("value", ["SCN1A", "C9orf72", "HLA-A", "IGH@", "ENSG00000144285"])

@@ -10,11 +10,10 @@ from fastmcp import Client, FastMCP
 from fastmcp.utilities.types import Image
 
 from radiant_mcp import charts
-from radiant_mcp.tools import cases
-from radiant_mcp.tools import charts as chart_tools
-from radiant_mcp.tools.charts import (
-    bar_chart, consequence_class, family_venn, lollipop, oncoprint, patient_timeline, survival_curve,
-)
+from radiant_mcp.domain.consequences import consequence_class
+from radiant_mcp.services import cases as case_service
+from radiant_mcp.tools.charts import bar_chart, family_venn, lollipop, oncoprint, patient_timeline, survival_curve
+from radiant_mcp.tools.charts.timeline import timeline_items
 
 PNG = b"\x89PNG\r\n\x1a\n"
 KEY = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -124,7 +123,7 @@ def test_consequence_classes(consequences, expected):
 
 def _trio_api(fake_api, monkeypatch, roles=("proband", "father", "mother")):
     seqs = {"proband": 10, "father": 13, "mother": 14}
-    monkeypatch.setattr(cases, "_lookup_parts", lambda token, case_id: ({(seqs[r], 20): 5 for r in roles}, None))
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(seqs[r], 20): 5 for r in roles}, None))
     fake_api.on("cases", "case_entity", {
         "case_id": 1, "case_type": "germline", "members": [],
         "sequencing_experiments": [{"seq_id": seqs[r], "has_variants": True, "relationship_to_proband": r} for r in roles],
@@ -338,7 +337,7 @@ def test_timeline_items_from_the_patient_page():
         },
         "imaging": {"sessions": [{"day": 990}, {"day": 1500}]},
     }
-    items = chart_tools.timeline_items(context)
+    items = timeline_items(context)
     tracks = [i.track for i in items]
     assert tracks.count("Events") == 2 and tracks.count("Imaging") == 2
     chemo = next(i for i in items if i.track == "Chemotherapy")

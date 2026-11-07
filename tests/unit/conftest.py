@@ -8,7 +8,7 @@ from typing import Any, Callable
 import pytest
 from radiant_python.exceptions import ApiException
 
-from radiant_mcp.tools import _api
+from radiant_mcp import portal_api as _api
 from schema_sources import etl, etl_dictionaries, etl_tables, portal, portal_tenant_objects, portal_views  # noqa: F401
 
 PORTAL = "https://portal.example"
@@ -115,7 +115,7 @@ class FakeSql:
 
 @pytest.fixture
 def fake_sql(monkeypatch) -> FakeSql:
-    from radiant_mcp.tools import _sql
+    from radiant_mcp import sql as _sql
 
     fake = FakeSql()
     monkeypatch.setattr(_sql, "run", fake)

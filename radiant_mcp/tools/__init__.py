@@ -6,7 +6,7 @@ portal API are registered only when ``RADIANT_API_URL`` is set, so the server
 still boots as a StarRocks SQL server without it.
 """
 
-from ._api import api_enabled
+from ..portal_api import api_enabled
 from .cases import get_case_context, list_tenants, search_cases
 from .charts import bar_chart, family_venn, lollipop, oncoprint, patient_timeline, survival_curve
 from .cohort import cohort_carriers, genotype_phenotype

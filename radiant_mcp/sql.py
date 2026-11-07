@@ -17,7 +17,7 @@ import os
 import re
 from typing import Any, Iterable, Optional
 
-from .. import starrocks
+from . import starrocks
 
 _SHARED_DB_ENV = "RADIANT_SHARED_DB"
 _SHARED_DB_DEFAULT = "radiant"

@@ -7,23 +7,21 @@ the PHI rule per user, so a tool never sees more than the portal page would
 show the same user.
 """
 
-import json
-import re
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
-from ..portal_links import case_url, occurrence_url, patient_url, variant_url, with_url
-from . import _api
-from ._api import RadiantApi, clamp, is_status, resolve_tenant
-from .cases import SEARCH_MAX_LIMIT, criteria
-
-# Field aliases accepted by POST /{tenant}/patients/search
-# (backend/internal/types/pcx_patient_query.go: PcxPatientListFields).
-PATIENT_SEARCH_FILTER_FIELDS = (
-    "age_at_initial_dx_group", "chemotherapy_agents", "cns_integrated_diagnosis",
-    "diagnosis_type_cohort", "got_radiation_ever", "organization_code", "patient_id",
-    "patient_name", "vital_status",
+from .. import portal_api as _api
+from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
+from ..portal_links import patient_url, with_url
+from ..services.cases import search_criteria
+from ..services.patients import (
+    PATIENT_KEY,
+    PATIENT_SEARCH_FILTER_FIELDS,
+    PATIENT_SECTIONS,
+    no_clinical_data,
+    patient_context,
+    unknown_filter_fields,
 )
+
 PATIENT_SEARCH_SORT_FIELDS = (
     "birth_year", "cns_integrated_diagnosis", "diagnosis_type_cohort", "gender",
     "organization_code", "patient_id", "patient_key", "survival_days", "vital_status",
@@ -32,53 +30,7 @@ PATIENT_SEARCH_SORT_FIELDS = (
 # also filter fields.
 _AUTOCOMPLETE_FIELDS = ("patient_id", "patient_name")
 
-# Section name -> (patients API operation, patient page tab).
-PATIENT_SECTIONS = {
-    "treatments": ("patient_treatments", "treatments"),
-    "laboratory": ("patient_laboratory", "laboratory"),
-    "imaging": ("patient_imaging", "imaging"),
-    "genomics": ("patient_genomics", "genomics"),
-    "trial_eligibilities": ("patient_trial_eligibilities", "clinical-trials"),
-    "external_records": ("patient_external_records", None),
-}
 DEFAULT_SECTIONS = ("treatments", "laboratory", "imaging", "genomics", "trial_eligibilities")
-# The backend gives each user a small StarRocks pool; stay under it.
-_SECTION_WORKERS = 3
-
-_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-
-
-def _route_missing(exc: Exception) -> bool:
-    """A 404 without the API's JSON error body: the patient routes are not
-    registered, i.e. the portal runs with its patient view disabled."""
-    if not is_status(exc, 404):
-        return False
-    try:
-        body = json.loads(exc.body or "")
-    except (TypeError, ValueError):
-        return True
-    return not (isinstance(body, dict) and "message" in body)
-
-
-def _no_clinical_data(tenant: str, exc: Exception) -> Optional[dict]:
-    """The result for a tenant whose clinical data cannot be read, or None
-    when ``exc`` is an ordinary error."""
-    if _route_missing(exc):
-        reason = "the portal's patient view is not enabled"
-    elif is_status(exc, 500, 502, 503, 504):
-        reason = ("the tenant's patient views could not be read (they may not exist for this tenant, "
-                  "or the portal had a transient error: retry once before concluding)")
-    else:
-        return None
-    result = {
-        "tenant": tenant,
-        "clinical_data_available": False,
-        "message": f"No clinical data for tenant {tenant}: {reason}.",
-    }
-    correlation_id = (getattr(exc, "headers", None) or {}).get("X-Correlation-ID")
-    if correlation_id:
-        result["correlation_id"] = correlation_id
-    return result
 
 
 def _search_patients(
@@ -97,7 +49,7 @@ def _search_patients(
     from radiant_python.models.sort_body import SortBody
 
     filters = dict(filters or {})
-    bad = sorted(set(filters) - set(PATIENT_SEARCH_FILTER_FIELDS))
+    bad = unknown_filter_fields(filters)
     if bad:
         return {
             "error": f"Unknown filter field(s): {', '.join(bad)}",
@@ -120,7 +72,7 @@ def _search_patients(
 
     def _search(extra: dict, page_offset: int) -> dict:
         body = ListBodyWithCriteria(
-            search_criteria=criteria({**filters, **extra}),
+            search_criteria=search_criteria({**filters, **extra}),
             limit=limit,
             offset=page_offset,
             sort=[SortBody(field=sort_by, order=sort_order)] if sort_by else None,
@@ -156,7 +108,7 @@ def _search_patients(
             patients = resp.get("list", [])
             result = {"tenant": tenant_code, "count": resp.get("count", 0), "offset": offset}
     except Exception as exc:  # noqa: BLE001
-        no_data = _no_clinical_data(tenant_code, exc)
+        no_data = no_clinical_data(tenant_code, exc)
         if no_data is None:
             raise
         return no_data
@@ -168,75 +120,6 @@ def _search_patients(
             result["filter_values"] = api.call("patients", "patients_filters", tenant=tenant_code)
         except Exception as exc:  # noqa: BLE001 — the search itself succeeded
             result["warnings"] = [f"filter_values: {_api.api_error(exc)['error']}"]
-    return result
-
-
-def _link_genomics(tenant: str, genomics: dict) -> None:
-    for case in genomics.get("cases", []):
-        with_url(case, case_url(tenant, case.get("case_id")))
-    for interpretation in genomics.get("interpretations", []):
-        locus_id = interpretation.get("locus_id")
-        if interpretation.get("origin") == "germline":
-            url = occurrence_url(
-                tenant, interpretation.get("case_id"), interpretation.get("sequencing_id"),
-                "germline_snv", variant_id=locus_id,
-            )
-        else:
-            # The somatic interpretation does not say whether it came from the
-            # tumor-normal or the tumor-only table: open the case variants tab.
-            url = case_url(tenant, interpretation.get("case_id"), tab="variants")
-        with_url(interpretation, url)
-        with_url(interpretation, variant_url(tenant, locus_id), key="variant_portal_url")
-
-
-def _get_patient_context(
-    api: RadiantApi, _token: str, patient_key: str, tenant: Optional[str], sections: list[str],
-) -> dict:
-    tenant_code, err = resolve_tenant(api, tenant)
-    if err:
-        return err
-
-    try:
-        patient = api.call("patients", "patient_entity", tenant=tenant_code, patient_key=patient_key) or {}
-    except Exception as exc:  # noqa: BLE001
-        no_data = _no_clinical_data(tenant_code, exc)
-        if no_data is not None:
-            return no_data
-        if is_status(exc, 404):
-            return {
-                "error": f"Patient {patient_key} not found in tenant {tenant_code}, "
-                         "or not visible to the current user.",
-                "status": 404,
-            }
-        raise
-    with_url(patient, patient_url(tenant_code, patient_key))
-
-    def _fetch(section: str) -> tuple[str, Any, Optional[str]]:
-        operation, _tab = PATIENT_SECTIONS[section]
-        try:
-            return section, api.call("patients", operation, tenant=tenant_code, patient_key=patient_key), None
-        except Exception as exc:  # noqa: BLE001 — one section never fails the whole context
-            return section, None, f"{section}: {_api.api_error(exc)['error']}"
-
-    result: dict[str, Any] = {"tenant": tenant_code, "patient": patient}
-    warnings: list[str] = []
-    with ThreadPoolExecutor(max_workers=_SECTION_WORKERS) as pool:
-        for section, data, warning in pool.map(_fetch, sections):
-            if warning:
-                warnings.append(warning)
-                continue
-            data = data if data is not None else {}
-            if section == "genomics" and isinstance(data, dict):
-                _link_genomics(tenant_code, data)
-            tab = PATIENT_SECTIONS[section][1]
-            if tab and isinstance(data, dict):
-                with_url(data, patient_url(tenant_code, patient_key, tab=tab))
-            result[section] = data
-
-    case_ids = [c.get("case_id") for c in (result.get("genomics") or {}).get("cases", [])]
-    result["case_ids"] = [c for c in case_ids if c is not None]
-    if warnings:
-        result["warnings"] = warnings
     return result
 
 
@@ -327,7 +210,7 @@ async def get_patient_context(
             genomics, trial_eligibilities, external_records. Default: all but
             external_records.
     """
-    if not _UUID.match(patient_key or ""):
+    if not PATIENT_KEY.match(patient_key or ""):
         return {
             "error": f"`{patient_key}` is not a patient key (a UUID). "
                      "Find the key with search_patients(query=<identifier>) first.",
@@ -339,4 +222,4 @@ async def get_patient_context(
             "error": f"Unknown section(s): {', '.join(unknown)}",
             "allowed_sections": list(PATIENT_SECTIONS),
         }
-    return await _api.run(_get_patient_context, patient_key, tenant, chosen)
+    return await _api.run(patient_context, patient_key, tenant, chosen)

@@ -15,8 +15,9 @@ from sqlglot import exp
 from sqlglot.optimizer.qualify import qualify
 
 from radiant_mcp.schema_catalog import SHARED_DB, TENANT_DB
-from radiant_mcp.tools import cases, charts, cohort, genes, hits
-from radiant_mcp.tools.cohort import DATA_TYPES, Criteria
+from radiant_mcp.domain.criteria import Criteria
+from radiant_mcp.domain.data_types import COHORT_DATA_TYPES
+from radiant_mcp.queries import carriers, charts, genes, hits, sequencing
 
 TENANT = "t1"
 TENANT_SQL_DB = f"{TENANT}_tenant"
@@ -27,9 +28,9 @@ GENES = ["TP53", "BRCA1"]
 
 def _criteria() -> list[Criteria]:
     out = []
-    for data_type in DATA_TYPES:
+    for data_type in COHORT_DATA_TYPES:
         out.append(Criteria(data_type=data_type, gene="TP53"))
-        if data_type.endswith("_snv"):
+        if "_snv" in data_type:
             out.append(Criteria(data_type=data_type, gene="TP53", vep_impact=("HIGH",),
                                 clinvar=("Pathogenic",), max_gnomad_af=0.01, zygosity=("HET",)))
         else:
@@ -38,7 +39,7 @@ def _criteria() -> list[Criteria]:
 
 
 def _queries():
-    yield "cases.parts", cases.parts_query(1131)
+    yield "sequencing.parts", sequencing.parts_query(1131)
     yield "hits.snv_cnv", hits.snv_cnv_query(TENANT_SQL_DB, SNV_KEY, CNV_KEY)
     yield "hits.family_deletions", hits.family_deletions_query(TENANT_SQL_DB, CNV_KEY, GENES)
     yield "hits.comphet", hits.comphet_query(TENANT_SQL_DB, SNV_KEY)
@@ -46,24 +47,24 @@ def _queries():
     yield "hits.germline_plp", hits.germline_plp_query(TENANT_SQL_DB, SNV_KEY)
     yield "hits.somatic_snv", hits.somatic_snv_query(TENANT_SQL_DB, SNV_KEY, GENES)
     yield "hits.somatic_cnv", hits.somatic_cnv_query(TENANT_SQL_DB, CNV_KEY, GENES)
-    for name, query in genes._gene_queries("TP53", "ENSG00000141510", TENANT).items():
+    for name, query in genes.gene_queries("TP53", "ENSG00000141510", TENANT).items():
         yield f"genes.{name}", query
     for c in _criteria():
         label = f"{c.data_type}{'+filters' if c.vep_impact or c.cnv_types else ''}"
-        yield f"cohort.totals[{label}]", cohort.totals_query(TENANT, c)
-        yield f"cohort.carriers[{label}]", cohort.carriers_query(TENANT, c, 50)
-        for name, query in cohort.summary_queries(TENANT, c).items():
-            yield f"cohort.{name}[{label}]", query
-        yield f"cohort.phenotypes[{label}]", cohort.phenotypes_query(TENANT, c, 50)
-        yield f"cohort.phenotyped_patients[{label}]", cohort.phenotyped_patients_query(TENANT, c)
-        yield f"cohort.carriers_with_term[{label}]", cohort.carriers_with_term_query(TENANT, c, "HP:0001250", 50)
-        yield f"charts.carrier_patients[{label}]", charts.carrier_patients_query(TENANT, c)
+        yield f"carriers.totals[{label}]", carriers.totals_query(TENANT, c)
+        yield f"carriers.carriers[{label}]", carriers.carriers_query(TENANT, c, 50)
+        for name, query in carriers.summary_queries(TENANT, c).items():
+            yield f"carriers.{name}[{label}]", query
+        yield f"carriers.phenotypes[{label}]", carriers.phenotypes_query(TENANT, c, 50)
+        yield f"carriers.phenotyped_patients[{label}]", carriers.phenotyped_patients_query(TENANT, c)
+        yield f"carriers.carriers_with_term[{label}]", carriers.carriers_with_term_query(TENANT, c, "HP:0001250", 50)
+        yield f"carriers.carrier_patients[{label}]", carriers.carrier_patients_query(TENANT, c)
         if c.is_snv:
-            yield f"charts.lollipop[{label}]", charts.lollipop_query(TENANT, c)
+            yield f"carriers.lollipop[{label}]", carriers.lollipop_query(TENANT, c)
     members = [("proband", SNV_KEY), ("father", {**SNV_KEY, "seq_id": 11}), ("mother", {**SNV_KEY, "seq_id": 12})]
     yield "charts.venn", charts.venn_query(TENANT_SQL_DB, members, False, [])
     yield "charts.venn[rare+impact]", charts.venn_query(TENANT_SQL_DB, members, True, ["HIGH"])
-    for data_type in DATA_TYPES:
+    for data_type in COHORT_DATA_TYPES:
         yield f"charts.oncoprint[{data_type}]", charts.oncoprint_query(TENANT, data_type, GENES, 0.01, ["HIGH"])
     yield "charts.oncoprint[no filter]", charts.oncoprint_query(TENANT, "germline_snv", GENES, None, [])
 
@@ -102,11 +103,11 @@ def test_query_uses_only_existing_tables_and_columns(schema, name, query):
 
 
 def test_every_builder_is_covered():
-    """A new ``*_query`` builder in a curated tool module must be added to ``_queries``."""
+    """A new ``*_query`` builder in ``radiant_mcp.queries`` must be added to ``_queries``."""
     import inspect
 
     covered = {name.split("[")[0] for name, _ in QUERIES}
-    for module in (cases, hits, cohort, charts):
+    for module in (sequencing, hits, carriers, charts, genes):
         for fn_name, fn in inspect.getmembers(module, inspect.isfunction):
             if fn.__module__ == module.__name__ and fn_name.endswith("_query") and not fn_name.startswith("_"):
                 short = f"{module.__name__.rsplit('.', 1)[1]}.{fn_name.removesuffix('_query')}"
