@@ -141,8 +141,10 @@ def api_error(exc: Exception) -> dict:
             body = exc.body.decode() if isinstance(exc.body, bytes) else str(exc.body)
             err["body"] = body[:2000]
         return err
+    # The message of an unexpected error (a connection error, say) can name internal
+    # hosts and URLs: log it, and give the agent the error type only.
     logger.exception("Radiant API tool failed")
-    return {"error": f"{type(exc).__name__}: {exc}"}
+    return {"error": f"Unexpected {type(exc).__name__} in the tool; the details are in the server logs."}
 
 
 def is_status(exc: Exception, *statuses: int) -> bool:

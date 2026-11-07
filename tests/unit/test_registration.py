@@ -33,3 +33,10 @@ def test_without_the_api_only_the_schema_chart_and_sql_tools_are_added(monkeypat
     monkeypatch.delenv("RADIANT_API_URL", raising=False)
     mcp = FastMCP("test")
     assert set(register_tools(mcp)) == ALWAYS
+
+
+def test_unexpected_errors_do_not_leak_their_message():
+    from radiant_mcp.portal_api import api_error
+
+    error = api_error(ConnectionError("HTTPConnectionPool(host='radiant-api.internal', port=8090): refused"))
+    assert error == {"error": "Unexpected ConnectionError in the tool; the details are in the server logs."}

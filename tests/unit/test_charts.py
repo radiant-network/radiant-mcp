@@ -407,3 +407,34 @@ def test_a_chart_tool_answers_with_text_and_png_content():
     result = asyncio.run(call())
     assert [part.type for part in result.content] == ["text", "image"]
     assert result.content[1].mime_type == "image/png"
+
+
+def test_family_venn_says_what_the_proband_only_region_holds(fake_api, fake_sql, run, monkeypatch):
+    _trio_api(fake_api, monkeypatch)
+    fake_sql.on("germline__snv__occurrence", [{"m0": 1, "m1": 0, "m2": 0, "n": 3}])
+    data, _ = _parts(run(family_venn(1, tenant="demo")))
+    assert data["proband_only"].startswith("de novo candidates (")
+    # The father's task has no part: the duo says so instead of silently dropping him.
+    _trio_api(fake_api, monkeypatch)
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5, (14, 20): 5}, None))
+    data, _ = _parts(run(family_venn(1, tenant="demo")))
+    assert data["members"] == ["Proband", "Mother"] and "not sequenced" in data["proband_only"]
+    assert any(w.startswith("father (seq_id=13)") for w in data["warnings"])
+
+
+def test_bar_chart_rejects_duplicate_categories(run):
+    assert "distinct" in run(bar_chart("t", ["a", "a"], [1, 2]))["error"]
+    assert "distinct" in run(bar_chart("t", ["x" * 60 + "1", "x" * 60 + "2"], [1, 2]))["error"]
+
+
+def test_lollipop_stacks_variants_of_one_residue():
+    points = [charts.Lollipop(175, "p.Arg175His", 3, "missense"), charts.Lollipop(175, "p.Arg175Cys", 1, "missense"),
+              charts.Lollipop(248, "p.Arg248Ter", 2, "truncating")]
+    assert charts.lollipop(points, "TP53", "T1").startswith(PNG)
+
+
+def test_clinical_topic_does_not_point_to_the_case_context():
+    from radiant_mcp.schema_catalog import TOPICS
+
+    rules = " ".join(TOPICS["clinical"].rules)
+    assert "search_patients" in rules and "get_case_context" not in rules
