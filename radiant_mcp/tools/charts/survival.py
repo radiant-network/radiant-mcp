@@ -13,7 +13,7 @@ from ...domain.criteria import Criteria, build_criteria
 from ...domain.data_types import CohortDataType
 from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.carriers import carrier_patients_query
-from ...services.cases import search_criteria
+from ...services.cases import merge_criteria, search_criteria
 from ...services.genes import resolve_gene
 from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, no_clinical_data, unknown_filter_fields
 from ._common import DAYS_PER_YEAR
@@ -70,13 +70,18 @@ class GroupSpec(BaseModel):
     @model_validator(mode="after")
     def _one_source(self) -> "GroupSpec":
         sources = [name for name in _GROUP_SOURCES if getattr(self, name) not in (None, [], {})]
+        empty = [name for name in _GROUP_SOURCES if getattr(self, name) in ([], {})]
+        if not sources and empty:
+            raise ValueError(f"the group is empty: {empty[0]} has no value")
         if len(sources) != 1:
             raise ValueError(f"give exactly one of {', '.join(_GROUP_SOURCES)}")
         if self.patient_keys:
-            bad = [k for k in self.patient_keys if not PATIENT_KEY.match(k)]
+            # Keys are stored lower-case; a copied key may carry spaces or a newline.
+            normalized = [k.strip().lower() for k in self.patient_keys]
+            bad = [k for k, n in zip(self.patient_keys, normalized, strict=True) if not PATIENT_KEY.fullmatch(n)]
             if bad:
                 raise ValueError(f"not patient keys (UUIDs from search_patients): {bad[:3]}")
-            keys = list(dict.fromkeys(self.patient_keys))
+            keys = list(dict.fromkeys(normalized))
             if len(keys) > MAX_SURVIVAL_PATIENTS:
                 raise ValueError(f"at most {MAX_SURVIVAL_PATIENTS} patient keys")
             object.__setattr__(self, "patient_keys", keys)
@@ -140,16 +145,35 @@ def parse_groups(groups: Any, others_label: Optional[str]) -> list[GroupSpec]:
     return specs
 
 
-class _Capped:
-    """Records whether a patient list read hit MAX_SURVIVAL_PATIENTS."""
+class _NoClinicalData(Exception):
+    """The patient list cannot be read for this tenant; ``result`` says why."""
 
-    def __init__(self) -> None:
-        self.hit = False
+    def __init__(self, result: dict) -> None:
+        super().__init__(result.get("message"))
+        self.result = result
 
-    def patients(self, api: RadiantApi, tenant: str, filters: dict) -> list[dict]:
-        patients, total = _all_patients(api, tenant, filters)
-        self.hit = self.hit or total > MAX_SURVIVAL_PATIENTS
-        return patients
+
+class _PatientReader:
+    """Reads patient lists, and records what they left out."""
+
+    def __init__(self, api: RadiantApi, tenant: str) -> None:
+        self.api, self.tenant = api, tenant
+        self.capped = False
+        self.without_key = 0
+
+    def by_key(self, filters: dict) -> dict[str, dict]:
+        """The patients matching ``filters`` (capped), by patient key."""
+        try:
+            patients, total = _all_patients(self.api, self.tenant, filters)
+        except Exception as exc:  # noqa: BLE001
+            no_data = no_clinical_data(self.tenant, exc)
+            if no_data is None:
+                raise
+            raise _NoClinicalData(no_data) from exc
+        self.capped = self.capped or total > MAX_SURVIVAL_PATIENTS
+        keyed = {p["patient_key"]: p for p in patients if p.get("patient_key")}
+        self.without_key += len(patients) - len(keyed)
+        return keyed
 
 
 def _all_patients(api: RadiantApi, tenant: str, filters: dict) -> tuple[list[dict], int]:
@@ -169,10 +193,6 @@ def _all_patients(api: RadiantApi, tenant: str, filters: dict) -> tuple[list[dic
     return patients[:MAX_SURVIVAL_PATIENTS], total or 0
 
 
-def _by_key(patients: list[dict]) -> dict[str, dict]:
-    return {p["patient_key"]: p for p in patients if p.get("patient_key")}
-
-
 def _survival_group(name: str, patients: list[dict]) -> tuple[charts.SurvivalGroup, int]:
     times, events, missing = [], [], 0
     for patient in patients:
@@ -185,32 +205,51 @@ def _survival_group(name: str, patients: list[dict]) -> tuple[charts.SurvivalGro
     return charts.SurvivalGroup(name, times, events), missing
 
 
-def _resolve_group(api: RadiantApi, token: str, tenant: str, spec: GroupSpec, cohort: Optional[dict[str, dict]],
-                   capped: _Capped) -> tuple[dict[str, dict], dict]:
+def _sequenced(patient: dict) -> bool:
+    """The patient has at least one Radiant case: only then is the genotype known."""
+    return (patient.get("case_count") or 0) > 0
+
+
+def _resolve_group(token: str, tenant: str, spec: GroupSpec, cohort: Optional[dict[str, dict]],
+                   cohort_filters: dict, reader: _PatientReader) -> tuple[dict[str, dict], dict]:
     """The group's patients by key, inside the cohort when there is one, and how they were found."""
     if spec.patient_keys:
         # The patient list cannot be filtered on patient_key: match the keys against the cohort.
-        assert cohort is not None
+        if cohort is None:
+            raise RuntimeError("patient_keys groups need the cohort")
         found = {k: cohort[k] for k in spec.patient_keys if k in cohort}
         return found, {"patient_keys": len(spec.patient_keys),
                        "not_found_or_not_in_cohort": len(spec.patient_keys) - len(found)}
     if spec.filters is not None:
-        matched = _by_key(capped.patients(api, tenant, spec.filters))
+        # One search with the cohort and group criteria together: the API ANDs them.
+        merged = merge_criteria(cohort_filters, spec.filters)
+        matched = reader.by_key(merged) if merged is not None else {}
         if cohort is None:
             return matched, {"filters": spec.filters}
         inside = {k: p for k, p in matched.items() if k in cohort}
         return inside, {"filters": spec.filters, "not_in_cohort": len(matched) - len(inside)}
-    assert spec.criteria is not None and cohort is not None
-    gene = resolve_gene(api, tenant, spec.criteria.gene)
-    if gene is None:
-        raise _sql.InvalidInput(f"group {spec.label!r}: gene {spec.criteria.gene!r} not found")
-
-    carriers = replace(spec.criteria, gene=_sql.symbol(gene["symbol"]))
-    ids = {str(r["patient_id"]) for r in _sql.run(token, *carrier_patients_query(tenant, carriers))}
+    if spec.criteria is None or cohort is None:
+        raise RuntimeError("carriers groups need resolved criteria and the cohort")
+    ids = {str(r["patient_id"]) for r in _sql.run(token, *carrier_patients_query(tenant, spec.criteria))}
     found = {k: p for k, p in cohort.items()
              if p.get("radiant_patient_id") is not None and str(p["radiant_patient_id"]) in ids}
-    return found, {"carriers": carriers.describe(), "carrier_patients": len(ids),
+    return found, {"carriers": spec.criteria.describe(), "carrier_patients": len(ids),
                    "carriers_not_in_cohort": len(ids) - len(found)}
+
+
+def _resolve_genes(api: RadiantApi, tenant: str, specs: list[GroupSpec]) -> list[GroupSpec]:
+    """Carrier groups with their gene resolved, before any patient list is read."""
+    out = []
+    for spec in specs:
+        if spec.criteria is not None:
+            gene = resolve_gene(api, tenant, spec.criteria.gene)
+            if gene is None:
+                raise _sql.InvalidInput(f"group {spec.label!r}: gene {spec.criteria.gene!r} not found")
+            resolved = spec.model_copy()
+            resolved._criteria = replace(spec.criteria, gene=_sql.symbol(gene["symbol"]))
+            spec = resolved
+        out.append(spec)
+    return out
 
 
 def _survival_curve(api: RadiantApi, token: str, tenant: Optional[str], specs: list[GroupSpec],
@@ -219,37 +258,44 @@ def _survival_curve(api: RadiantApi, token: str, tenant: Optional[str], specs: l
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return err
-    capped = _Capped()
+    reader = _PatientReader(api, tenant_code)
     cohort: Optional[dict[str, dict]] = None
+    unsequenced = 0
     try:
+        specs = _resolve_genes(api, tenant_code, specs)
         if cohort_filters or sequenced_only or others_label or any(s.criteria or s.patient_keys for s in specs):
-            patients = capped.patients(api, tenant_code, cohort_filters or {})
+            cohort = reader.by_key(cohort_filters or {})
             if sequenced_only:
-                patients = [p for p in patients if p.get("radiant_patient_id") is not None]
-            cohort = _by_key(patients)
+                before = len(cohort)
+                cohort = {k: p for k, p in cohort.items() if _sequenced(p)}
+                unsequenced = before - len(cohort)
         members: list[tuple[str, dict[str, dict]]] = []
         definition: dict[str, Any] = {}
         for spec in specs:
-            found, how = _resolve_group(api, token, tenant_code, spec, cohort, capped)
+            found, how = _resolve_group(token, tenant_code, spec, cohort, cohort_filters or {}, reader)
             members.append((spec.label, found))
             definition[spec.label] = how
     except _sql.InvalidInput as exc:
         return {"tenant": tenant_code, "error": str(exc)}
-    except Exception as exc:  # noqa: BLE001
-        no_data = no_clinical_data(tenant_code, exc)
-        if no_data is None:
-            raise
-        return no_data
+    except _NoClinicalData as exc:
+        return exc.result
 
-    seen: dict[str, int] = {}
-    for _, found in members:
-        for key in found:
-            seen[key] = seen.get(key, 0) + 1
-    overlapping = sum(1 for n in seen.values() if n > 1)
+    warnings: list[str] = []
     if others_label:
-        assert cohort is not None
-        members.append((others_label, {k: p for k, p in cohort.items() if k not in seen}))
+        if cohort is None:
+            raise RuntimeError("others_label needs the cohort")
+        grouped = {key for _, found in members for key in found}
+        others = {k: p for k, p in cohort.items() if k not in grouped}
+        members.append((others_label, others))
         definition[others_label] = "cohort patients in no other group"
+        if any(s.criteria for s in specs) and not sequenced_only:
+            without_case = sum(1 for p in others.values() if not _sequenced(p))
+            definition[others_label] = {"definition": "cohort patients in no other group",
+                                        "patients_without_radiant_case": without_case}
+            if without_case:
+                warnings.append(f"{others_label!r} includes {without_case} patients without a Radiant case, whose "
+                                "genotype is unknown: pass sequenced_only=True to compare carriers with genotyped "
+                                "non-carriers")
 
     groups, missing = [], {}
     for name, found in members:
@@ -258,24 +304,43 @@ def _survival_curve(api: RadiantApi, token: str, tenant: Optional[str], specs: l
         missing[name] = absent
     if not any(g.times for g in groups):
         return {"tenant": tenant_code, "error": "No patient of these groups has survival data.", "groups": definition}
+
+    # Overlap only matters among the patients the curves draw.
+    drawn_keys: dict[str, int] = {}
+    for _, found in members[:len(specs)]:
+        for key, patient in found.items():
+            if patient.get("survival_days") is not None and patient["survival_days"] >= 0:
+                drawn_keys[key] = drawn_keys.get(key, 0) + 1
+    overlapping = sum(1 for n in drawn_keys.values() if n > 1)
     drawn = [g.name for g in groups if g.times]
     png, stats = charts.survival(groups, title or "Survival from initial diagnosis — " + " vs ".join(drawn),
                                  test=overlapping == 0)
-    text = json.dumps({
+    if reader.capped:
+        warnings.append(f"a patient list stopped at {MAX_SURVIVAL_PATIENTS} patients, in the portal's order "
+                        "(patients whose PHI the user can read first, then by organization): the cohort is "
+                        "not representative of the tenant; narrow it with cohort_filters")
+    if reader.without_key:
+        warnings.append(f"{reader.without_key} patients have no patient key yet and are in no group")
+    result: dict[str, Any] = {
         "tenant": tenant_code, "groups": stats.groups,
         "logrank_p": stats.logrank_p, "logrank_df": stats.logrank_df,
-        "logrank_skipped": "groups overlap" if overlapping else None,
+        "logrank_skipped": "groups overlap" if overlapping else stats.logrank_skipped,
         "overlapping_patients": overlapping,
         "cohort": None if cohort is None else {
-            "filters": cohort_filters or "all patients", "sequenced_only": sequenced_only, "patients": len(cohort)},
+            "filters": cohort_filters or "all patients", "sequenced_only": sequenced_only, "patients": len(cohort),
+            "excluded_without_radiant_case": unsequenced if sequenced_only else None},
         "definition": definition, "excluded_without_survival_data": missing,
+        "excluded_without_patient_key": reader.without_key,
         "groups_without_survival_data": [g.name for g in groups if not g.times],
-        "method": "Kaplan-Meier (scipy.stats.ecdf), k-sample log-rank test (chi-square, groups - 1 df); "
+        "method": "Kaplan-Meier (scipy.stats.ecdf), k-sample log-rank test (chi-square, df = rank of the "
+                  "variance matrix: a group with nobody at risk at the death times drops out); "
                   "event = deceased, time = survival_days (vital status day minus initial diagnosis day); "
                   "ticks mark censored patients.",
-        "capped_at": MAX_SURVIVAL_PATIENTS if capped.hit else None,
-    })
-    return _image(text, png)
+        "capped_at": MAX_SURVIVAL_PATIENTS if reader.capped else None,
+    }
+    if warnings:
+        result["warnings"] = warnings
+    return _image(json.dumps(result), png)
 
 
 async def survival_curve(
@@ -297,8 +362,8 @@ async def survival_curve(
 
     ``cohort_filters`` (search_patients filters) restricts every group to one
     cohort, and ``others_label`` adds a group of the cohort's patients that are
-    in no other group. ``sequenced_only`` keeps the patients with a Radiant
-    sequencing. Example: medulloblastoma treated on a protocol vs the other
+    in no other group. ``sequenced_only`` keeps the patients with at least one
+    Radiant case (their genotype is known). Example: medulloblastoma treated on a protocol vs the other
     medulloblastoma patients = groups=[{"label": "ACNS0334 Regimen B",
     "patient_keys": [...]}], cohort_filters={"cns_integrated_diagnosis": [...]},
     others_label="Other protocols". Carriers vs non-carriers =
@@ -308,13 +373,16 @@ async def survival_curve(
     The server reads survival_days and vital_status itself: time is from
     initial diagnosis to the vital status date, the event is death. Returns
     the image plus, per group, the patients, deaths and median survival, the
-    log-rank p-value (skipped when groups overlap), and the patients left out
-    (not found, outside the cohort, no survival data). State these when reporting.
+    log-rank p-value (``logrank_skipped`` says why when there is none: the
+    groups overlap, a single group, no death...), the patients left out (not
+    found, outside the cohort, no survival data, no patient key) and
+    ``warnings`` (e.g. a cohort cut at 5000 patients). State these when reporting.
 
     Args:
-        groups: 1 to 6 groups (2 or more with others_label), see above.
+        groups: 2 to 6 groups, or 1 to 5 with others_label (which adds one), see above.
         cohort_filters: search_patients filters applied to every group.
-        sequenced_only: Keep only the patients with a Radiant sequencing.
+        sequenced_only: Keep only the patients with a Radiant case. Use it to compare
+            carriers with non-carriers, so the others group is genotyped.
         others_label: Name of the extra group "cohort patients in no other group".
         title: Chart title (default: the group names).
         tenant: Tenant code (auto-resolved when the user has only one).

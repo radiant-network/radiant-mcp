@@ -1,6 +1,7 @@
 """RAD-254 chart tools: rendering, data selection and tool contracts."""
 
 import asyncio
+import importlib
 import json
 import re
 
@@ -201,10 +202,13 @@ def test_survival_of_a_key_group_against_the_rest_of_a_cohort(fake_api, run):
 
 def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [{"symbol": "SCN1A"}])
-    rows = [{"patient_key": _key(i), "radiant_patient_id": i, "survival_days": 365 * (i % 7 + 1),
+    rows = [{"patient_key": _key(i), "radiant_patient_id": i, "case_count": 1, "survival_days": 365 * (i % 7 + 1),
              "vital_status": "deceased" if i % 2 else "alive"} for i in range(1, 151)]
-    rows += [{"patient_key": _key(500), "radiant_patient_id": None, "survival_days": 100, "vital_status": "alive"},
-             {"patient_key": _key(999), "radiant_patient_id": 999, "survival_days": None, "vital_status": "alive"}]
+    # A portal patient record without a case is not genotyped: left out by sequenced_only.
+    rows += [{"patient_key": _key(500), "radiant_patient_id": 500, "case_count": 0, "survival_days": 100,
+              "vital_status": "alive"},
+             {"patient_key": _key(999), "radiant_patient_id": 999, "case_count": 1, "survival_days": None,
+              "vital_status": "alive"}]
     _patients(fake_api, rows)
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": str(i)} for i in range(1, 21)])
 
@@ -214,7 +218,8 @@ def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fak
     assert {g["group"]: g["patients"] for g in data["groups"]} == {"SCN1A carriers": 20, "Other sequenced patients": 130}
     assert data["excluded_without_survival_data"] == {"SCN1A carriers": 0, "Other sequenced patients": 1}
     assert data["definition"]["SCN1A carriers"]["carrier_patients"] == 20
-    assert data["cohort"] == {"filters": "all patients", "sequenced_only": True, "patients": 151}
+    assert data["cohort"] == {"filters": "all patients", "sequenced_only": True, "patients": 151,
+                              "excluded_without_radiant_case": 1}
     assert len(_searches(fake_api)) == 2  # the cohort, paged by 100
 
 
@@ -376,3 +381,91 @@ def test_a_chart_tool_answers_with_text_and_png_content():
     result = asyncio.run(call())
     assert [part.type for part in result.content] == ["text", "image"]
     assert result.content[1].mime_type == "image/png"
+
+
+def test_logrank_ignores_a_group_with_nobody_at_risk_at_the_death_times():
+    groups = [
+        charts.SurvivalGroup("A", [2, 4, 6, 8, 9, 10], [True] * 6),
+        charts.SurvivalGroup("C", [3, 5, 7, 9.5, 11], [True] * 5),
+        charts.SurvivalGroup("D", [1.5, 2.5, 12, 13], [True] * 4),
+    ]
+    early = charts.SurvivalGroup("B", [0.5, 1], [False, False])  # all censored before the first death
+    expected = charts.logrank(groups)
+    for position in range(4):
+        result = charts.logrank(groups[:position] + [early] + groups[position:])
+        assert result[1] == 2 and result[2] == pytest.approx(expected[2])
+    assert charts.logrank([early, charts.SurvivalGroup("x", [3], [False])]) is None
+
+
+def test_survival_explains_a_missing_logrank_and_a_cut_cohort(fake_api, run, monkeypatch):
+    survival_module = importlib.import_module("radiant_mcp.tools.charts.survival")
+    monkeypatch.setattr(survival_module, "MAX_SURVIVAL_PATIENTS", 3)
+    rows = [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "alive"} for i in range(1, 5)]
+    rows.append({"patient_key": None, "survival_days": 50, "vital_status": "alive"})
+    _patients(fake_api, rows)
+    data, _ = _parts(run(survival_curve(groups=[{"label": "A", "patient_keys": [_key(1).upper() + "\n"]}],
+                                        others_label="B", tenant="demo")))
+    assert data["logrank_p"] is None and data["logrank_skipped"] == "no death in any group"
+    assert data["definition"]["A"]["not_found_or_not_in_cohort"] == 0  # upper case and newline normalized
+    assert data["capped_at"] == 3 and any("not representative" in w for w in data["warnings"])
+
+
+def test_survival_overlap_counts_only_drawn_patients(fake_api, run):
+    rows = [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 7)]
+    rows.append({"patient_key": _key(9), "survival_days": None, "vital_status": "alive"})
+    _patients(fake_api, rows)
+    data, _ = _parts(run(survival_curve(groups=[
+        {"label": "A", "patient_keys": [_key(1), _key(2), _key(3), _key(9)]},
+        {"label": "B", "patient_keys": [_key(4), _key(5), _key(6), _key(9)]},
+    ], tenant="demo")))
+    assert data["overlapping_patients"] == 0 and data["logrank_p"] is not None
+
+
+def test_survival_warns_when_non_carriers_include_patients_without_a_case(fake_api, fake_sql, run):
+    fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
+    rows = [{"patient_key": _key(i), "radiant_patient_id": i, "case_count": 1 if i < 5 else 0,
+             "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 9)]
+    _patients(fake_api, rows)
+    fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": "1"}, {"patient_id": "2"}])
+    data, _ = _parts(run(survival_curve(groups=[{"label": "TP53", "carriers": {"gene": "TP53"}}],
+                                        others_label="Others", tenant="demo")))
+    assert data["definition"]["Others"]["patients_without_radiant_case"] == 4
+    assert any("sequenced_only=True" in w for w in data["warnings"])
+
+
+def test_survival_resolves_genes_before_reading_patients(fake_api, run):
+    fake_api.on("genes", "gene_search", [])
+    result = run(survival_curve(groups=[{"label": "X", "carriers": {"gene": "NOPE1"}}], others_label="Rest",
+                                tenant="demo"))
+    assert "not found" in result["error"] and _searches(fake_api) == []
+
+
+def test_survival_reports_gene_search_errors_as_errors(fake_api, run):
+    fake_api.on("genes", "gene_search", api_exception(503))
+    result = run(survival_curve(groups=[{"label": "X", "carriers": {"gene": "TP53"}}], others_label="Rest",
+                                tenant="demo"))
+    assert "clinical_data_available" not in result and "503" in result["error"]
+
+
+def test_survival_combines_cohort_and_group_filters_in_one_search(fake_api, run):
+    rows = [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 5)]
+    _patients(fake_api, rows)
+    run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "deceased"}},
+                               {"label": "B", "filters": {"organization_code": "X"}}],
+                       cohort_filters={"diagnosis_type_cohort": "MB"}, tenant="demo"))
+    criteria = [{c.to_dict()["field"] for c in call[2]["list_body_with_criteria"].search_criteria}
+                for call in _searches(fake_api)]
+    assert {"diagnosis_type_cohort", "vital_status"} in criteria
+    assert {"diagnosis_type_cohort", "organization_code"} in criteria
+
+
+def test_survival_names_an_empty_group(fake_api, run):
+    result = run(survival_curve(groups=[{"label": "Arm B", "patient_keys": []}], others_label="Rest", tenant="demo"))
+    assert "the group is empty" in result["error"] and fake_api.calls == []
+
+
+def test_dollar_signs_in_titles_and_labels_are_plain_text(run):
+    png, _ = charts.survival([charts.SurvivalGroup("_rest $x_$", [1, 2], [True, False])], "Cost $x_$ per $5")
+    assert png.startswith(PNG)
+    _, png = _parts(run(bar_chart("a $x_$ b", ["$a", "b$"], [1, 2])))
+    assert png.startswith(PNG)

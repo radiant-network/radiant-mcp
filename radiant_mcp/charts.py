@@ -21,6 +21,9 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
+# Titles, labels and categories come from the agent or the portal: a "$" must stay a
+# dollar sign, not start mathtext (which mangles the text or fails the render).
+matplotlib.rcParams["text.parse_math"] = False
 
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
@@ -111,6 +114,7 @@ class SurvivalStats:
     groups: list[dict] = field(default_factory=list)
     logrank_p: Optional[float] = None
     logrank_df: Optional[int] = None
+    logrank_skipped: Optional[str] = None
 
 
 def _censored(group: SurvivalGroup):
@@ -139,30 +143,51 @@ def _km_steps(group: SurvivalGroup) -> tuple[np.ndarray, np.ndarray]:
 
 def logrank(groups: Sequence[SurvivalGroup]) -> Optional[tuple[float, int, float]]:
     """k-sample log-rank test: ``(chi-square, degrees of freedom, p-value)``,
-    or None without any death or with fewer than two groups."""
+    or None without any death or with fewer than two informative groups.
+
+    The variance matrix is inverted with a pseudo-inverse and the degrees of
+    freedom are its rank, so a group with nobody at risk at any death time
+    (e.g. recently diagnosed patients, all censored early) drops out instead
+    of making the result depend on the group order. Vectorized over the
+    death times: O((U + N) log N) for U death times and N patients.
+    """
     from scipy.stats import chi2
 
     k = len(groups)
-    times = np.concatenate([np.asarray(g.times, dtype=float) for g in groups]) if groups else np.array([])
-    events = np.concatenate([np.asarray(g.events, dtype=bool) for g in groups]) if groups else np.array([], bool)
-    if k < 2 or not events.any():
+    if k < 2:
+        return None
+    group_times = [np.sort(np.asarray(g.times, dtype=float)) for g in groups]
+    times = np.concatenate([np.asarray(g.times, dtype=float) for g in groups])
+    events = np.concatenate([np.asarray(g.events, dtype=bool) for g in groups])
+    if not events.any():
         return None
     member = np.concatenate([np.full(len(g.times), i) for i, g in enumerate(groups)])
-    observed_minus_expected = np.zeros(k)
-    variance = np.zeros((k, k))
-    for t in np.unique(times[events]):
-        at_risk = np.bincount(member[times >= t], minlength=k).astype(float)
-        deaths = np.bincount(member[(times == t) & events], minlength=k).astype(float)
-        n, d = at_risk.sum(), deaths.sum()
-        observed_minus_expected += deaths - d * at_risk / n
-        if n > 1:
-            share = at_risk / n
-            variance += d * (n - d) / (n - 1) * (np.diag(share) - np.outer(share, share))
-    try:
-        statistic = float(observed_minus_expected[:-1] @ np.linalg.solve(variance[:-1, :-1], observed_minus_expected[:-1]))
-    except np.linalg.LinAlgError:
+    death_times = np.unique(times[events])
+    # at_risk[u, i]: patients of group i still followed at death time u.
+    at_risk = np.stack([len(t) - np.searchsorted(t, death_times, side="left") for t in group_times], axis=1).astype(float)
+    deaths = np.zeros_like(at_risk)
+    np.add.at(deaths, (np.searchsorted(death_times, times[events]), member[events]), 1.0)
+    n, d = at_risk.sum(axis=1), deaths.sum(axis=1)
+    observed_minus_expected = (deaths - d[:, None] * at_risk / n[:, None]).sum(axis=0)
+    several = n > 1
+    share = at_risk[several] / n[several, None]
+    weight = d[several] * (n[several] - d[several]) / (n[several] - 1)
+    weighted = weight[:, None] * share
+    variance = np.diag(weighted.sum(axis=0)) - weighted.T @ share
+    df = int(np.linalg.matrix_rank(variance))
+    if df == 0:
         return None
-    return statistic, k - 1, float(chi2.sf(statistic, k - 1))
+    statistic = float(observed_minus_expected @ np.linalg.pinv(variance) @ observed_minus_expected)
+    return statistic, df, float(chi2.sf(statistic, df))
+
+
+def logrank_skipped_reason(groups: Sequence[SurvivalGroup]) -> str:
+    """Why ``logrank`` returned None for these groups (the ones with survival data)."""
+    if len(groups) < 2:
+        return "fewer than two groups with survival data"
+    if not any(any(g.events) for g in groups):
+        return "no death in any group"
+    return "the groups share no follow-up time with a death"
 
 
 def _median(xs: np.ndarray, ys: np.ndarray) -> Optional[float]:
@@ -170,21 +195,37 @@ def _median(xs: np.ndarray, ys: np.ndarray) -> Optional[float]:
     return float(xs[below[0]]) if below.size else None
 
 
-@_serialized
 def survival(groups: Sequence[SurvivalGroup], title: str, test: bool = True) -> tuple[bytes, SurvivalStats]:
     """Kaplan-Meier curves with censoring marks, numbers at risk and, when
-    ``test``, the log-rank p-value across the groups."""
+    ``test``, the log-rank p-value across the groups.
+
+    The test runs before taking the render lock: it can take a while on a
+    large cohort and needs no pyplot.
+    """
     groups = [g for g in groups if g.times]
     if not groups:
         raise ValueError("no patient with survival data")
     stats = SurvivalStats()
+    if test:
+        result = logrank(groups)
+        if result is None:
+            stats.logrank_skipped = logrank_skipped_reason(groups)
+        else:
+            _, stats.logrank_df, stats.logrank_p = result
+    return _draw_survival(groups, title, stats), stats
+
+
+@_serialized
+def _draw_survival(groups: Sequence[SurvivalGroup], title: str, stats: SurvivalStats) -> bytes:
     horizon = max(max(g.times) for g in groups)
     ticks = np.linspace(0, math.ceil(horizon), num=min(6, math.ceil(horizon) + 1)) if horizon > 0 else np.array([0.0])
     fig, (ax, table) = plt.subplots(2, 1, figsize=(7.5, 5.2 + 0.2 * len(groups)), height_ratios=(4, 0.4 + 0.3 * len(groups)),
                                     sharex=True)
     for group, color in zip(groups, _PALETTE, strict=False):
         xs, ys = _km_steps(group)
-        ax.step(xs, ys, where="post", color=color, label=f"{group.name} (n={len(group.times)})")
+        # matplotlib leaves a label starting with "_" out of the legend.
+        label = f"{group.name} (n={len(group.times)})"
+        ax.step(xs, ys, where="post", color=color, label=f" {label}" if label.startswith("_") else label)
         censored = [t for t, e in zip(group.times, group.events, strict=True) if not e]
         if censored:
             heights = np.interp(censored, xs, ys, left=1.0, right=ys[-1])
@@ -194,9 +235,7 @@ def survival(groups: Sequence[SurvivalGroup], title: str, test: bool = True) -> 
             "group": group.name, "patients": len(group.times), "deaths": int(sum(group.events)),
             "median_survival_years": round(median, 2) if median is not None else None,
         })
-    result = logrank(groups) if test else None
-    if result is not None:
-        _, stats.logrank_df, stats.logrank_p = result
+    if stats.logrank_p is not None:
         ax.text(0.98, 0.04, f"log-rank p = {stats.logrank_p:.3g}", transform=ax.transAxes, ha="right")
     ax.set(ylabel="Survival probability", ylim=(0, 1.05), title=title)
     ax.grid(**_GRID)
@@ -211,7 +250,7 @@ def survival(groups: Sequence[SurvivalGroup], title: str, test: bool = True) -> 
     table.set_title("Number at risk", fontsize=9, loc="left")
     for spine in table.spines.values():
         spine.set_visible(False)
-    return to_png(fig), stats
+    return to_png(fig)
 
 
 # -- oncoprint ---------------------------------------------------------------------
