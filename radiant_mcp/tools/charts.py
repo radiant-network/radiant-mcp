@@ -10,6 +10,7 @@ saves MCP images as message attachments and shows them in the conversation.
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from fastmcp.utilities.types import Image
@@ -21,7 +22,7 @@ from ._api import RadiantApi, resolve_tenant
 from .cases import _get_case_context, criteria
 from .cohort import Criteria, build_criteria, carriers_cte
 from .genes import resolve_gene
-from .patients import PATIENT_SEARCH_FILTER_FIELDS, _get_patient_context, _no_clinical_data
+from .patients import _UUID, PATIENT_SEARCH_FILTER_FIELDS, _get_patient_context, _no_clinical_data
 
 ALT_ZYGOSITIES = _rules.ALT_ZYGOSITIES
 MAX_ONCOPRINT_GENES = 20
@@ -132,6 +133,94 @@ def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: Optional[str
 
 # -- survival ------------------------------------------------------------------------
 
+_GROUP_SOURCES = ("patient_keys", "filters", "carriers")
+_CARRIER_FIELDS = ("gene", "data_type", "vep_impact", "clinvar", "max_gnomad_af", "zygosity", "cnv_types")
+
+
+@dataclass(frozen=True)
+class GroupSpec:
+    """One validated survival group: a label and the one source of its patients."""
+
+    label: str
+    patient_keys: tuple[str, ...] = ()
+    filters: Optional[dict] = None
+    carriers: Optional[Criteria] = None
+
+
+def _patient_filters(filters: Any, what: str) -> dict:
+    if not isinstance(filters, dict) or not filters:
+        raise _sql.InvalidInput(f"{what} must be a non-empty mapping of search_patients filters")
+    bad = sorted(set(filters) - set(PATIENT_SEARCH_FILTER_FIELDS))
+    if bad:
+        raise _sql.InvalidInput(f"{what}: unknown patient filter field(s): {', '.join(bad)}; "
+                                f"allowed: {', '.join(PATIENT_SEARCH_FILTER_FIELDS)}")
+    return filters
+
+
+def _group_spec(index: int, group: Any) -> GroupSpec:
+    if not isinstance(group, dict):
+        raise _sql.InvalidInput(f"group {index} must be a mapping: {{label, and one of {', '.join(_GROUP_SOURCES)}}}")
+    label = str(group.get("label") or "").strip() or f"Group {index}"
+    unknown = sorted(set(group) - {"label", *_GROUP_SOURCES})
+    if unknown:
+        raise _sql.InvalidInput(f"group {label!r}: unknown field(s) {', '.join(unknown)}")
+    sources = [name for name in _GROUP_SOURCES if group.get(name) not in (None, [], {})]
+    if len(sources) != 1:
+        raise _sql.InvalidInput(f"group {label!r}: give exactly one of {', '.join(_GROUP_SOURCES)}")
+    if sources[0] == "patient_keys":
+        keys = group["patient_keys"]
+        if not isinstance(keys, list):
+            raise _sql.InvalidInput(f"group {label!r}: patient_keys must be a list")
+        bad = [k for k in keys if not isinstance(k, str) or not _UUID.match(k)]
+        if bad:
+            raise _sql.InvalidInput(f"group {label!r}: not patient keys (UUIDs from search_patients): {bad[:3]}")
+        keys = tuple(dict.fromkeys(keys))
+        if len(keys) > MAX_SURVIVAL_PATIENTS:
+            raise _sql.InvalidInput(f"group {label!r}: at most {MAX_SURVIVAL_PATIENTS} patient keys")
+        return GroupSpec(label, patient_keys=keys)
+    if sources[0] == "filters":
+        return GroupSpec(label, filters=_patient_filters(group["filters"], f"group {label!r} filters"))
+    carriers = group["carriers"]
+    if not isinstance(carriers, dict) or not carriers.get("gene"):
+        raise _sql.InvalidInput(f"group {label!r}: carriers needs at least a gene")
+    unknown = sorted(set(carriers) - set(_CARRIER_FIELDS))
+    if unknown:
+        raise _sql.InvalidInput(f"group {label!r}: unknown carriers field(s) {', '.join(unknown)}; "
+                                f"allowed: {', '.join(_CARRIER_FIELDS)}")
+    return GroupSpec(label, carriers=build_criteria(
+        carriers.get("data_type") or "germline_snv", carriers["gene"], carriers.get("vep_impact"),
+        carriers.get("clinvar"), carriers.get("max_gnomad_af"), carriers.get("zygosity"), carriers.get("cnv_types"),
+    ))
+
+
+def parse_groups(groups: Any, others_label: Optional[str]) -> list[GroupSpec]:
+    """Validate the ``groups`` argument of survival_curve."""
+    if not isinstance(groups, list) or not groups:
+        raise _sql.InvalidInput("give `groups`: a list of {label, and one of patient_keys, filters, carriers}")
+    count = len(groups) + (1 if others_label else 0)
+    if count < 2:
+        raise _sql.InvalidInput("give at least two groups, or one group and `others_label`")
+    if count > charts.MAX_SURVIVAL_GROUPS:
+        raise _sql.InvalidInput(f"at most {charts.MAX_SURVIVAL_GROUPS} groups, `others_label` included")
+    specs = [_group_spec(i, group) for i, group in enumerate(groups, 1)]
+    labels = [spec.label for spec in specs] + ([others_label] if others_label else [])
+    if len(set(labels)) != len(labels):
+        raise _sql.InvalidInput("group labels must be distinct")
+    return specs
+
+
+class _Capped:
+    """Records whether a patient list read hit MAX_SURVIVAL_PATIENTS."""
+
+    def __init__(self) -> None:
+        self.hit = False
+
+    def patients(self, api: RadiantApi, tenant: str, filters: dict) -> list[dict]:
+        patients, total = _all_patients(api, tenant, filters)
+        self.hit = self.hit or total > MAX_SURVIVAL_PATIENTS
+        return patients
+
+
 def _all_patients(api: RadiantApi, tenant: str, filters: dict) -> tuple[list[dict], int]:
     """Every patient of the list matching ``filters`` (capped), and the total count."""
     from radiant_python.models.list_body_with_criteria import ListBodyWithCriteria
@@ -147,6 +236,10 @@ def _all_patients(api: RadiantApi, tenant: str, filters: dict) -> tuple[list[dic
             break
         patients.extend(page)
     return patients[:MAX_SURVIVAL_PATIENTS], total or 0
+
+
+def _by_key(patients: list[dict]) -> dict[str, dict]:
+    return {p["patient_key"]: p for p in patients if p.get("patient_key")}
 
 
 def _survival_group(name: str, patients: list[dict]) -> tuple[charts.SurvivalGroup, int]:
@@ -166,56 +259,96 @@ def carrier_patients_query(tenant: str, criteria_: Criteria) -> tuple[str, _sql.
     return carriers_cte(p, tenant, criteria_) + " SELECT DISTINCT patient_id FROM car", p
 
 
-def _survival_curve(api: RadiantApi, token: str, tenant: Optional[str], gene_criteria: Optional[Criteria],
-                    group_a: Optional[dict], group_b: Optional[dict], labels: tuple[str, str]) -> Any:
+def _resolve_group(api: RadiantApi, token: str, tenant: str, spec: GroupSpec, cohort: Optional[dict[str, dict]],
+                   capped: _Capped) -> tuple[dict[str, dict], dict]:
+    """The group's patients by key, inside the cohort when there is one, and how they were found."""
+    if spec.patient_keys:
+        # The patient list cannot be filtered on patient_key: match the keys against the cohort.
+        assert cohort is not None
+        found = {k: cohort[k] for k in spec.patient_keys if k in cohort}
+        return found, {"patient_keys": len(spec.patient_keys),
+                       "not_found_or_not_in_cohort": len(spec.patient_keys) - len(found)}
+    if spec.filters is not None:
+        matched = _by_key(capped.patients(api, tenant, spec.filters))
+        if cohort is None:
+            return matched, {"filters": spec.filters}
+        inside = {k: p for k, p in matched.items() if k in cohort}
+        return inside, {"filters": spec.filters, "not_in_cohort": len(matched) - len(inside)}
+    assert spec.carriers is not None and cohort is not None
+    gene = resolve_gene(api, tenant, spec.carriers.gene)
+    if gene is None:
+        raise _sql.InvalidInput(f"group {spec.label!r}: gene {spec.carriers.gene!r} not found")
+    from dataclasses import replace
+
+    carriers = replace(spec.carriers, gene=_sql.symbol(gene["symbol"]))
+    ids = {str(r["patient_id"]) for r in _sql.run(token, *carrier_patients_query(tenant, carriers))}
+    found = {k: p for k, p in cohort.items()
+             if p.get("radiant_patient_id") is not None and str(p["radiant_patient_id"]) in ids}
+    return found, {"carriers": carriers.describe(), "carrier_patients": len(ids),
+                   "carriers_not_in_cohort": len(ids) - len(found)}
+
+
+def _survival_curve(api: RadiantApi, token: str, tenant: Optional[str], specs: list[GroupSpec],
+                    cohort_filters: Optional[dict], sequenced_only: bool, others_label: Optional[str],
+                    title: str) -> Any:
     tenant_code, err = resolve_tenant(api, tenant)
     if err:
         return err
+    capped = _Capped()
+    cohort: Optional[dict[str, dict]] = None
     try:
-        if gene_criteria is not None:
-            gene = resolve_gene(api, tenant_code, gene_criteria.gene)
-            if gene is None:
-                return {"error": f"Gene {gene_criteria.gene!r} not found.", "status": 404}
-            from dataclasses import replace
-
-            gene_criteria = replace(gene_criteria, gene=_sql.symbol(gene["symbol"]))
-            carrier_ids = {str(r["patient_id"]) for r in _sql.run(token, *carrier_patients_query(tenant_code, gene_criteria))}
-            patients, total = _all_patients(api, tenant_code, {})
-            sequenced = [p for p in patients if p.get("radiant_patient_id") is not None]
-            carriers = [p for p in sequenced if str(p["radiant_patient_id"]) in carrier_ids]
-            others = [p for p in sequenced if str(p["radiant_patient_id"]) not in carrier_ids]
-            names = (labels[0] or f"{gene_criteria.gene} carriers", labels[1] or "Other sequenced patients")
-            groups_in = [(names[0], carriers), (names[1], others)]
-            definition = {"carriers": gene_criteria.describe(),
-                          "excluded_not_sequenced": len(patients) - len(sequenced)}
-        else:
-            groups_in, definition, total = [], {}, 0
-            for name, filters in ((labels[0] or "Group A", group_a), (labels[1] or "Group B", group_b)):
-                patients, count = _all_patients(api, tenant_code, filters)
-                groups_in.append((name, patients))
-                definition[name] = filters
-                total += count
+        if cohort_filters or sequenced_only or others_label or any(s.carriers or s.patient_keys for s in specs):
+            patients = capped.patients(api, tenant_code, cohort_filters or {})
+            if sequenced_only:
+                patients = [p for p in patients if p.get("radiant_patient_id") is not None]
+            cohort = _by_key(patients)
+        members: list[tuple[str, dict[str, dict]]] = []
+        definition: dict[str, Any] = {}
+        for spec in specs:
+            found, how = _resolve_group(api, token, tenant_code, spec, cohort, capped)
+            members.append((spec.label, found))
+            definition[spec.label] = how
+    except _sql.InvalidInput as exc:
+        return {"tenant": tenant_code, "error": str(exc)}
     except Exception as exc:  # noqa: BLE001
         no_data = _no_clinical_data(tenant_code, exc)
         if no_data is None:
             raise
         return no_data
 
+    seen: dict[str, int] = {}
+    for _, found in members:
+        for key in found:
+            seen[key] = seen.get(key, 0) + 1
+    overlapping = sum(1 for n in seen.values() if n > 1)
+    if others_label:
+        assert cohort is not None
+        members.append((others_label, {k: p for k, p in cohort.items() if k not in seen}))
+        definition[others_label] = "cohort patients in no other group"
+
     groups, missing = [], {}
-    for name, patients in groups_in:
-        group, absent = _survival_group(name, patients)
+    for name, found in members:
+        group, absent = _survival_group(name, list(found.values()))
         groups.append(group)
         missing[name] = absent
     if not any(g.times for g in groups):
         return {"tenant": tenant_code, "error": "No patient of these groups has survival data.", "groups": definition}
-    title = f"Survival from initial diagnosis — {groups[0].name} vs {groups[1].name}"
-    png, stats = charts.survival(groups, title)
+    drawn = [g.name for g in groups if g.times]
+    png, stats = charts.survival(groups, title or "Survival from initial diagnosis — " + " vs ".join(drawn),
+                                 test=overlapping == 0)
     text = json.dumps({
-        "tenant": tenant_code, "groups": stats.groups, "logrank_p": stats.logrank_p,
+        "tenant": tenant_code, "groups": stats.groups,
+        "logrank_p": stats.logrank_p, "logrank_df": stats.logrank_df,
+        "logrank_skipped": "groups overlap" if overlapping else None,
+        "overlapping_patients": overlapping,
+        "cohort": None if cohort is None else {
+            "filters": cohort_filters or "all patients", "sequenced_only": sequenced_only, "patients": len(cohort)},
         "definition": definition, "excluded_without_survival_data": missing,
-        "method": "Kaplan-Meier (scipy.stats.ecdf), log-rank test (scipy.stats.logrank); event = deceased, "
-                  "time = survival_days (vital status day minus initial diagnosis day); ticks mark censored patients.",
-        "capped_at": MAX_SURVIVAL_PATIENTS if total > MAX_SURVIVAL_PATIENTS else None,
+        "groups_without_survival_data": [g.name for g in groups if not g.times],
+        "method": "Kaplan-Meier (scipy.stats.ecdf), k-sample log-rank test (chi-square, groups - 1 df); "
+                  "event = deceased, time = survival_days (vital status day minus initial diagnosis day); "
+                  "ticks mark censored patients.",
+        "capped_at": MAX_SURVIVAL_PATIENTS if capped.hit else None,
     })
     return _image(text, png)
 
@@ -433,56 +566,53 @@ async def family_venn(case_id: int, rare_only: bool = False, vep_impact: Optiona
 
 
 async def survival_curve(
-    gene: Optional[str] = None,
-    data_type: str = "germline_snv",
-    vep_impact: Optional[list[str]] = None,
-    clinvar: Optional[list[str]] = None,
-    max_gnomad_af: Optional[float] = None,
-    zygosity: Optional[list[str]] = None,
-    cnv_types: Optional[list[str]] = None,
-    group_a: Optional[dict[str, Any]] = None,
-    group_b: Optional[dict[str, Any]] = None,
-    label_a: str = "",
-    label_b: str = "",
+    groups: list[dict[str, Any]],
+    cohort_filters: Optional[dict[str, Any]] = None,
+    sequenced_only: bool = False,
+    others_label: Optional[str] = None,
+    title: str = "",
     tenant: Optional[str] = None,
 ) -> Any:
-    """Kaplan-Meier survival curves of two patient groups, with the log-rank test.
+    """Kaplan-Meier survival curves of 2 to 6 patient groups, with the log-rank test.
 
-    Two ways to define the groups:
-    - by genotype: ``gene`` (with the cohort_carriers filters) compares the
-      carriers with the other patients sequenced in the portal;
-    - by clinical criteria: ``group_a`` and ``group_b`` are two
-      search_patients filter mappings (e.g. {"diagnosis_type_cohort": "..."}).
+    Each group is ``{"label": ..., <one source>}``, the source being one of:
+    - ``patient_keys``: a list of patient keys (UUIDs), e.g. the patients a
+      describe_schema("clinical") query returned for a treatment protocol;
+    - ``filters``: search_patients filters, e.g. {"cns_integrated_diagnosis": [...]};
+    - ``carriers``: cohort_carriers criteria, e.g. {"gene": "TP53",
+      "data_type": "somatic_snv", "vep_impact": ["HIGH"]}.
 
-    Time is survival_days (from initial diagnosis to the vital status date);
-    the event is death. Returns the image plus, per group, the patients,
-    deaths and median survival, the log-rank p-value, and the patients left
-    out (no survival data, not sequenced). State these when reporting.
+    ``cohort_filters`` (search_patients filters) restricts every group to one
+    cohort, and ``others_label`` adds a group of the cohort's patients that are
+    in no other group. ``sequenced_only`` keeps the patients with a Radiant
+    sequencing. Example: medulloblastoma treated on a protocol vs the other
+    medulloblastoma patients = groups=[{"label": "ACNS0334 Regimen B",
+    "patient_keys": [...]}], cohort_filters={"cns_integrated_diagnosis": [...]},
+    others_label="Other protocols". Carriers vs non-carriers =
+    groups=[{"label": "TP53 carriers", "carriers": {...}}],
+    sequenced_only=True, others_label="Non-carriers".
+
+    The server reads survival_days and vital_status itself: time is from
+    initial diagnosis to the vital status date, the event is death. Returns
+    the image plus, per group, the patients, deaths and median survival, the
+    log-rank p-value (skipped when groups overlap), and the patients left out
+    (not found, outside the cohort, no survival data). State these when reporting.
 
     Args:
-        gene: Gene symbol for the genotype mode.
-        data_type, vep_impact, clinvar, max_gnomad_af, zygosity, cnv_types: As in cohort_carriers.
-        group_a, group_b: search_patients filters for the clinical mode (both required there).
-        label_a, label_b: Optional group names for the legend.
+        groups: 1 to 6 groups (2 or more with others_label), see above.
+        cohort_filters: search_patients filters applied to every group.
+        sequenced_only: Keep only the patients with a Radiant sequencing.
+        others_label: Name of the extra group "cohort patients in no other group".
+        title: Chart title (default: the group names).
         tenant: Tenant code (auto-resolved when the user has only one).
     """
     try:
-        if gene and (group_a or group_b):
-            raise _sql.InvalidInput("use either `gene` or `group_a`/`group_b`, not both")
-        gene_criteria = None
-        if gene:
-            gene_criteria = build_criteria(data_type, gene, vep_impact, clinvar, max_gnomad_af, zygosity, cnv_types)
-        else:
-            if not (group_a and group_b):
-                raise _sql.InvalidInput("give `gene`, or both `group_a` and `group_b`")
-            for filters in (group_a, group_b):
-                bad = sorted(set(filters) - set(PATIENT_SEARCH_FILTER_FIELDS))
-                if bad:
-                    raise _sql.InvalidInput(f"unknown patient filter field(s): {', '.join(bad)}; "
-                                            f"allowed: {', '.join(PATIENT_SEARCH_FILTER_FIELDS)}")
+        specs = parse_groups(groups, others_label)
+        if cohort_filters:
+            _patient_filters(cohort_filters, "cohort_filters")
     except _sql.InvalidInput as exc:
         return {"error": str(exc)}
-    return await _api.run(_survival_curve, tenant, gene_criteria, group_a, group_b, (label_a, label_b))
+    return await _api.run(_survival_curve, tenant, specs, cohort_filters, sequenced_only, others_label, title)
 
 
 async def oncoprint(
@@ -563,8 +693,6 @@ async def patient_timeline(patient_key: str, tenant: Optional[str] = None) -> An
         patient_key: The patient page key (a UUID, from search_patients or get_case_context).
         tenant: Tenant code (auto-resolved when the user has only one).
     """
-    from .patients import _UUID
-
     if not _UUID.match(patient_key or ""):
         return {"error": f"`{patient_key}` is not a patient key (a UUID). Find it with search_patients first."}
     return await _api.run(_patient_timeline, patient_key, tenant)
