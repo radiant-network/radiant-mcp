@@ -7,6 +7,7 @@ not count, or a variant of one gene would be a hit in its neighbours too."""
 
 from .. import sql as _sql
 from ..domain import rules as _rules
+from .quality import germline_qualifies
 
 # Rows a list returns; one more is fetched to tell a truncated list.
 ROW_LIMIT = 200
@@ -41,7 +42,8 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
     sql = (
         "WITH snv AS ("
         " SELECT DISTINCT o.locus_id, o.zygosity, o.transmission_mode, cf.symbol, v.hgvsg, v.aa_change, v.vep_impact,"
-        "  v.gnomad_v3_af, v.clinvar_interpretation, o.exomiser_acmg_classification, v.chromosome, v.start"
+        "  v.gnomad_v3_af, v.clinvar_interpretation, o.exomiser_acmg_classification, v.chromosome, v.start,"
+        f"  NOT {germline_qualifies(p)} AS low_quality, o.filter, o.gq"
         f" FROM {tenant_db}.germline__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(snv_key['variant_part'])}"
         f"{_gene_join(p)}"
@@ -59,6 +61,7 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
         " SELECT snv.symbol AS gene, snv.locus_id, snv.hgvsg, snv.start AS snv_start, snv.aa_change, snv.zygosity,"
         "  snv.transmission_mode,"
         "  snv.vep_impact, snv.gnomad_v3_af, snv.clinvar_interpretation, snv.exomiser_acmg_classification,"
+        "  snv.low_quality, snv.filter AS snv_filter, snv.gq AS snv_gq,"
         "  cnv.cnv_id, cnv.type AS cnv_type, cnv.chromosome AS cnv_chromosome, cnv.start AS cnv_start,"
         "  cnv.end AS cnv_end, cnv.length AS cnv_length, cnv.cn AS cnv_cn,"
         "  (snv.start BETWEEN cnv.start AND cnv.end) AS snv_inside_cnv"
@@ -127,7 +130,8 @@ def germline_plp_query(tenant_db: str, key: dict) -> tuple[str, _sql.Params]:
     p = _sql.Params()
     sql = (
         "SELECT DISTINCT o.locus_id, cf.symbol AS gene, v.hgvsg, v.aa_change, o.zygosity, v.clinvar_interpretation,"
-        " o.exomiser_acmg_classification, (ig.locus_id IS NOT NULL) AS interpreted_plp"
+        " o.exomiser_acmg_classification, (ig.locus_id IS NOT NULL) AS interpreted_plp,"
+        f" NOT {germline_qualifies(p)} AS low_quality, o.filter, o.gq"
         f" FROM {tenant_db}.germline__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(key['variant_part'])}"
         f"{_gene_join(p)}"
@@ -139,8 +143,15 @@ def germline_plp_query(tenant_db: str, key: dict) -> tuple[str, _sql.Params]:
     return sql, p
 
 
-def somatic_snv_query(tenant_db: str, key: dict, genes: list[str]) -> tuple[str, _sql.Params]:
+def somatic_snv_query(tenant_db: str, key: dict, genes: list[str],
+                      first_hit_loci: list[str] | None = None) -> tuple[str, _sql.Params]:
+    """PASS tumor calls of the genes: a qualifying impact (second-hit candidates), or one of
+    ``first_hit_loci`` whatever its impact (the germline first hit seen in the tumor)."""
     p = _sql.Params()
+    impact = f"cf.vep_impact IN ({p.list(_rules.QUALIFYING_IMPACTS)})"
+    if first_hit_loci:
+        loci = ", ".join(p(int(locus)) for locus in first_hit_loci)
+        impact = f"({impact} OR o.locus_id IN ({loci}))"
     sql = (
         "SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, v.vep_impact, o.tumor_ad_ratio,"
         " o.tumor_zygosity"
@@ -148,7 +159,7 @@ def somatic_snv_query(tenant_db: str, key: dict, genes: list[str]) -> tuple[str,
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(key['variant_part'])}"
         f"{_gene_join(p)}"
         f" WHERE o.tumor_seq_id = {p(key['seq_id'])} AND o.task_id = {p(key['task_id'])} AND o.part = {p(key['part'])}"
-        f"  AND o.filter = {p(_rules.PASS)} AND cf.vep_impact IN ({p.list(_rules.QUALIFYING_IMPACTS)})"
+        f"  AND o.filter = {p(_rules.PASS)} AND {impact}"
         f"  AND cf.symbol IN ({p.list(genes)})"
         f" ORDER BY gene LIMIT {p(ROW_LIMIT + 1)}"
     )

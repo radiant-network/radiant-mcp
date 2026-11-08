@@ -342,7 +342,7 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
             "filters": cohort_filters or "all patients", "sequenced_only": sequenced_only, "patients": len(cohort),
             "excluded_not_genotyped": unsequenced if sequenced_only else None,
             "genotyped_means": (None if not sequenced_only else
-                                "an imported analysis of the carrier groups' data type(s): "
+                                "an imported analysis of every carrier group's data type (all of them): "
                                 + ", ".join(sorted({s.criteria.data_type for s in specs if s.criteria}))
                                 if any(s.criteria for s in specs) else "at least one Radiant case")},
         "definition": definition, "excluded_without_survival_data": missing,
@@ -377,7 +377,9 @@ async def survival_curve(
     cohort, and ``others_label`` adds a group of the cohort's patients that are
     in no other group. ``sequenced_only`` keeps the genotyped patients: with a
     carriers group, those with an imported analysis of its data type (a germline
-    case does not genotype a somatic gene); otherwise those with a Radiant case. Example: medulloblastoma treated on a protocol vs the other
+    case does not genotype a somatic gene); with carriers groups of several data
+    types, of every one of them, so a patient missing one type leaves every
+    group; otherwise those with a Radiant case. Example: medulloblastoma treated on a protocol vs the other
     medulloblastoma patients = groups=[{"label": "ACNS0334 Regimen B",
     "patient_keys": [...]}], cohort_filters={"cns_integrated_diagnosis": [...]},
     others_label="Other protocols". Carriers vs non-carriers =

@@ -35,6 +35,10 @@ from ..queries.hits import (
 from ..results import ToolOutput, Truncation, failure, ok, respond
 from ..services.cases import case_context
 
+# The germline call quality, stated in every result: flagged, never filtered, so a real
+# but poorly covered hit stays visible to the geneticist.
+_QUALITY_RULE = (f"`low_quality` marks a germline call outside the platform's carrier rule "
+                 f"({_rules.GERMLINE_QUALITY_DEFINITION}): report it as uncertain, with its `filter` and `gq`.")
 # How an SNV is assigned to a gene (queries/hits.py), stated in every result.
 _GENE_RULE = ("An SNV is in a gene when it has a consequence on one of its transcripts other than upstream, "
               "downstream or intergenic; its impact is the impact on that gene.")
@@ -123,6 +127,7 @@ def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: l
                                truncated):
                 row["clinvar_interpretation"] = _sql.as_list(row.get("clinvar_interpretation"))
                 row["snv_inside_cnv"] = bool(row.get("snv_inside_cnv"))
+                row["low_quality"] = bool(row.get("low_quality"))
                 row["mechanism"] = mechanism(row.get("zygosity"), row["snv_inside_cnv"])
                 with_url(row, occurrence_url(tenant, case_id, seq_id, "germline_snv",
                                              task_id=snv_key["task_id"], variant_id=str(row["locus_id"])))
@@ -210,6 +215,7 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
                            truncated):
             row["clinvar_interpretation"] = _sql.as_list(row.get("clinvar_interpretation"))
             row["interpreted_plp"] = bool(row.get("interpreted_plp"))
+            row["low_quality"] = bool(row.get("low_quality"))
             with_url(row, occurrence_url(tenant, key["case_id"], key["seq_id"], "germline_snv",
                                          task_id=key["task_id"], variant_id=str(row["locus_id"])))
             with_url(row, variant_url(tenant, str(row["locus_id"])), key="variant_portal_url")
@@ -217,8 +223,8 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
 
     genes = sorted(g for g in germline if g)
     hits: dict[str, dict[str, list]] = {g: {"somatic_snv": [], "somatic_cnv": []} for g in genes}
-    # A tumor call of the first-hit variant itself (a tumor-only analysis keeps the
-    # germline variants): not a second hit, kept apart with its allele ratio.
+    # A tumor-normal call of the first-hit variant itself is not a second hit (a caller
+    # can keep it when the tumor lost the normal allele): kept apart with its ratio.
     first_hit_zygosity = {g: {str(r["locus_id"]): r.get("zygosity") for r in germline[g]} for g in genes}
     in_tumor: dict[str, list[dict]] = {g: [] for g in genes}
     if genes:
@@ -229,7 +235,8 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
                             "from somatic variants; somatic CNVs are")
         for data_type in ("somatic_snv_tn",):  # see above: never somatic_snv_to
             for key in _usable(keys, data_type, warnings):
-                for row in _capped(token, somatic_snv_query(tenant_db, key, genes),
+                loci = sorted({locus for zygosities in first_hit_zygosity.values() for locus in zygosities})
+                for row in _capped(token, somatic_snv_query(tenant_db, key, genes, loci),
                                    f"seq_id={key['seq_id']} {data_type}", truncated):
                     with_url(row, occurrence_url(tenant, case_id, key["seq_id"], data_type,
                                                  task_id=key["task_id"], variant_id=str(row["locus_id"])))
@@ -281,7 +288,7 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
             "the germline first-hit variant itself is not a second hit: it is listed under "
             "`germline_variant_in_tumor` with its tumor allele ratio; `possible_allelic_imbalance` (germline HET "
             f"and tumor ratio >= {_rules.ALLELIC_IMBALANCE_MIN_RATIO}) may mean loss of the normal allele (LOH), but "
-            f"tumor purity is unknown: state it as a possibility to check, not as a second hit. {_GENE_RULE}"
+            f"tumor purity is unknown: state it as a possibility to check, not as a second hit. {_QUALITY_RULE} {_GENE_RULE}"
         )
         result.update(_somatic(token, tenant_code, case, context["occurrence_keys"], warnings, truncated))
     else:
@@ -292,7 +299,7 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
             "(hemizygous: the only remaining allele is called homozygous). `mechanism` says which. "
             "`family_deletions` lists the other members' deletions over the gene; one that covers the SNV explains "
             "that member's WT call and an apparent uniparental disomy. "
-            f"Compound heterozygous: the pairs computed by the pipeline. {_GENE_RULE}"
+            f"Compound heterozygous: the pairs computed by the pipeline. {_QUALITY_RULE} {_GENE_RULE}"
         )
         result["sequencings"] = _germline(token, tenant_code, case, context["occurrence_keys"], warnings, truncated)
     cut = None
@@ -318,7 +325,15 @@ async def second_hit(case_id: int, tenant: str | None = None) -> ToolResult:
     P/LP variant (from their germline sequencing) and a somatic PASS SNV of
     HIGH/MODERATE impact or a PASS LOSS/CNLOH CNV (Knudson two-hit);
     ``germline_plp_without_somatic_event`` lists the germline P/LP genes with no
-    somatic event.
+    somatic event. Somatic SNVs come from tumor-normal analyses only (a
+    tumor-only analysis keeps the germline variants and is skipped);
+    somatic CNVs come from the tumor-only CNV calling. The germline first-hit
+    variant called in the tumor is never a second hit: it is listed under
+    ``germline_variant_in_tumor``, where ``possible_allelic_imbalance`` flags a
+    possible loss of the normal allele (tumor purity unknown: to check).
+
+    Germline calls outside the platform's carrier quality rule (FILTER PASS,
+    GQ >= 20, alternate depth >= 3) are kept and marked ``low_quality``.
 
     ``rules`` states the exact criteria applied: quote them when reporting.
     Each list stops at 200 rows; ``truncated.lists`` names the lists that were cut.

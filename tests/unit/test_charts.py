@@ -245,7 +245,7 @@ def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fak
     assert data["definition"]["SCN1A carriers"]["carrier_patients"] == 20
     assert data["cohort"] == {"filters": "all patients", "sequenced_only": True, "patients": 151,
                               "excluded_not_genotyped": 1,
-                              "genotyped_means": "an imported analysis of the carrier groups' data type(s): germline_snv"}
+                              "genotyped_means": "an imported analysis of every carrier group's data type (all of them): germline_snv"}
     assert len(_searches(fake_api)) == 2  # the cohort, paged by 100
 
 

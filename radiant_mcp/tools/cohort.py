@@ -47,7 +47,12 @@ def _link(tenant: str, criteria: Criteria, row: dict) -> str | None:
                               task_id=row.get("task_id"), variant_id=str(row.get("first_variant_id")))
     if criteria.data_type == "germline_cnv":
         return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "germline_cnv", task_id=row.get("task_id"))
-    # Somatic: tumor-normal or tumor-only is not known here; open the variants tab.
+    if criteria.data_type == "somatic_snv_tn":
+        # Tumor-normal analyses only (latest_tasks), so the variants section is known.
+        return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "somatic_snv_tn",
+                              task_id=row.get("task_id"), variant_id=str(row.get("first_variant_id")))
+    if criteria.data_type == "somatic_cnv":
+        return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "somatic_cnv", task_id=row.get("task_id"))
     return case_url(tenant, row.get("case_id"), tab="variants")
 
 

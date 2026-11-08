@@ -275,3 +275,22 @@ def test_a_variant_only_near_a_gene_is_not_a_hit_in_it():
     ]
     for sql, params in queries:
         assert _excluded_consequences(sql, params.values) == list(rules.NEARBY_CONSEQUENCES)
+
+
+def test_a_low_impact_first_hit_is_still_looked_up_in_the_tumor():
+    # A ClinVar P splice_region (LOW) first hit: its tumor call is fetched whatever the impact.
+    sql, params = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["TP53"], ["3"])
+    assert "OR o.locus_id IN (" in sql and 3 in params.values.values()
+
+
+def test_second_hit_marks_germline_calls_outside_the_quality_rule(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}], "germline_cnv": [{"id": 21}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5, (10, 21): 5}, None))
+    fake_sql.on("germline__cnv__occurrence", [{"gene": "SCN1A", "locus_id": 1001, "cnv_id": 501, "snv_inside_cnv": 0,
+                                               "low_quality": 1, "snv_filter": "LowQual", "snv_gq": 5}])
+    result = run(second_hit(1, tenant="demo"))
+    [hit] = result["data"]["sequencings"][0]["snv_cnv"]
+    assert hit["low_quality"] is True and hit["snv_gq"] == 5
+    assert "low_quality" in result["data"]["rules"]
+    [(sql, values)] = [(q, v) for q, v in fake_sql.queries if "germline__cnv__occurrence" in q]
+    assert bound_value(sql, values, "o.gq >= ") == 20

@@ -25,6 +25,15 @@ SOMATIC_SECOND_HIT_CNV_TYPES = ("LOSS", "CNLOH")
 
 PASS = "PASS"
 HET = "HET"
+# A germline SNV call counts as a carrier when it passes the ETL's carrier rule
+# (`qualifies` in germline_snv_staging_variant_freq_insert.sql): FILTER PASS, GQ and
+# alternate depth at least these (queries/quality.py). Keep them equal to the ETL's.
+GERMLINE_MIN_GQ = 20
+GERMLINE_MIN_AD_ALT = 3
+GERMLINE_QUALITY_DEFINITION = (
+    f"germline SNV calls with FILTER PASS, GQ >= {GERMLINE_MIN_GQ} and alternate depth >= {GERMLINE_MIN_AD_ALT} "
+    "(the platform's carrier rule, as in the variant frequencies)"
+)
 # Calls with an alternate allele. The ETL loads only rows with one (has_alt), so a
 # filter on them is a safeguard, not a semantic change.
 ALT_ZYGOSITIES = ("HET", "HOM", "HEM")

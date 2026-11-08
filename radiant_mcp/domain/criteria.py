@@ -42,6 +42,8 @@ class Criteria:
             out["max_gnomad_af"] = f"< {self.max_gnomad_af:g} or absent from gnomAD"
         if not self.is_snv or self.is_somatic:
             out["filter"] = _rules.PASS
+        else:
+            out["quality"] = _rules.GERMLINE_QUALITY_DEFINITION
         if self.is_snv:
             out["gene_match"] = ("a consequence on a transcript of the gene (not only the picked one), "
                                  "other than upstream, downstream or intergenic (a variant only near "
