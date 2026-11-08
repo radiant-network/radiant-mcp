@@ -136,3 +136,19 @@ def test_germline_carriers_pass_the_platform_quality_rule():
     somatic_sql, _ = carrier_queries.totals_query(
         "demo", build_criteria("somatic_snv_tn", "TP53", None, None, None, None, None))
     assert "o.gq >=" not in somatic_sql
+
+
+def test_oncoprint_uses_the_same_gene_membership_as_the_carriers():
+    # Upstream / downstream / intergenic consequences do not put a variant in a gene,
+    # and the impact filter is the impact on that gene, as in cohort_carriers.
+    from radiant_mcp.domain import rules
+    from radiant_mcp.queries.charts import oncoprint_query
+
+    sql, params = oncoprint_query("demo", "germline_snv", ["TP53"], 0.01, ["HIGH"])
+    assert "snv__consequence_filter cf" in sql and "snv__variant_partitioned" not in sql
+    assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
+    import re
+
+    match = re.search(r"cf\.consequence NOT IN \(((?:%\(p\d+\)s(?:, )?)+)\)", sql)
+    assert match and [params.values[n] for n in re.findall(r"%\((p\d+)\)s", match.group(1))] == list(
+        rules.NEARBY_CONSEQUENCES)

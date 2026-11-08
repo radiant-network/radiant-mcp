@@ -83,7 +83,9 @@ def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) 
     for member in case.get("members", []):
         with_url(member, patient_url(tenant_code, member.get("patient_key")))
 
-    case_type = (case.get("case_type") or "").lower()
+    # The portal's case entity says `germline_family` for a germline case with more than
+    # one member (calculateCaseType): still the two germline data types.
+    case_type = (case.get("case_type") or "").lower().removesuffix("_family")
     if case_type == "germline":
         data_types = GERMLINE_CASE_DATA_TYPES
     elif case_type == "somatic":

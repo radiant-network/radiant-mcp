@@ -41,7 +41,10 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
     p = _sql.Params()
     sql = (
         "WITH snv AS ("
-        " SELECT DISTINCT o.locus_id, o.zygosity, o.transmission_mode, cf.symbol, v.hgvsg, v.aa_change, v.vep_impact,"
+        # vep_impact = the impact on this gene (one row per impact: the tool keeps the most
+        # severe); hgvsg / aa_change / picked_vep_impact describe the picked transcript.
+        " SELECT DISTINCT o.locus_id, o.zygosity, o.transmission_mode, cf.symbol, v.hgvsg, v.aa_change, cf.vep_impact,"
+        "  v.vep_impact AS picked_vep_impact,"
         "  v.gnomad_v3_af, v.clinvar_interpretation, o.exomiser_acmg_classification, v.chromosome, v.start,"
         f"  NOT {germline_qualifies(p)} AS low_quality, o.filter, o.gq"
         f" FROM {tenant_db}.germline__snv__occurrence o"
@@ -60,7 +63,8 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
         ")"
         " SELECT snv.symbol AS gene, snv.locus_id, snv.hgvsg, snv.start AS snv_start, snv.aa_change, snv.zygosity,"
         "  snv.transmission_mode,"
-        "  snv.vep_impact, snv.gnomad_v3_af, snv.clinvar_interpretation, snv.exomiser_acmg_classification,"
+        "  snv.vep_impact, snv.picked_vep_impact, snv.gnomad_v3_af, snv.clinvar_interpretation,"
+        "  snv.exomiser_acmg_classification,"
         "  snv.low_quality, snv.filter AS snv_filter, snv.gq AS snv_gq,"
         "  cnv.cnv_id, cnv.type AS cnv_type, cnv.chromosome AS cnv_chromosome, cnv.start AS cnv_start,"
         "  cnv.end AS cnv_end, cnv.length AS cnv_length, cnv.cn AS cnv_cn,"
@@ -153,7 +157,8 @@ def somatic_snv_query(tenant_db: str, key: dict, genes: list[str],
         loci = ", ".join(p(int(locus)) for locus in first_hit_loci)
         impact = f"({impact} OR o.locus_id IN ({loci}))"
     sql = (
-        "SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, v.vep_impact, o.tumor_ad_ratio,"
+        "SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, cf.vep_impact,"
+        " v.vep_impact AS picked_vep_impact, o.tumor_ad_ratio,"
         " o.tumor_zygosity"
         f" FROM {tenant_db}.somatic__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(key['variant_part'])}"

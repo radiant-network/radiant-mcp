@@ -31,6 +31,11 @@ from typing import Any
 import mysql.connector
 from mysql.connector.errors import Error as MySQLError
 
+try:  # The C extension raises its own error class from nextset().
+    from _mysql_connector import MySQLError as CExtensionError
+except ImportError:  # pragma: no cover - pure-Python connector
+    CExtensionError = MySQLError
+
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -87,6 +92,8 @@ class Result:
     columns: list[str] = field(default_factory=list)
     rows: list[tuple] = field(default_factory=list)
     truncated: bool = False
+    # Result sets of later statements, not returned (several statements in one call).
+    ignored_result_sets: int = 0
 
 
 def default_database() -> str | None:
@@ -191,23 +198,35 @@ def query(
     database: str | None = None,
     max_rows: int | None = None,
 ) -> Result:
-    """Run one statement as the caller and return its first result set.
+    """Run a statement as the caller and return its first result set.
 
-    ``params`` are bound by the MySQL connector: ``%s`` placeholders with a
-    tuple, ``%(name)s`` with a dict. A literal ``%`` must then be ``%%``.
+    StarRocks runs every statement of a multi-statement call (it ignores the
+    client's MULTI_STATEMENTS flag): statements without a result (``USE``,
+    ``SET``) before the first result set are skipped, the result sets after it
+    are counted in ``ignored_result_sets``, and an error in any statement is
+    raised. ``params`` are bound by the MySQL connector: ``%s`` placeholders
+    with a tuple, ``%(name)s`` with a dict. A literal ``%`` must then be ``%%``.
     """
     with connect(token, database, max_rows) as conn:
         cursor = conn.cursor()
         try:
             cursor.execute(sql, params)
-            if not cursor.description:
-                return Result()
+            while not cursor.description:
+                if not cursor.nextset():
+                    return Result()
             columns = [d[0] for d in cursor.description]
             if max_rows is None:
-                return Result(columns, list(cursor.fetchall()))
-            rows = list(cursor.fetchmany(max_rows + 1))
-            return Result(columns, rows[:max_rows], truncated=len(rows) > max_rows)
-        except MySQLError as exc:
+                result = Result(columns, list(cursor.fetchall()))
+            else:
+                rows = list(cursor.fetchmany(max_rows + 1))
+                result = Result(columns, rows[:max_rows], truncated=len(rows) > max_rows)
+                cursor.fetchall()  # at most one row left: sql_select_limit stops at max_rows + 1
+            while cursor.nextset():
+                if cursor.description:
+                    result.ignored_result_sets += 1
+                    cursor.fetchall()
+            return result
+        except (MySQLError, CExtensionError) as exc:
             raise _error(exc) from exc
         finally:
             # Unread rows of a truncated result can make the close fail.

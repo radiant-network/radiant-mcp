@@ -312,3 +312,11 @@ def test_a_null_gq_or_alt_depth_is_low_quality():
                    [("PASS", 40, 10), ("PASS", None, 10), ("PASS", 40, None), ("LowQual", 40, 10), ("PASS", 5, 10)])
     low_quality = [r[0] for r in db.execute(f"SELECT NOT {condition} FROM o", p.values)]
     assert low_quality == [0, 1, 1, 1, 1]
+
+
+def test_the_shown_impact_is_the_most_severe_on_the_reported_gene():
+    # A variant MODERATE on BRCA2 but picked on an overlapping gene (LOW): one row, MODERATE.
+    rows = [{"locus_id": 1, "gene": "BRCA2", "vep_impact": "LOW", "picked_vep_impact": "LOW"},
+            {"locus_id": 1, "gene": "BRCA2", "vep_impact": "MODERATE", "picked_vep_impact": "LOW"}]
+    [row] = hits._most_severe(rows, ("locus_id", "gene"))
+    assert row["vep_impact"] == "MODERATE" and row["picked_vep_impact"] == "LOW"

@@ -56,15 +56,23 @@ def _read_query(token: str, query: str, db: str | None) -> ToolOutput:
     if result.truncated:
         truncated = (f"Only the first {max_rows} rows are returned. Aggregate (COUNT, GROUP BY) "
                      "or add a narrower WHERE / LIMIT instead of paging.")
-    return ok({"columns": result.columns, "rows": _rows(result), "returned": len(result.rows)}, truncated=truncated)
+    warnings = []
+    if result.ignored_result_sets:
+        warnings.append(f"{result.ignored_result_sets} later statement(s) also returned rows, not shown: only the "
+                        "first result set is returned. Send one SELECT per call.")
+    return ok({"columns": result.columns, "rows": _rows(result), "returned": len(result.rows)},
+              warnings=warnings, truncated=truncated)
 
 
 async def read_query(query: str, db: str | None = None) -> ToolResult:
     """Run one read-only SQL statement in StarRocks, as the caller.
 
     Last resort: call ``describe_schema`` first and prefer the Radiant tools.
-    One statement per call. The result holds at most a few hundred rows; when
-    more exist, ``truncated`` is set, so aggregate or filter instead.
+    Send one SELECT per call, with ``db`` rather than a ``USE`` statement: when
+    several statements are sent, all of them run, only the first result set is
+    returned and a warning says how many were not shown. The result holds at
+    most a few hundred rows; when more exist, ``truncated`` is set, so
+    aggregate or filter instead.
 
     Args:
         query: The SQL statement, e.g. a SELECT with a LIMIT.

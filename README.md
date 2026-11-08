@@ -54,7 +54,7 @@ this component holds no StarRocks credentials.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `STARROCKS_HOST` | Yes | - | StarRocks FE (Frontend) hostname or IP (connection target only) |
+| `STARROCKS_HOST` | No | `localhost` | StarRocks FE (Frontend) hostname or IP (connection target only) |
 | `STARROCKS_PORT` | No | `9030` | StarRocks FE query port |
 | `STARROCKS_DB` | No | - | Default database to use |
 | `STARROCKS_CONNECTION_TIMEOUT` | No | `10` | Connection timeout, in seconds |

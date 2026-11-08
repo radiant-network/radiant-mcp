@@ -42,7 +42,23 @@ _QUALITY_RULE = (f"`low_quality` marks a germline call outside the platform's ca
                  "`snv_gq` in snv_cnv).")
 # How an SNV is assigned to a gene (queries/hits.py), stated in every result.
 _GENE_RULE = ("An SNV is in a gene when it has a consequence on one of its transcripts other than upstream, "
-              "downstream or intergenic; its impact is the impact on that gene.")
+              "downstream or intergenic; `vep_impact` is its most severe impact on that gene, while `hgvsg`, "
+              "`aa_change` and `picked_vep_impact` describe the picked transcript, which can be another gene's.")
+
+
+_IMPACT_ORDER = {"HIGH": 0, "MODERATE": 1, "LOW": 2, "MODIFIER": 3}
+
+
+def _most_severe(rows: list[dict], key: tuple[str, ...]) -> list[dict]:
+    """One row per ``key``, the one with the most severe ``vep_impact``: the query returns
+    a row per impact of the variant on the gene's transcripts."""
+    kept: dict[tuple, dict] = {}
+    for row in rows:
+        k = tuple(row.get(f) for f in key)
+        rank = _IMPACT_ORDER.get(row.get("vep_impact"), 4)
+        if k not in kept or rank < _IMPACT_ORDER.get(kept[k].get("vep_impact"), 4):
+            kept[k] = row
+    return list(kept.values())
 
 
 _NOT_FIRST_HIT = object()
@@ -124,8 +140,8 @@ def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: l
         if not same_seq_cnv:
             entry["snv_cnv_note"] = "no germline CNV analysis for this sequencing"
         for cnv_key in same_seq_cnv:
-            for row in _capped(token, snv_cnv_query(tenant_db, snv_key, cnv_key), f"seq_id={seq_id} snv_cnv",
-                               truncated):
+            for row in _most_severe(_capped(token, snv_cnv_query(tenant_db, snv_key, cnv_key),
+                                            f"seq_id={seq_id} snv_cnv", truncated), ("locus_id", "gene", "cnv_id")):
                 row["clinvar_interpretation"] = _sql.as_list(row.get("clinvar_interpretation"))
                 row["snv_inside_cnv"] = bool(row.get("snv_inside_cnv"))
                 row["low_quality"] = bool(row.get("low_quality"))
@@ -237,8 +253,8 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
         for data_type in ("somatic_snv_tn",):  # see above: never somatic_snv_to
             for key in _usable(keys, data_type, warnings):
                 loci = sorted({locus for zygosities in first_hit_zygosity.values() for locus in zygosities})
-                for row in _capped(token, somatic_snv_query(tenant_db, key, genes, loci),
-                                   f"seq_id={key['seq_id']} {data_type}", truncated):
+                for row in _most_severe(_capped(token, somatic_snv_query(tenant_db, key, genes, loci),
+                                                f"seq_id={key['seq_id']} {data_type}", truncated), ("locus_id", "gene")):
                     with_url(row, occurrence_url(tenant, case_id, key["seq_id"], data_type,
                                                  task_id=key["task_id"], variant_id=str(row["locus_id"])))
                     germline_zygosity = first_hit_zygosity[row["gene"]].get(str(row["locus_id"]), _NOT_FIRST_HIT)
