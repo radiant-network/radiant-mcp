@@ -49,11 +49,12 @@ compute their own answers, and follow these rules:
   analysis is read. An analysis the pipeline has not finished loading is
   ignored until it is loaded, and the previous one is used meanwhile.
 - **Somatic variants come from tumor-normal analyses only.** A tumor-only
-  analysis cannot tell the patient's inherited variants from the tumor's own:
-  most of what it calls is inherited. So the somatic small variants (SNVs)
-  come from analyses that compare the tumor with a normal sample of the same
-  patient. Somatic copy number changes (CNVs) are the exception: the platform
-  only produces them from tumor-only calling, so they are used as they are.
+  analysis cannot tell the patient's germline (constitutional) variants from
+  the tumor's own: most of what it calls is germline. So the somatic small
+  variants (SNVs) come from analyses that compare the tumor with a normal
+  sample of the same patient. Somatic copy number changes (CNVs) are the
+  exception: the platform only produces them from tumor-only calling, so they
+  are used as they are.
 - **Germline call quality.** A germline variant call counts only when it
   passes the same quality rule as the portal's variant frequencies: the
   variant passes the caller's filters, the genotype quality is at least 20
@@ -135,9 +136,9 @@ zygosity, transmission, parental origin and Exomiser classification.
 
 Lists and filters the copy number changes (CNVs) of one analysis of a case,
 like the CNV table of the case in the portal: type (loss, gain, copy-neutral
-loss of heterozygosity, gain with loss of heterozygosity), genes covered, position, length, copy number,
-quality, gene panels. No CNV analysis listed for a sequencing means none was
-done.
+loss of heterozygosity, gain with loss of heterozygosity), genes covered,
+position, length, copy number, quality, gene panels. No CNV analysis listed
+for a sequencing means none was done.
 
 ### variant_details
 
@@ -151,8 +152,9 @@ genotype, read depth, quality, transmission, parental origin, Exomiser.
 ### variant_carriers
 
 The cases of the tenant that carry one germline variant (the case you are
-looking at included), as on the portal's variant page: the cases where a geneticist interpreted it
-(classification, condition, zygosity, phenotypes) and those where it is
+looking at included), as on the portal's variant page: the cases where a
+geneticist interpreted it (classification, condition, zygosity, phenotypes)
+and those where it is
 present but not interpreted. Up to 100 cases per list.
 
 ### second_hit
@@ -168,13 +170,13 @@ tumor-suppressor disease.
     which. The other members' deletions over the same gene are shown, which
     can explain an unexpected genotype in a parent;
   - the compound heterozygous pairs found by the pipeline.
-- **Somatic case:** genes where the patient has an inherited P/LP variant
+- **Somatic case:** genes where the patient has a germline P/LP variant
   (from their germline sequencing) and the tumor has a second event in the
   same gene: a somatic variant of high or moderate impact from a tumor-normal
   analysis, or a loss or copy-neutral loss of heterozygosity. When the
-  inherited variant itself shows up in the tumor, it is not counted as a
+  germline variant itself shows up in the tumor, it is not counted as a
   second hit; when its share of reads in the tumor is high (60 % or more,
-  for an inherited heterozygous variant), the answer flags a possible loss of
+  for a germline heterozygous variant), the answer flags a possible loss of
   the normal copy, to be checked, since the tumor purity is not known.
   Tumor-only small-variant analyses are not used.
 

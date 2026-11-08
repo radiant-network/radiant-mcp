@@ -115,8 +115,9 @@ def _genotype_phenotype(
         cut.append("phenotypes")
     truncated = None
     if cut:
-        truncated = Truncation(reason=f"`phenotypes` stops at {limit} terms (raise `limit`, up to {PHENOTYPES_MAX_LIMIT}) "
-                                      f"and `carriers_with_term` at {CARRIERS_MAX_LIMIT} carriers.", lists=cut)
+        reasons = {"phenotypes": f"`phenotypes` stops at {limit} terms (raise `limit`, up to {PHENOTYPES_MAX_LIMIT})",
+                   "carriers_with_term": f"`carriers_with_term` stops at {CARRIERS_MAX_LIMIT} carriers"}
+        truncated = Truncation(reason="; ".join(reasons[name] for name in cut) + ".", lists=cut)
     return ok(result, truncated=truncated)
 
 

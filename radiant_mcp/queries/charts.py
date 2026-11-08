@@ -5,6 +5,7 @@ from .. import sql as _sql
 from ..domain import data_types
 from ..domain import rules as _rules
 from ..domain.rules import ALT_ZYGOSITIES
+from .impact import most_severe_in
 from .quality import germline_qualifies
 from .sequencing import latest_task_join
 
@@ -61,8 +62,8 @@ def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af
         # gene other than upstream / downstream / intergenic, and the impact on that gene.
         gene_where = [f"cf.symbol IN ({p.list(genes)})",
                       f"cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"]
-        if vep_impact:
-            gene_where.append(f"cf.vep_impact IN ({p.list(vep_impact)})")
+        # The impact filter is on the variant's most severe impact on the gene.
+        having = f" HAVING {most_severe_in(p, vep_impact)}" if vep_impact else ""
         rare = ""
         if max_gnomad_af is not None:
             rare = (f" JOIN {tenant_db}.snv__variant sv ON sv.locus_id = o.locus_id"
@@ -75,7 +76,7 @@ def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af
         return (
             "WITH g AS (SELECT cf.locus_id, cf.symbol AS gene, array_join(array_agg(DISTINCT cf.consequence), ',') AS kind"
             f" FROM {_sql.shared_db()}.snv__consequence_filter cf WHERE {' AND '.join(gene_where)}"
-            " GROUP BY cf.locus_id, cf.symbol),"
+            f" GROUP BY cf.locus_id, cf.symbol{having}),"
             f" x AS (SELECT o.{seq} AS seq_id, o.task_id, g.gene, g.kind"
             f" FROM {tenant_db}.{table} o JOIN g ON g.locus_id = o.locus_id{rare} WHERE {occ_filter})"
             f" SELECT DISTINCT s.case_id, x.gene, x.kind FROM x {sequencing}{tail}"

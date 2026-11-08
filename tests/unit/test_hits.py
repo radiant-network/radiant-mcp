@@ -10,6 +10,7 @@ from radiant_mcp.domain import rules
 from radiant_mcp.domain.criteria import build_criteria
 from radiant_mcp.queries import carriers
 from radiant_mcp.queries import hits as hit_queries
+from radiant_mcp.queries.impact import impact_label, impact_rank
 from radiant_mcp.queries.quality import germline_qualifies
 from radiant_mcp.services import cases as case_service
 from radiant_mcp.tools import hits
@@ -299,7 +300,6 @@ def test_second_hit_marks_germline_calls_outside_the_quality_rule(fake_api, fake
 
 def test_a_null_gq_or_alt_depth_is_low_quality():
     # The ETL stores GQ 0 and alt depth 0 as NULL: `NOT qualifies` must be true, not NULL.
-
     p = _sql.Params()
     condition = re.sub(r"%\((p\d+)\)s", r":\1", germline_qualifies(p))
     db = sqlite3.connect(":memory:")
@@ -328,9 +328,8 @@ def test_compound_het_impacts_are_those_on_the_pair_gene():
 
 
 def test_an_unknown_impact_stays_unknown():
-
     p = _sql.Params()
-    expr = hit_queries._impact_label(p, f"MIN({hit_queries._impact_rank(p, 'vep_impact')})")
+    expr = impact_label(p, f"MIN({impact_rank(p, 'vep_impact')})")
     expr = re.sub(r"%\((p\d+)\)s", r":\1", expr)
     db = sqlite3.connect(":memory:")
     db.execute("CREATE TABLE t (g, vep_impact)")

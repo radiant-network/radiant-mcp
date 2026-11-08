@@ -10,6 +10,7 @@ from .. import sql as _sql
 from ..domain import rules as _rules
 from ..domain.criteria import Criteria
 from ..enums import ENUMS
+from .impact import most_severe_in
 from .quality import germline_qualifies
 from .sequencing import latest_task_join
 
@@ -25,7 +26,8 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
 
     An SNV is in the gene when one of its consequences is on a transcript of the
     gene (``snv__consequence_filter``), not only its picked one, so a variant of two
-    overlapping genes counts for both; ``vep_impact`` is its impact on that gene. An
+    overlapping genes counts for both; a ``vep_impact`` filter is on its most severe impact
+    on that gene. An
     upstream, downstream or intergenic consequence does not count
     (``rules.NEARBY_CONSEQUENCES``): VEP reports every gene within 5 kb.
     """
@@ -38,8 +40,8 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
     if criteria.is_snv:
         gene_where = [f"cf.symbol = {p(criteria.gene)}",
                       f"cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"]
-        if criteria.vep_impact:
-            gene_where.append(f"cf.vep_impact IN ({p.list(criteria.vep_impact)})")
+        # The impact filter is on the variant's most severe impact on the gene.
+        gene_having = f" HAVING {most_severe_in(p, criteria.vep_impact)}" if criteria.vep_impact else ""
         where = []
         if criteria.clinvar:
             where.append(f"arrays_overlap(sv.clinvar_interpretation, [{p.list(criteria.clinvar)}])")
@@ -60,7 +62,8 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
         occ_filter = (" WHERE " + " AND ".join(occ_where)) if occ_where else ""
         return (
             "WITH g AS ("
-            f" SELECT DISTINCT cf.locus_id FROM {shared_db}.snv__consequence_filter cf WHERE {' AND '.join(gene_where)}"
+            f" SELECT cf.locus_id FROM {shared_db}.snv__consequence_filter cf WHERE {' AND '.join(gene_where)}"
+            f" GROUP BY cf.locus_id{gene_having}"
             "), v AS ("
             " SELECT sv.locus_id, sv.hgvsg, sv.vep_impact, sv.variant_class, sv.consequences"
             f" FROM {tenant_db}.snv__variant sv JOIN g ON g.locus_id = sv.locus_id{variant_filter}"
@@ -115,13 +118,12 @@ def summary_queries(tenant: str, criteria: Criteria) -> dict[str, tuple[str, _sq
     if criteria.is_snv:
         p = _sql.Params()
         # The consequences on the gene's own transcripts, as the gene membership: the picked
-        # transcript can be an overlapping gene's.
-        impact = f" AND cf.vep_impact IN ({p.list(criteria.vep_impact)})" if criteria.vep_impact else ""
+        # transcript can be an overlapping gene's. The impact filter already chose the variants.
         out["by_consequence"] = (
             carriers_cte(p, tenant, criteria)
             + " SELECT cf.consequence, COUNT(DISTINCT car.variant_id) AS variants, COUNT(DISTINCT car.patient_id) AS patients"
             f" FROM car JOIN {_sql.shared_db()}.snv__consequence_filter cf ON cf.locus_id = car.variant_id"
-            f" AND cf.symbol = {p(criteria.gene)} AND cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)}){impact}"
+            f" AND cf.symbol = {p(criteria.gene)} AND cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"
             f" GROUP BY cf.consequence ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
             p,
         )

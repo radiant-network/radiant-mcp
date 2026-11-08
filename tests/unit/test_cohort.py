@@ -1,6 +1,7 @@
 """``cohort_carriers`` and ``genotype_phenotype``."""
 
 import re
+import sqlite3
 
 import pytest
 from conftest import PORTAL, bound_value, echo_gene_search
@@ -10,6 +11,7 @@ from radiant_mcp.domain import rules
 from radiant_mcp.domain.criteria import build_criteria
 from radiant_mcp.queries import carriers as carrier_queries
 from radiant_mcp.queries.charts import oncoprint_query
+from radiant_mcp.queries.impact import most_severe_in
 from radiant_mcp.tools.cohort import cohort_carriers, genotype_phenotype
 
 
@@ -54,7 +56,8 @@ def test_carriers(fake_api, fake_sql, run):
         "max_gnomad_af": "< 0.01 or absent from gnomAD",
         "gene_match": "a consequence on a transcript of the gene (not only the picked one), "
                       "other than upstream, downstream or intergenic (a variant only near "
-                      "the gene does not count); vep_impact is the impact on that gene",
+                      "the gene does not count); a vep_impact filter keeps a variant by its most severe impact on "
+                      "that gene",
         "reruns": "the latest imported task of each sequencing in each case",
         "quality": "germline SNV calls with FILTER PASS, GQ >= 20 and alternate depth >= 3 "
                    "(the platform's carrier rule, as in the variant frequencies)",
@@ -110,7 +113,8 @@ def test_carriers_match_any_transcript_of_the_gene_and_the_latest_task():
     sql, params = carrier_queries.totals_query("demo", criteria)
     # The gene and the impact come from the consequences on the gene's transcripts.
     assert "radiant.snv__consequence_filter cf" in sql
-    assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
+    # The impact filter is on the most severe impact per variant and gene: HIGH is rank 0.
+    assert "HAVING MIN(CASE cf.vep_impact" in sql and bound_value(sql, params.values, "END) IN (") == 0
     assert "demo_tenant.snv__variant sv" in sql and "snv__variant_partitioned" not in sql
     assert bound_value(sql, params.values, "s.task_type = ") == "radiant_germline_annotation"
     cnv_sql, cnv_params = carrier_queries.totals_query(
@@ -145,7 +149,8 @@ def test_oncoprint_uses_the_same_gene_membership_as_the_carriers():
     # and the impact filter is the impact on that gene, as in cohort_carriers.
     sql, params = oncoprint_query("demo", "germline_snv", ["TP53"], 0.01, ["HIGH"])
     assert "snv__consequence_filter cf" in sql and "snv__variant_partitioned" not in sql
-    assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
+    # The impact filter is on the most severe impact per variant and gene: HIGH is rank 0.
+    assert "HAVING MIN(CASE cf.vep_impact" in sql and bound_value(sql, params.values, "END) IN (") == 0
 
     match = re.search(r"cf\.consequence NOT IN \(((?:%\(p\d+\)s(?:, )?)+)\)", sql)
     assert match and [params.values[n] for n in re.findall(r"%\((p\d+)\)s", match.group(1))] == list(
@@ -163,3 +168,21 @@ def test_a_complete_list_of_exactly_limit_rows_is_not_cut(fake_api, fake_sql, ru
     fake_sql.rules.reverse()
     result = run(cohort_carriers("SCN1A", limit=2, tenant="demo"))
     assert result["data"]["returned"] == 2 and result["truncated"]["lists"] == ["carriers"]
+
+
+def test_an_impact_filter_keeps_a_variant_by_its_most_severe_impact_on_the_gene():
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE cf (locus_id, vep_impact)")
+    # 1: missense + intronic on the gene; 2: stop + missense; 3: synonymous only.
+    db.executemany("INSERT INTO cf VALUES (?, ?)", [(1, "MODERATE"), (1, "MODIFIER"), (2, "HIGH"), (2, "MODERATE"),
+                                                    (3, "LOW")])
+
+    def kept(impacts):
+        p = _sql.Params()
+        having = re.sub(r"%\((p\d+)\)s", r":\1", most_severe_in(p, impacts))
+        return [r[0] for r in db.execute(f"SELECT locus_id FROM cf GROUP BY locus_id HAVING {having} "
+                                         "ORDER BY locus_id", p.values)]
+
+    assert kept(["MODIFIER"]) == []      # 1 is MODERATE on the gene, not MODIFIER
+    assert kept(["MODERATE"]) == [1]     # 2 is HIGH on the gene
+    assert kept(["HIGH", "MODERATE"]) == [1, 2]
