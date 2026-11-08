@@ -30,11 +30,13 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
             resolved.append(_sql.symbol(found["symbol"]))
         else:
             unknown.append(gene)
-    # Two aliases of one gene (TP53, P53) resolve to the same symbol: one row.
+    # A symbol and its Ensembl id resolve to the same symbol: one row.
     resolved = list(dict.fromkeys(resolved))
     if not resolved:
-        raise not_found(f"No known gene among {genes}.")
-    warnings = [f"unknown gene(s), left out: {', '.join(unknown)}"] if unknown else []
+        raise not_found(f"No known gene among {genes}. Use official HGNC symbols (e.g. ERBB2, not HER2): "
+                        "aliases are not resolved.")
+    warnings = ([f"unknown gene(s), left out: {', '.join(unknown)} (use official HGNC symbols: aliases "
+                 "are not resolved)"] if unknown else [])
     cells: dict[tuple[str, str], set[str]] = {}
     truncated = []
     for data_type in data_types:
@@ -98,7 +100,8 @@ async def oncoprint(
     to leave out common polymorphisms.
 
     Args:
-        genes: 1 to 20 gene symbols.
+        genes: 1 to 20 official HGNC symbols (or Ensembl gene ids); aliases are
+            not resolved.
         data_types: Among germline_snv (default), germline_cnv, somatic_snv_all (tumor-normal
             and tumor-only together), somatic_cnv.
         max_gnomad_af: SNV only; keeps variants below this gnomAD AF or absent (e.g. 0.01).

@@ -14,7 +14,7 @@ from ...domain.data_types import COHORT_SNV_DATA_TYPES, CohortSnvDataType
 from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.carriers import lollipop_query
 from ...results import ToolOutput, failure, not_found, ok, respond
-from ...services.genes import resolve_gene
+from ...services.genes import not_found_message, resolve_gene
 
 _AA_POSITION = re.compile(r"(\d+)")
 
@@ -23,7 +23,7 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | No
     tenant_code = resolve_tenant(api, tenant)
     gene = resolve_gene(api, tenant_code, criteria_.gene)
     if gene is None:
-        raise not_found(f"Gene {criteria_.gene!r} not found.")
+        raise not_found(not_found_message(criteria_.gene))
     criteria_ = replace(criteria_, gene=_sql.symbol(gene["symbol"]))
     rows = _sql.run(token, *lollipop_query(tenant_code, criteria_))
     positioned = []
@@ -70,7 +70,8 @@ async def lollipop(
     the result names; variants on other transcripts are counted, not drawn.
 
     Args:
-        gene: Gene symbol.
+        gene: Official HGNC symbol (case-insensitive) or Ensembl gene id; aliases
+            are not resolved.
         data_type: germline_snv (default) or somatic_snv_all (tumor-normal and tumor-only together).
         vep_impact: e.g. ["HIGH", "MODERATE"].
         clinvar: e.g. ["Pathogenic", "Likely_pathogenic"] (any of them).

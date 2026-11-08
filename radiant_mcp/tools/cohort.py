@@ -27,7 +27,7 @@ from ..queries.carriers import (
     totals_query,
 )
 from ..results import ToolOutput, Truncation, failure, not_found, ok, respond
-from ..services.genes import resolve_gene
+from ..services.genes import not_found_message, resolve_gene
 
 CARRIERS_MAX_LIMIT = 200
 PHENOTYPES_MAX_LIMIT = 100
@@ -37,7 +37,7 @@ def _resolve(api: RadiantApi, tenant: str | None, criteria: Criteria) -> tuple[s
     tenant_code = resolve_tenant(api, tenant)
     gene = resolve_gene(api, tenant_code, criteria.gene)
     if gene is None:
-        raise not_found(f"Gene {criteria.gene!r} not found.")
+        raise not_found(not_found_message(criteria.gene))
     return tenant_code, replace(criteria, gene=_sql.symbol(gene["symbol"]))
 
 
@@ -138,7 +138,8 @@ async def cohort_carriers(
     carry a variant in GENE" questions.
 
     Args:
-        gene: Gene symbol or alias (resolved by the portal gene search).
+        gene: Official HGNC symbol (case-insensitive, e.g. ERBB2) or Ensembl gene
+            id; aliases (HER2, P53) are not resolved.
         data_type: germline_snv (default), germline_cnv, somatic_snv_all or somatic_cnv.
             somatic_snv_all covers tumor-normal and tumor-only analyses together.
         vep_impact: SNV only, e.g. ["HIGH", "MODERATE"].
@@ -180,7 +181,8 @@ async def genotype_phenotype(
     ``portal_url``. Only observed (positive) phenotypes are counted.
 
     Args:
-        gene: Gene symbol or alias.
+        gene: Official HGNC symbol (case-insensitive) or Ensembl gene id; aliases
+            are not resolved.
         hpo_term: Optional HPO id (HP:0000000); find it with lookup_terms.
         data_type: germline_snv (default), germline_cnv, somatic_snv_all or somatic_cnv.
             somatic_snv_all covers tumor-normal and tumor-only analyses together.

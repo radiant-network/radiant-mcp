@@ -10,7 +10,7 @@ from .. import sql as _sql
 from ..portal_api import RadiantApi, clamp, resolve_tenant
 from ..queries.genes import gene_queries
 from ..results import ToolOutput, Truncation, error, failure, not_found, ok, respond
-from ..services.genes import resolve_gene
+from ..services.genes import not_found_message, resolve_gene
 
 ONTOLOGIES = {
     "hpo": ("hpo", "hpo_term_auto_complete"),
@@ -25,7 +25,7 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> To
     tenant_code = resolve_tenant(api, tenant)
     resolved = resolve_gene(api, tenant_code, gene)
     if resolved is None:
-        raise not_found(f"Gene {gene!r} not found.")
+        raise not_found(not_found_message(gene))
     symbol = _sql.symbol(resolved["symbol"])
     queries = gene_queries(symbol, resolved.get("ensembl_gene_id"), tenant_code)
 
@@ -104,7 +104,8 @@ async def gene_info(symbol: str, tenant: str | None = None) -> ToolResult:
     ``warnings``.
 
     Args:
-        symbol: Gene symbol, alias or Ensembl gene id (e.g. SCN1A, ENSG00000144285).
+        symbol: Official HGNC symbol (case-insensitive) or Ensembl gene id (e.g.
+            SCN1A, ENSG00000144285); aliases (HER2, P53) are not resolved.
         tenant: Tenant code (auto-resolved when the user has only one).
     """
     try:
