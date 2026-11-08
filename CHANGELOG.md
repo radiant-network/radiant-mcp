@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/radiant-network/radiant-mcp/compare/v1.0.2...v1.0.3) (2026-11-08)
+
+
+### Bug Fixes
+
+* tumor-normal somatic SNVs only, germline carrier quality rule, unloaded re-analyses, and review fixes ([#61](https://github.com/radiant-network/radiant-mcp/issues/61)) ([396005b](https://github.com/radiant-network/radiant-mcp/commit/396005b1a14f648e760c827e3976c59a2855cc76))
+
 ## [1.0.2](https://github.com/radiant-network/radiant-mcp/compare/v1.0.1...v1.0.2) (2026-11-08)
 
 
