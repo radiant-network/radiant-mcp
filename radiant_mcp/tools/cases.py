@@ -200,6 +200,12 @@ async def search_cases(
     cases matching criteria ("active prenatal cases", "cases for panel RGDI",
     "the case for patient MRN 12345").
 
+    Returns ``count`` (total matches; with ``query``, the distinct cases
+    found; ``truncated`` is set when some were not returned), ``cases`` (one summary per case:
+    case_id, case_type, status, priority, panel, primary condition, project,
+    proband identifiers, has_variants, ``portal_url``, ...) and, for a
+    ``query``, the raw ``autocomplete_matches``.
+
     Args:
         filters: Mapping of field → value or list of values. Several fields are
             AND-ed; several values for one field are OR-ed (``in``). Allowed
@@ -230,12 +236,6 @@ async def search_cases(
             prescriber, ordering_organization_code, organization_code,
             diagnosis_lab_code, created_on, updated_on.
         sort_order: ``asc`` or ``desc`` (default ``desc``).
-
-    Returns ``count`` (total matches; with ``query``, the distinct cases
-    found; ``truncated`` is set when some were not returned), ``cases`` (one summary per case:
-    case_id, case_type, status, priority, panel, primary condition, project,
-    proband identifiers, has_variants, ``portal_url``, ...) and, for a
-    ``query``, the raw ``autocomplete_matches``.
     """
     if not filters and not query:
         return respond(error("invalid_input", "Provide at least one of `filters` or `query`."))

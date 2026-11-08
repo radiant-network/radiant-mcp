@@ -250,7 +250,10 @@ next to the repo and requires both (`RADIANT_REQUIRE_ETL=1`,
 1. Pick the module in `tools/`, or add one. Write the async tool function with
    typed arguments (`Literal` from `domain.data_types` for a `data_type`) and a
    docstring: the docstring is the documentation the agent gets, so say what the
-   fields of `data` mean and when to prefer this tool.
+   fields of `data` mean and when to prefer this tool. FastMCP publishes only the
+   text before `Args:` and one description per argument entry: put the whole
+   explanation above `Args:` and give each argument its own line
+   (`test_registration.py` checks it).
 2. Check the arguments, and return `respond(error("invalid_input", ...))` for a
    bad value before any call.
 3. Write the body as a synchronous function `(api, token, *args) -> ToolOutput`.

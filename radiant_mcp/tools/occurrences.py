@@ -227,8 +227,14 @@ async def prioritize_snv(
     Default order: germline by Exomiser gene combined score then impact score
     (desc); somatic by impact score (desc).
 
+    Returns ``count`` (all matches), ``occurrences`` (each with
+    ``portal_url``, the occurrence side panel in the case, and
+    ``variant_portal_url``, the variant page) and the table's ``portal_url``.
+
     Args:
-        case_id, seq_id, task_id: The occurrence key.
+        case_id: Case of the occurrence key (from ``get_case_context``'s ``occurrence_keys``).
+        seq_id: Sequencing of the occurrence key.
+        task_id: Task of the occurrence key.
         data_type: germline_snv (default), somatic_snv_tn or somatic_snv_to.
         filters: AND-ed list of ``{"field", "op", "value"}``. ``op`` is one of
             in (default), not-in, <, >, <=, >=, between ([min, max]), all
@@ -256,10 +262,6 @@ async def prioritize_snv(
             ["transmission_mode", "parental_origin", "father_zygosity",
             "mother_zygosity", "omim_inheritance_code", "cmc_tier"].
         tenant: Tenant code (auto-resolved when the user has only one).
-
-    Returns ``count`` (all matches), ``occurrences`` (each with
-    ``portal_url``, the occurrence side panel in the case, and
-    ``variant_portal_url``, the variant page) and the table's ``portal_url``.
     """
     return await _run_list(
         data_type, SNV_DATA_TYPES, case_id, seq_id, task_id, tenant, filters, sort, limit, offset,
@@ -286,8 +288,14 @@ async def case_cnv(
     ``get_case_context``'s ``occurrence_keys``: the CNV task of a sequencing
     is usually not its SNV task.
 
+    Returns ``count``, ``occurrences`` (each with ``portal_url``, the CNV
+    table of the case) and the table's ``portal_url``. No CNV key in
+    ``occurrence_keys`` means no CNV analysis exists for that sequencing.
+
     Args:
-        case_id, seq_id, task_id: The occurrence key.
+        case_id: Case of the occurrence key (from ``get_case_context``'s ``occurrence_keys``).
+        seq_id: Sequencing of the occurrence key.
+        task_id: Task of the occurrence key.
         data_type: germline_cnv (default) or somatic_cnv.
         filters: Same syntax as ``prioritize_snv``. Useful fields: type
             (GAIN, LOSS, CNLOH, GAINLOH), symbol (genes overlapped; ``in``
@@ -300,10 +308,6 @@ async def case_cnv(
         offset: Pagination offset.
         additional_fields: Extra fields to return beyond the defaults.
         tenant: Tenant code (auto-resolved when the user has only one).
-
-    Returns ``count``, ``occurrences`` (each with ``portal_url``, the CNV
-    table of the case) and the table's ``portal_url``. No CNV key in
-    ``occurrence_keys`` means no CNV analysis exists for that sequencing.
     """
     return await _run_list(
         data_type, CNV_DATA_TYPES, case_id, seq_id, task_id, tenant, filters, sort, limit, offset,

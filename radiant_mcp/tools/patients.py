@@ -151,6 +151,12 @@ async def search_patients(
     ("deceased patients with a medulloblastoma", "patients who received
     radiation").
 
+    Returns ``count`` and ``patients`` (identifiers, demographics, vital
+    status, initial diagnosis, survival, ``case_count``, ``patient_key`` and
+    ``portal_url``). Names are placeholders when the user may not read PHI
+    (``can_read_phi``). A tenant without clinical data fails with the
+    ``unavailable`` error code.
+
     Args:
         query: Free-text prefix matched against the patient identifier (MRN or
             research id) and the patient name, through the portal's
@@ -175,12 +181,6 @@ async def search_patients(
         sort_order: ``asc`` (default) or ``desc``.
         include_filter_values: Also return ``filter_values``, the values each
             filter accepts.
-
-    Returns ``count`` and ``patients`` (identifiers, demographics, vital
-    status, initial diagnosis, survival, ``case_count``, ``patient_key`` and
-    ``portal_url``). Names are placeholders when the user may not read PHI
-    (``can_read_phi``). A tenant without clinical data fails with the
-    ``unavailable`` error code.
     """
     return await _api.run(
         _search_patients, tenant, filters, query, limit, offset, sort_by, sort_order, include_filter_values,
