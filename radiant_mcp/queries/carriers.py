@@ -10,32 +10,22 @@ from .. import sql as _sql
 from ..domain import rules as _rules
 from ..domain.criteria import Criteria
 from ..enums import ENUMS
-from .sequencing import sequencing_join
+from .sequencing import latest_task_join
 
 _SUMMARY_LIMIT = 30
 
 
-def _latest_task(columns: str, source: str) -> str:
-    """``columns`` of ``source`` rows, keeping the latest task of each (sequencing, variant):
-    a re-run adds a task next to the old one, which would list the carrier twice."""
-    names = ", ".join(c.strip().split(".")[-1] for c in columns.split(","))
-    return (
-        f"SELECT {names} FROM (SELECT {columns},"
-        " ROW_NUMBER() OVER (PARTITION BY x.seq_id, x.variant_id ORDER BY x.task_id DESC) AS rerun"
-        f" {source}) r WHERE r.rerun = 1"
-    )
-
-
 def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
-    """``WITH ... car AS (...)``: one row per (sequencing, variant) of a carrier, from
-    the sequencing's latest task, with its case and patient. SNV CTEs also define ``v``.
+    """``WITH ... car AS (...)``: one row per (case, sequencing, variant) of a carrier,
+    from the latest task of the sequencing in that case (``latest_tasks``), with its
+    patient. SNV CTEs also define ``v``.
 
     An SNV is in the gene when one of its consequences is on a transcript of the
     gene (``snv__consequence_filter``), not only its picked one, so a variant of two
     overlapping genes counts for both; ``vep_impact`` is its impact on that gene.
     """
     tenant_db, shared_db = _sql.tenant_db(tenant), _sql.shared_db()
-    sequencing = sequencing_join(p, tenant)
+    sequencing = latest_task_join(p, tenant, criteria.data_type)
     carrier_columns = (
         "s.case_id, s.patient_id, s.family_role, s.affected_status, s.experimental_strategy,"
         " x.seq_id, x.task_id, x.variant_id"
@@ -69,7 +59,7 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
             "), x AS ("
             f" SELECT o.{seq_column} AS seq_id, o.task_id, o.locus_id AS variant_id"
             f" FROM {tenant_db}.{occurrence} o JOIN v ON v.locus_id = o.locus_id{occ_filter}"
-            f"), car AS ({_latest_task(carrier_columns, f'FROM x {sequencing}')})"
+            f"), car AS (SELECT {carrier_columns} FROM x {sequencing})"
         )
     table = "somatic__cnv__occurrence" if criteria.is_somatic else "germline__cnv__occurrence"
     types = criteria.cnv_types or tuple(ENUMS["cnv_type"])
@@ -78,7 +68,7 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
         " SELECT c.seq_id, c.task_id, c.cnv_id AS variant_id, c.type"
         f" FROM {tenant_db}.{table} c, unnest(c.symbol) AS g(symbol)"
         f" WHERE g.symbol = {p(criteria.gene)} AND c.filter = {p(_rules.PASS)} AND c.type IN ({p.list(types)})"
-        f"), car AS ({_latest_task(carrier_columns + ', x.type', f'FROM x {sequencing}')})"
+        f"), car AS (SELECT {carrier_columns}, x.type FROM x {sequencing})"
     )
 
 

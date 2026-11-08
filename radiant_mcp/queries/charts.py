@@ -5,7 +5,7 @@ from .. import sql as _sql
 from ..domain import data_types
 from ..domain import rules as _rules
 from ..domain.rules import ALT_ZYGOSITIES
-from .sequencing import sequencing_join
+from .sequencing import latest_task_join
 
 
 def venn_query(tenant_db: str, members: list[tuple[str, dict]], rare_only: bool,
@@ -46,11 +46,12 @@ def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af
     """``(case_id, gene, kind)`` rows, ordered by case so a cut drops whole cases last.
 
     Germline columns are cases: only the proband's sequencings count, since the
-    parents' rows carry the proband's case_id.
+    parents' rows carry the proband's case_id. Only the latest task of each
+    sequencing is read (``latest_tasks``).
     """
     p = _sql.Params()
     tenant_db = _sql.tenant_db(tenant)
-    sequencing = sequencing_join(p, tenant)
+    sequencing = latest_task_join(p, tenant, data_type)
     if not data_types.is_somatic(data_type):
         sequencing += f" AND s.family_role = {p(_rules.PROBAND)}"
     tail = f" ORDER BY s.case_id, x.gene LIMIT {p(ONCOPRINT_ROW_LIMIT + 1)}"

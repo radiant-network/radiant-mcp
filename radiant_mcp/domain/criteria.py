@@ -45,7 +45,8 @@ class Criteria:
         if self.is_snv:
             out["gene_match"] = ("a consequence on a transcript of the gene (not only the picked one); "
                                  "vep_impact is the impact on that gene")
-        out["reruns"] = "the latest task of each sequencing"
+        out["reruns"] = ("the latest task of each sequencing in each case "
+                         "(tumor-normal and tumor-only somatic analyses apart)")
         return out
 
 

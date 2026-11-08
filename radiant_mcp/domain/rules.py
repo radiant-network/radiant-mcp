@@ -32,6 +32,17 @@ HEMIZYGOUS_CALLS = ("HOM", "HEM")
 
 # staging_sequencing_experiment.task_type of a germline SNV annotation task.
 GERMLINE_SNV_TASK_TYPE = "radiant_germline_annotation"
+# The task type whose output feeds each cohort data type's occurrence table (ETL
+# staging_external_sequencing_experiment: the VCF of these tasks only).
+TASK_TYPES = {
+    "germline_snv": GERMLINE_SNV_TASK_TYPE,
+    "germline_cnv": "alignment_germline_variant_calling",
+    "somatic_snv_all": "radiant_somatic_annotation",
+    "somatic_cnv": "tumor_only_variant_calling",
+}
+# staging_sequencing_experiment.histology_type of a normal sample. A somatic SNV task
+# with one is tumor-normal, without one tumor-only (the portal's somaticCohortCounts).
+NORMAL_HISTOLOGY = "normal"
 
 # `family_role` of the proband in staging_sequencing_experiment. Parents' sequencings
 # carry the proband's case_id, so a germline count per case keeps the proband only.
