@@ -179,7 +179,9 @@ flowchart LR
   in `details.allowed`.
 - `ApiException`: by status. 400 and 422 give `invalid_input`, 401
   `auth_required`, 403 `forbidden` and 404 `not_found`; any other status gives
-  `upstream`. `details` keeps the `status` and the response `body`.
+  `upstream`. `details` keeps the `status`, the `correlation_id` and, for a 4xx,
+  the response `body`. A 5xx body is logged, not returned: it can carry the
+  portal's internals.
 - Anything else: `internal`. The exception is logged with its traceback, and the
   agent gets only its type, since the message can name internal hosts.
 

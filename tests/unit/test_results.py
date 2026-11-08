@@ -79,6 +79,18 @@ def test_an_invalid_value_lists_the_allowed_ones():
     assert error.code == "invalid_input" and error.details == {"allowed": ["HIGH", "MODERATE"]}
 
 
+def test_a_server_error_body_is_logged_not_returned(caplog):
+    error = failure(api_exception(500, "pq: column x does not exist", {"X-Correlation-ID": "abc"})).error
+    assert error.code == "upstream" and error.details == {"status": 500, "correlation_id": "abc"}
+    assert "column x does not exist" in caplog.text and "abc" in caplog.text
+
+
+def test_a_starrocks_error_is_logged_without_its_message(caplog):
+    caplog.set_level("WARNING")
+    failure(SqlError("Unknown column 'MRN-123'", "invalid", 1054))
+    assert "errno=1054" in caplog.text and "MRN-123" not in caplog.text
+
+
 def test_an_api_error_keeps_its_status_and_body():
     error = failure(api_exception(400, '{"message":"unknown field: foo"}')).error
     assert error.message == "Radiant API error 400: error"

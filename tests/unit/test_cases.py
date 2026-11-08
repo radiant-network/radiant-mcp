@@ -59,7 +59,7 @@ def test_part_lookup_binds_the_case_and_skips_tasks_without_part(fake_sql):
     assert "radiant.staging_sequencing_experiment" in sql and values == {"p0": 1131}
     fake_sql.on("staging_sequencing_experiment", _sql.SqlError("Access denied"))
     fake_sql.rules.reverse()
-    assert case_service.lookup_parts("jwt", 1131) == ({}, "part lookup failed: Access denied")
+    assert case_service.lookup_parts("jwt", 1131) == ({}, "part lookup failed: StarRocks error: Access denied")
 
 
 def _criteria_of(body) -> dict:

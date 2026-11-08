@@ -135,6 +135,35 @@ def test_the_certificate_chain_and_hostname_are_verified_against_the_ca(starrock
     assert kwargs["ssl_verify_cert"] is True and kwargs["ssl_verify_identity"] is True
 
 
+def test_a_row_cap_stops_the_statement_in_starrocks(starrocks_server, configure):
+    configure(starrocks_query_timeout=30)
+    starrocks.query(jwt("alice"), "SELECT 1", max_rows=500)
+    starrocks.query(jwt("alice"), "SELECT 1")
+    capped, uncapped = (conn.kwargs["init_command"] for conn in starrocks_server.connections)
+    assert capped == "SET query_timeout = 30, sql_select_limit = 501"
+    assert uncapped == "SET query_timeout = 30"
+
+
+def test_a_connection_error_keeps_the_host_out_of_the_message(monkeypatch):
+    def refuse(**kwargs):
+        raise DatabaseError(msg="Can't connect to MySQL server on 'starrocks.internal:9030' (61)", errno=2003)
+
+    monkeypatch.setattr(starrocks.mysql.connector, "connect", refuse)
+    with pytest.raises(starrocks.StarRocksError) as exc:
+        starrocks.query(jwt("alice"), "SELECT 1")
+    assert "starrocks.internal" not in str(exc.value) and "2003" in str(exc.value)
+
+
+def test_a_denied_login_says_so(monkeypatch):
+    def deny(**kwargs):
+        raise DatabaseError(msg="Access denied for user 'alice'", errno=1045, sqlstate="28000")
+
+    monkeypatch.setattr(starrocks.mysql.connector, "connect", deny)
+    with pytest.raises(starrocks.StarRocksError) as exc:
+        starrocks.query(jwt("alice"), "SELECT 1")
+    assert exc.value.kind == "denied"
+
+
 def test_max_rows_reads_one_extra_row_and_flags_truncation(starrocks_server):
     starrocks_server.data = {"alice": [(f"MRN-{i}",) for i in range(10)]}
     result = starrocks.query(jwt("alice"), "SELECT patient_id FROM t", max_rows=3)
