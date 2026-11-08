@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/radiant-network/radiant-mcp/compare/v1.0.0...v1.0.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **queries:** ignore re-analysis tasks not imported yet, accept numeric locus_id, correct the consequence filter description and the somatic filter docs, and allow the sorts the portal accepts ([#56](https://github.com/radiant-network/radiant-mcp/issues/56)) ([e778375](https://github.com/radiant-network/radiant-mcp/commit/e7783752985353bb347caac59203a798830f7926))
+* **results:** return the arguments FastMCP rejects before a tool runs as the invalid_input envelope, with one entry per argument and the allowed values ([#58](https://github.com/radiant-network/radiant-mcp/issues/58)) ([a7fc276](https://github.com/radiant-network/radiant-mcp/commit/a7fc276e73033d2ee961bd4eb355ba254c78d6e2))
+
 ## [1.0.0](https://github.com/radiant-network/radiant-mcp/compare/v0.4.1...v1.0.0) (2026-11-08)
 
 
