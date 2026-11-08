@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/radiant-network/radiant-mcp/compare/v1.0.1...v1.0.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **stats,queries:** correct the log-rank degrees of freedom, stop counting a variant in the genes it is only near, and describe is_deleterious as a score flag ([#59](https://github.com/radiant-network/radiant-mcp/issues/59)) ([6c4a211](https://github.com/radiant-network/radiant-mcp/commit/6c4a21197760e83f6b82818e01008ac5ebe3a77f))
+
 ## [1.0.1](https://github.com/radiant-network/radiant-mcp/compare/v1.0.0...v1.0.1) (2026-11-08)
 
 
