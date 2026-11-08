@@ -46,7 +46,7 @@ def merge_criteria(filters: dict, extra: dict) -> dict | None:
     return merged
 
 
-def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], str | None]:
+def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int | None], str | None]:
     """Map every (seq_id, task_id) of ``case_id`` to its StarRocks ``part``.
 
     Reads the shared ``staging_sequencing_experiment`` table under the
@@ -158,6 +158,10 @@ def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) 
                 continue
             entry["part"] = part
             entry["variant_part"] = variant_part(part)
+
+    # Keys of tasks not imported yet go last: the portal lists tasks newest first, and
+    # an agent taking the first key of a sequencing would read an empty analysis.
+    occurrence_keys.sort(key=lambda entry: entry.get("imported") is False)
 
     return {
         "tenant": tenant_code,

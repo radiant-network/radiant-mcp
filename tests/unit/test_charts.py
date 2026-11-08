@@ -244,7 +244,7 @@ def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fak
     assert data["excluded_without_survival_data"] == {"SCN1A carriers": 0, "Other sequenced patients": 1}
     assert data["definition"]["SCN1A carriers"]["carrier_patients"] == 20
     assert data["cohort"] == {"filters": "all patients", "sequenced_only": True, "patients": 151,
-                              "excluded_without_radiant_case": 1,
+                              "excluded_not_genotyped": 1,
                               "genotyped_means": "an imported analysis of the carrier groups' data type(s): germline_snv"}
     assert len(_searches(fake_api)) == 2  # the cohort, paged by 100
 
@@ -262,7 +262,7 @@ def test_somatic_non_carriers_are_patients_with_a_tumor_analysis(fake_api, fake_
                                                                               "data_type": "somatic_snv_all"}}],
                                         sequenced_only=True, others_label="Non-carriers", tenant="demo")))
     assert {g["group"]: g["patients"] for g in data["groups"]} == {"TP53": 2, "Non-carriers": 2}
-    assert data["cohort"]["excluded_without_radiant_case"] == 2
+    assert data["cohort"]["excluded_not_genotyped"] == 2
     values = next(v for q, v in fake_sql.queries if "SELECT DISTINCT s.patient_id" in q)
     assert "radiant_somatic_annotation" in values.values()
 
@@ -537,16 +537,18 @@ def test_survival_overlap_counts_only_drawn_patients(fake_api, run):
     assert data["overlapping_patients"] == 0 and data["logrank_p"] is not None
 
 
-def test_survival_warns_when_non_carriers_include_patients_without_a_case(fake_api, fake_sql, run):
+def test_survival_warns_when_non_carriers_include_patients_not_genotyped(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
     rows = [{"patient_key": _key(i), "radiant_patient_id": i, "case_count": 1 if i < 5 else 0,
              "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 9)]
     _patients(fake_api, rows)
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": "1"}, {"patient_id": "2"}])
+    # Patients 1-3 have an imported germline SNV analysis; 4 has a case but no analysis yet.
+    fake_sql.on("SELECT DISTINCT s.patient_id", [{"patient_id": i} for i in (1, 2, 3)])
     result = run(survival_curve(groups=[{"label": "TP53", "carriers": {"gene": "TP53"}}],
                                 others_label="Others", tenant="demo"))
     data, _ = _parts(result)
-    assert data["definition"]["Others"]["patients_without_radiant_case"] == 4
+    assert data["definition"]["Others"]["patients_not_genotyped"] == 5
     assert any("sequenced_only=True" in w for w in result["warnings"])
 
 

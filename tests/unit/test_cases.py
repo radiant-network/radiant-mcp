@@ -60,6 +60,19 @@ def test_a_task_not_imported_yet_has_no_part(fake_sql):
     assert bound_value(sql, values, "ingested_at > ") == "1970-01-01 00:00:00"
 
 
+def test_case_context_lists_a_task_not_imported_yet_last(fake_api, run, monkeypatch):
+    # The portal lists tasks newest first; the re-analysis 4 is not loaded yet.
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(21, 4): None, (21, 3): 154}, None))
+    fake_api.on("cases", "case_entity", {"case_id": 8, "case_type": "germline", "members": [],
+                                          "sequencing_experiments": [{"seq_id": 21, "has_variants": True}]})
+    fake_api.on("cases", "case_tasks_with_occurrences",
+                lambda data_type, **_: [{"id": 4}, {"id": 3}] if data_type == "germline_snv" else [])
+    result = run(get_case_context(8, tenant="radiant"))
+    keys = result["data"]["occurrence_keys"]
+    assert [(k["task_id"], k.get("imported"), k.get("part")) for k in keys] == [(3, None, 154), (4, False, None)]
+    assert any("task_id=4: not imported yet" in w for w in result["warnings"])
+
+
 def test_part_lookup_binds_the_case_and_skips_tasks_without_part(fake_sql):
     from radiant_mcp import sql as _sql
 

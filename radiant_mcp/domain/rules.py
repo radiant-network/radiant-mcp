@@ -31,6 +31,11 @@ ALT_ZYGOSITIES = ("HET", "HOM", "HEM")
 # An SNV inside a heterozygous deletion keeps one allele: the caller reports it HOM (or HEM).
 HEMIZYGOUS_CALLS = ("HOM", "HEM")
 
+# A tumor call of the germline first-hit variant itself is not a somatic second hit.
+# A high tumor allele ratio suggests the normal allele was lost (LOH), but tumor
+# purity is unknown, so it is flagged for the geneticist, never counted as a hit.
+ALLELIC_IMBALANCE_MIN_RATIO = 0.6
+
 # VEP consequences that place a variant NEAR a gene, not in it: VEP runs with its
 # default 5 kb distance and keeps every consequence (--flag_pick, not --pick), so a
 # variant of one gene is also "upstream" of its neighbours. A variant belongs to a

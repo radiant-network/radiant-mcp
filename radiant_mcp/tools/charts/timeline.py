@@ -77,4 +77,5 @@ async def patient_timeline(patient_key: str, tenant: str | None = None) -> ToolR
     if not PATIENT_KEY.match(patient_key or ""):
         return respond(error("invalid_input",
                              f"`{patient_key}` is not a patient key (a UUID). Find it with search_patients first."))
-    return await _api.run(_patient_timeline, patient_key, tenant)
+    # Keys are stored lower-case: a key copied upper-case would not be found.
+    return await _api.run(_patient_timeline, patient_key.lower(), tenant)

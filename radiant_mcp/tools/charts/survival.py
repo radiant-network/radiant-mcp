@@ -296,13 +296,16 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
         members.append((others_label, others))
         definition[others_label] = "cohort patients in no other group"
         if any(s.criteria for s in specs) and not sequenced_only:
-            without_case = sum(1 for p in others.values() if not _sequenced(p))
+            # Same "genotyped" as sequenced_only: an imported analysis of the carriers' data type.
+            genotyped = _genotyped_ids(token, tenant_code, specs) or set()
+            not_genotyped = sum(1 for p in others.values()
+                                if p.get("radiant_patient_id") is None or str(p["radiant_patient_id"]) not in genotyped)
             definition[others_label] = {"definition": "cohort patients in no other group",
-                                        "patients_without_radiant_case": without_case}
-            if without_case:
-                warnings.append(f"{others_label!r} includes {without_case} patients without a Radiant case, whose "
-                                "genotype is unknown: pass sequenced_only=True to compare carriers with genotyped "
-                                "non-carriers")
+                                        "patients_not_genotyped": not_genotyped}
+            if not_genotyped:
+                warnings.append(f"{others_label!r} includes {not_genotyped} patients without an analysis of the "
+                                "carriers' data type, whose genotype is unknown: pass sequenced_only=True to compare "
+                                "carriers with genotyped non-carriers")
 
     groups, missing = [], {}
     for name, found in members:
@@ -337,7 +340,7 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
         "overlapping_patients": overlapping,
         "cohort": None if cohort is None else {
             "filters": cohort_filters or "all patients", "sequenced_only": sequenced_only, "patients": len(cohort),
-            "excluded_without_radiant_case": unsequenced if sequenced_only else None,
+            "excluded_not_genotyped": unsequenced if sequenced_only else None,
             "genotyped_means": (None if not sequenced_only else
                                 "an imported analysis of the carrier groups' data type(s): "
                                 + ", ".join(sorted({s.criteria.data_type for s in specs if s.criteria}))

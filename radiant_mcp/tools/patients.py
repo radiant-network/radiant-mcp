@@ -227,5 +227,6 @@ async def get_patient_context(
     if unknown:
         return respond(error("invalid_input", f"Unknown section(s): {', '.join(unknown)}",
                              allowed=list(PATIENT_SECTIONS)))
-    return await _api.run(_get_patient_context, patient_key, tenant, chosen)
+    # Keys are stored lower-case: a key copied upper-case would not be found.
+    return await _api.run(_get_patient_context, patient_key.lower(), tenant, chosen)
 

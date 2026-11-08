@@ -95,6 +95,28 @@ def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
     assert bound_value(sql, values, "task_type = ") == "radiant_germline_annotation"
 
 
+def test_the_germline_variant_called_in_the_tumor_is_not_a_second_hit(fake_api, fake_sql, run, monkeypatch):
+    # A tumor-only analysis keeps the germline variants: the first hit itself comes back.
+    _case_api(fake_api, "somatic", {"somatic_snv_to": [{"id": 40}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
+    fake_sql.on("germline__snv__occurrence", [
+        {"gene": "TP53", "locus_id": 3, "clinvar_interpretation": '["Pathogenic"]', "interpreted_plp": 0},
+        {"gene": "RB1", "locus_id": 7, "clinvar_interpretation": '["Pathogenic"]', "interpreted_plp": 0},
+    ])
+    fake_sql.on("somatic__snv__occurrence", [
+        {"gene": "TP53", "locus_id": 3, "tumor_ad_ratio": 0.48, "tumor_zygosity": "HET"},
+        {"gene": "RB1", "locus_id": 7, "tumor_ad_ratio": 0.71, "tumor_zygosity": "HET"},
+    ])
+    data = run(second_hit(1, tenant="demo"))["data"]
+    assert data["genes"] == [] and data["germline_plp_without_somatic_event"] == ["RB1", "TP53"]
+    seen = {e["gene"]: e["calls"][0] for e in data["germline_variant_in_tumor"]}
+    assert seen["TP53"]["possible_allelic_imbalance"] is False
+    # A high tumor ratio may be loss of the normal allele: flagged, never counted (purity unknown).
+    assert seen["RB1"]["possible_allelic_imbalance"] is True and seen["RB1"]["same_variant_as_germline_hit"] is True
+    assert "not a second hit" in data["rules"]
+
+
 def test_second_hit_somatic_without_germline_sequencing(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))

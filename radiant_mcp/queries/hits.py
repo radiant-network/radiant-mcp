@@ -142,7 +142,8 @@ def germline_plp_query(tenant_db: str, key: dict) -> tuple[str, _sql.Params]:
 def somatic_snv_query(tenant_db: str, key: dict, genes: list[str]) -> tuple[str, _sql.Params]:
     p = _sql.Params()
     sql = (
-        "SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, v.vep_impact, o.tumor_ad_ratio"
+        "SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, v.vep_impact, o.tumor_ad_ratio,"
+        " o.tumor_zygosity"
         f" FROM {tenant_db}.somatic__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(key['variant_part'])}"
         f"{_gene_join(p)}"

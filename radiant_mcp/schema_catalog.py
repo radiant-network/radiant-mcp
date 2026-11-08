@@ -113,8 +113,10 @@ SOMATIC_SNV_OCCURRENCE = Table(
 )
 SNV_VARIANT = Table(
     TENANT_DB, "snv__variant_partitioned",
-    "The variant catalog: one row per locus_id with its picked annotation and frequencies. "
-    "Use it, never the unpartitioned snv__variant.",
+    "The variant catalog (picked annotation and frequencies), stored once per variant_part: a locus has a "
+    "row in EVERY variant_part holding one of its occurrences, so always filter on part. With a case key: "
+    "v.part = <variant_part>. Across sequencings (a cohort count), join v.part = o.part DIV 10, or read "
+    "the unpartitioned snv__variant (one row per locus_id); joining on locus_id alone multiplies the rows.",
     {
         "locus_id": "variant id", "chromosome": "chromosome", "start": "position", "reference": "ref allele",
         "alternate": "alt allele", "hgvsg": "genomic HGVS", "hgvsc": "coding HGVS", "hgvsp": "protein HGVS",
@@ -125,8 +127,8 @@ SNV_VARIANT = Table(
         "omim_inheritance_code": "OMIM inheritance (array)", "gnomad_v3_af": "gnomAD v3 AF, NULL when absent",
         "cmc_tier": "COSMIC CMC tier",
     },
-    keys="locus_id",
-    partition="part (= the key's variant_part)",
+    keys="part, locus_id",
+    partition="part (= the key's variant_part, or the occurrence's part DIV 10)",
     enums={
         "variant_class": "variant_class", "vep_impact": "vep_impact",
         "clinvar_interpretation": "clinvar_interpretation", "cmc_tier": "cosmic_tier",
@@ -242,7 +244,8 @@ GERMLINE_SNV_FREQUENCY = Table(
 )
 SNV_VARIANT_FREQUENCIES = Table(
     TENANT_DB, "snv__variant_partitioned",
-    "Frequency columns of the variant catalog (same partition rule as in germline_snv).",
+    "Frequency columns of the variant catalog (same partition rule as in germline_snv: one copy per "
+    "variant_part, always filter on part).",
     {
         "locus_id": "variant id", "gnomad_v3_af": "gnomAD v3 AF, NULL when absent", "topmed_af": "TOPMed AF",
         "tg_af": "1000 Genomes AF", "germline_pc_wgs": "tenant carriers (WGS)",
@@ -252,7 +255,7 @@ SNV_VARIANT_FREQUENCIES = Table(
         "germline_pf_wxs": "carrier frequency (WXS)", "somatic_pf_tn_wgs": "somatic frequency, tumor-normal",
         "somatic_pf_to_wgs": "somatic frequency, tumor-only",
     },
-    keys="locus_id",
+    keys="part, locus_id",
     partition="part (= the key's variant_part)",
 )
 
