@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.0.0](https://github.com/radiant-network/radiant-mcp/compare/v0.4.1...v1.0.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tools:** return one result envelope from every tool with typed error codes and a shared output schema ([#44](https://github.com/radiant-network/radiant-mcp/issues/44))
+
+### Features
+
+* **sql:** replace mcp-server-starrocks with our own read_query and table_overview ([#30](https://github.com/radiant-network/radiant-mcp/issues/30)) ([7b83e2e](https://github.com/radiant-network/radiant-mcp/commit/7b83e2e53faa2c8f5d3d47e419c886d73548135e))
+* **starrocks:** RAD-263 verify the StarRocks TLS certificate against STARROCKS_SSL_CA or the system CA bundle when STARROCKS_SSL_VERIFY is set ([#46](https://github.com/radiant-network/radiant-mcp/issues/46)) ([9b0dcc2](https://github.com/radiant-network/radiant-mcp/commit/9b0dcc24035d8fb43e691b82f34594aa929bf0d2))
+* **survival_curve:** compare any patient groups and document the clinical views ([#27](https://github.com/radiant-network/radiant-mcp/issues/27)) ([d805e03](https://github.com/radiant-network/radiant-mcp/commit/d805e03708d463a9ffc0551aa628bd8480f4c837))
+* **tools:** one data_type vocabulary, typed tool arguments and layered modules ([#32](https://github.com/radiant-network/radiant-mcp/issues/32)) ([05e1f09](https://github.com/radiant-network/radiant-mcp/commit/05e1f092fd16247db0e9d8231a1183a858528b62))
+* **tools:** return one result envelope from every tool with typed error codes and a shared output schema ([#44](https://github.com/radiant-network/radiant-mcp/issues/44)) ([5c9937e](https://github.com/radiant-network/radiant-mcp/commit/5c9937eb8049fee32204a8270f08bf9df4be2060))
+
+
+### Bug Fixes
+
+* **cohort:** count carrier cases by their proband, like oncoprint, and add cases_any_member and a family-role summary ([#53](https://github.com/radiant-network/radiant-mcp/issues/53)) ([d7248ca](https://github.com/radiant-network/radiant-mcp/commit/d7248caf8e0f8e6a36b530a97512a68153b83096))
+* **cohort:** match any transcript of the gene, count reruns once and leave fetal phenotypes out ([#38](https://github.com/radiant-network/radiant-mcp/issues/38)) ([2287535](https://github.com/radiant-network/radiant-mcp/commit/2287535b6a48b0ae94e952d4bcffd65b9f597eab))
+* **deps:** move to fastmcp 4.1 and the MCP Python SDK v2 ([#33](https://github.com/radiant-network/radiant-mcp/issues/33)) ([094db2d](https://github.com/radiant-network/radiant-mcp/commit/094db2de901bbe89e037cd16300693c94f7ea693))
+* **errors:** report an unknown database at connect and an unknown table in table_overview as invalid_input, and document the client timeout ([#54](https://github.com/radiant-network/radiant-mcp/issues/54)) ([bbcd276](https://github.com/radiant-network/radiant-mcp/commit/bbcd276840980298d4e197ac18d5574cb48696e0))
+* **genes:** stop promising alias resolution and tell the agent to retry with the official HGNC symbol ([#55](https://github.com/radiant-network/radiant-mcp/issues/55)) ([2aa0580](https://github.com/radiant-network/radiant-mcp/commit/2aa05808ba918c97251ca042761d2d5a4826f25a))
+* **oncoprint:** count the proband only in germline cases, every altered case per gene and flag a cut ([#34](https://github.com/radiant-network/radiant-mcp/issues/34)) ([62bcc67](https://github.com/radiant-network/radiant-mcp/commit/62bcc67c08ec8d5f53971dfcb50136c9a20eca70))
+* **queries:** read only the latest task of each sequencing per case in the carrier and oncoprint queries, keeping tumor-normal and tumor-only analyses apart ([#50](https://github.com/radiant-network/radiant-mcp/issues/50)) ([141307b](https://github.com/radiant-network/radiant-mcp/commit/141307bfc93897814be872bec75871e7a6749fc7))
+* **results:** error codes that tell the agent what to do, and revert the ineffective MULTI_STATEMENTS flag ([#51](https://github.com/radiant-network/radiant-mcp/issues/51)) ([f2a258b](https://github.com/radiant-network/radiant-mcp/commit/f2a258bbb527890886b7e5c519ef66e12fb083ce))
+* **runtime:** cap concurrent tool calls with a busy answer, stop portal retries, add a connect timeout and map transport errors to upstream ([#49](https://github.com/radiant-network/radiant-mcp/issues/49)) ([3869274](https://github.com/radiant-network/radiant-mcp/commit/3869274ef0dd32fa1043e42d0d07868cdea31ed6))
+* **runtime:** cap read_query in StarRocks with sql_select_limit, keep connection and portal 5xx details out of results, and log one line per tool call without patient data ([#52](https://github.com/radiant-network/radiant-mcp/issues/52)) ([ec06444](https://github.com/radiant-network/radiant-mcp/commit/ec064448bff38ec1e327fa665fbf7b16e07de20a))
+* **search:** check filter and sort fields against the portal, search cases by sample id and keep user filters ([#36](https://github.com/radiant-network/radiant-mcp/issues/36)) ([bee2c0a](https://github.com/radiant-network/radiant-mcp/commit/bee2c0ac40af804ff3b43f705b8d2ed4d3d8a1d0))
+* **second_hit:** flag cut lists, read comphet pairs once per gene and only the latest task of a rerun ([#35](https://github.com/radiant-network/radiant-mcp/issues/35)) ([c74caab](https://github.com/radiant-network/radiant-mcp/commit/c74caab58a49e7cbfca203118911cd97134d7db8))
+* **starrocks:** open connections without MULTI_STATEMENTS so a call runs one statement and returns its result ([#48](https://github.com/radiant-network/radiant-mcp/issues/48)) ([45361f4](https://github.com/radiant-network/radiant-mcp/commit/45361f45734f76403e447a6ca01185b96ae2661d))
+* **survival_curve:** order-free log-rank, explained skips and exclusions, genotyped non-carriers and fewer portal calls ([#40](https://github.com/radiant-network/radiant-mcp/issues/40)) ([bf7f3eb](https://github.com/radiant-network/radiant-mcp/commit/bf7f3eb8a018a15a3d074f5211148d9b55e37817))
+* **tools:** explain duo Venn regions, reject duplicate bars, stack lollipop residues and hide internal errors ([#39](https://github.com/radiant-network/radiant-mcp/issues/39)) ([ebd31bd](https://github.com/radiant-network/radiant-mcp/commit/ebd31bde639b79161f4d233bd4ace36f9059a109))
+* **tools:** publish the whole docstring of every tool by moving the result text above Args and documenting each argument on its own line ([#47](https://github.com/radiant-network/radiant-mcp/issues/47)) ([18ed68f](https://github.com/radiant-network/radiant-mcp/commit/18ed68fb3dd509095bedc12bd5e04eb540038885))
+* **upstream:** stop sharing table_overview results across users and hide upstream resources ([#29](https://github.com/radiant-network/radiant-mcp/issues/29)) ([7d806d7](https://github.com/radiant-network/radiant-mcp/commit/7d806d7869a788b169f2ea9b42c2166a6fe5ce90))
+
 ## [0.4.1](https://github.com/radiant-network/radiant-mcp/compare/v0.4.0...v0.4.1) (2026-11-06)
 
 
