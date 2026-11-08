@@ -36,6 +36,9 @@ from ..queries.hits import (
 from ..results import ToolOutput, Truncation, failure, ok, respond
 from ..services.cases import case_context
 
+# How an SNV is assigned to a gene (queries/hits.py), stated in every result.
+_GENE_RULE = ("An SNV is in a gene when it has a consequence on one of its transcripts other than upstream, "
+              "downstream or intergenic; its impact is the impact on that gene.")
 
 def mechanism(zygosity: str, inside: bool) -> str:
     if zygosity in _rules.HEMIZYGOUS_CALLS and inside:
@@ -239,7 +242,7 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
         result["rules"] = (
             f"Germline first hit: P/LP variant of the patient ({_rules.PLP_DEFINITION}) "
             f"Somatic second hit in the same gene: PASS SNV of impact {' or '.join(_rules.QUALIFYING_IMPACTS)}, "
-            f"or PASS CNV of type {' or '.join(_rules.SOMATIC_SECOND_HIT_CNV_TYPES)}."
+            f"or PASS CNV of type {' or '.join(_rules.SOMATIC_SECOND_HIT_CNV_TYPES)}. {_GENE_RULE}"
         )
         result.update(_somatic(token, tenant_code, case, context["occurrence_keys"], warnings, truncated))
     else:
@@ -250,7 +253,7 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
             "(hemizygous: the only remaining allele is called homozygous). `mechanism` says which. "
             "`family_deletions` lists the other members' deletions over the gene; one that covers the SNV explains "
             "that member's WT call and an apparent uniparental disomy. "
-            "Compound heterozygous: the pairs computed by the pipeline."
+            f"Compound heterozygous: the pairs computed by the pipeline. {_GENE_RULE}"
         )
         result["sequencings"] = _germline(token, tenant_code, case, context["occurrence_keys"], warnings, truncated)
     cut = None

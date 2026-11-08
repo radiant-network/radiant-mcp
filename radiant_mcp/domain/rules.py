@@ -31,6 +31,12 @@ ALT_ZYGOSITIES = ("HET", "HOM", "HEM")
 # An SNV inside a heterozygous deletion keeps one allele: the caller reports it HOM (or HEM).
 HEMIZYGOUS_CALLS = ("HOM", "HEM")
 
+# VEP consequences that place a variant NEAR a gene, not in it: VEP runs with its
+# default 5 kb distance and keeps every consequence (--flag_pick, not --pick), so a
+# variant of one gene is also "upstream" of its neighbours. A variant belongs to a
+# gene when it has any other consequence on it (intronic ones included).
+NEARBY_CONSEQUENCES = ("upstream_gene_variant", "downstream_gene_variant", "intergenic_variant")
+
 # staging_sequencing_experiment.task_type of a germline SNV annotation task.
 GERMLINE_SNV_TASK_TYPE = "radiant_germline_annotation"
 # The task type whose output feeds each cohort data type's occurrence table (ETL

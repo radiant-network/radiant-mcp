@@ -183,7 +183,10 @@ CONSEQUENCE_FILTER = Table(
     {
         "locus_id": "variant id (several rows per variant)", "symbol": "gene of this row",
         "consequence": "consequence on this gene", "biotype": "biotype",
-        "vep_impact": "VEP impact", "is_deleterious": "deleterious flag", "cadd_phred": "CADD phred",
+        "vep_impact": "VEP impact",
+        "is_deleterious": "has at least one in-silico score (SIFT, PolyPhen, CADD, REVEL, SpliceAI...), "
+                          "NOT a prediction: filter on the scores or *_pred instead",
+        "cadd_phred": "CADD phred",
         "revel_score": "REVEL", "spliceai_ds": "SpliceAI delta score", "sift_pred": "SIFT",
         "polyphen2_hvar_pred": "PolyPhen-2", "gnomad_pli": "pLI", "gnomad_loeuf": "LOEUF",
     },

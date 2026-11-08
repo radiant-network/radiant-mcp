@@ -193,3 +193,26 @@ def test_second_hit_matches_every_gene_of_a_variant():
     sql, params = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])
     assert bound_value(sql, params.values, "cf.symbol IN (") == "BRCA1"
     assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
+
+
+def _excluded_consequences(sql: str, values: dict) -> list[str]:
+    match = re.search(r"cf\.consequence NOT IN \(((?:%\(p\d+\)s(?:, )?)+)\)", sql)
+    assert match, "the gene join keeps upstream/downstream consequences"
+    return [values[name] for name in re.findall(r"%\((p\d+)\)s", match.group(1))]
+
+
+def test_a_variant_only_near_a_gene_is_not_a_hit_in_it():
+    # VEP reports every gene within 5 kb: a pathogenic WRAP53 variant is "upstream"
+    # of TP53 and must not become a TP53 first hit or SNV + CNV hit.
+    from radiant_mcp.domain import rules
+    from radiant_mcp.domain.criteria import build_criteria
+    from radiant_mcp.queries import carriers
+
+    queries = [
+        hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
+        hit_queries.germline_plp_query("demo_tenant", SNV_KEY),
+        hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["TP53"]),
+        carriers.totals_query("demo", build_criteria("germline_snv", "TP53", None, None, None, None, None)),
+    ]
+    for sql, params in queries:
+        assert _excluded_consequences(sql, params.values) == list(rules.NEARBY_CONSEQUENCES)
