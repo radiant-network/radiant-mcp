@@ -1,9 +1,8 @@
 """``bar_chart``: a bar chart of numbers the agent already computed."""
 
-import anyio
 from fastmcp.tools import ToolResult
 
-from ... import charts
+from ... import charts, workers
 from ... import sql as _sql
 from ...results import error, failure, ok, respond
 
@@ -45,6 +44,9 @@ async def bar_chart(
         return respond(error("invalid_input", "categories must be distinct (in their first 60 characters)",
                              duplicates=duplicates[:5]))
     # Rendering takes the global render lock: keep it off the event loop.
-    png = await anyio.to_thread.run_sync(lambda: charts.bar_chart(
-        labels, numbers, title[:120], x_label[:60], y_label[:60], bool(horizontal)))
+    try:
+        png = await workers.run(lambda: charts.bar_chart(
+            labels, numbers, title[:120], x_label[:60], y_label[:60], bool(horizontal)))
+    except Exception as exc:  # noqa: BLE001 — every failure becomes a tool result
+        return respond(failure(exc))
     return respond(ok({"title": title, "values": dict(zip(labels, numbers, strict=True))}, image=png))

@@ -114,7 +114,7 @@ sequenceDiagram
     T->>R: run(body, *args)
     R->>R: read the JWT from the auth context
     Note over R: on the event loop: the auth context<br/>does not follow the thread
-    R->>W: anyio.to_thread.run_sync, with an open RadiantApi
+    R->>W: workers.run (a free slot or "busy"), with an open RadiantApi
     W->>P: api.call(...) with the JWT
     W->>S: sql.run(token, sql, params): one-shot connection as the user
     W-->>R: ok(data, warnings, truncated, portal_url[, image])<br/>or raise ToolFailure / any exception
@@ -129,6 +129,10 @@ sequenceDiagram
 - **Threads.** `radiant_python` and `mysql.connector` are synchronous, so the body
   runs on a worker thread. The JWT is read before the hop and passed down
   explicitly: `get_jwt_token()` returns nothing on the worker thread.
+- **Capacity.** The worker threads are shared by every user: `workers.run` admits at most
+  `MCP_MAX_CONCURRENT_CALLS` bodies at once, and a call that finds no free slot
+  within `MCP_QUEUE_TIMEOUT` fails with `upstream` instead of waiting behind slow
+  ones.
 - **Partial failures.** A section that fails does not fail the tool: case
   context data types, patient page sections, variant sections and gene
   annotations are each caught and reported in `warnings` (`results.describe`).

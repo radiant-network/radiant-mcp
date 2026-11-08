@@ -63,9 +63,12 @@ this component holds no StarRocks credentials.
 | `STARROCKS_SSL_VERIFY` | No | `false` | Verify the FE certificate chain and hostname. Off, the connection is still TLS but anyone on the path can pose as StarRocks and read the forwarded JWT |
 | `STARROCKS_SSL_CA` | No | - | PEM file of the CA that signed the FE certificate (a private CA). Unset, `STARROCKS_SSL_VERIFY` checks against the system CA bundle |
 | `RADIANT_API_URL` | No | - | Radiant portal API base URL. When set, registers the Radiant API tools below (the caller's JWT is forwarded as a Bearer token) |
-| `RADIANT_API_TIMEOUT` | No | `60` | Timeout of one Radiant API request, in seconds |
+| `RADIANT_API_TIMEOUT` | No | `60` | Seconds to wait for a Radiant API response (read timeout). Requests are not retried |
+| `RADIANT_API_CONNECT_TIMEOUT` | No | `5` | Seconds to open a connection to the Radiant API |
 | `RADIANT_PORTAL_URL` | No | - | Radiant portal base URL. When set, the tools return a `portal_url` for every case, patient, occurrence and variant |
 | `RADIANT_SHARED_DB` | No | `radiant` | StarRocks database of the shared tables (annotations, `staging_sequencing_experiment`) |
+| `MCP_MAX_CONCURRENT_CALLS` | No | `20` | Tool calls running at once, for all users together |
+| `MCP_QUEUE_TIMEOUT` | No | `10` | Seconds a tool call waits for a free slot before failing with `upstream` ("busy, retry") |
 | `FORWARDED_ALLOW_IPS` | No | `*` | Proxies whose `X-Forwarded-*` headers are trusted (needed behind a TLS-terminating load balancer) |
 
 Every variable is validated at startup: a missing `KEYCLOAK_REALM_URL` or a malformed value (a non-numeric port, a negative timeout) stops the server with one line per variable.

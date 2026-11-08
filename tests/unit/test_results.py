@@ -6,6 +6,7 @@ import json
 import pytest
 from conftest import api_exception, envelope
 from fastmcp import FastMCP
+from urllib3.exceptions import MaxRetryError, NewConnectionError, ReadTimeoutError
 
 from radiant_mcp.results import OUTPUT_SCHEMA, ToolFailure, Truncation, failure, ok, respond
 from radiant_mcp.sql import InvalidInput, SqlError
@@ -58,13 +59,15 @@ def test_a_failure_sets_is_error_and_keeps_warnings_a_list():
     (api_exception(404), "not_found"),
     (api_exception(422), "invalid_input"),
     (api_exception(502), "upstream"),
+    (ReadTimeoutError(None, "http://internal.host/x", "Read timed out."), "upstream"),
+    (MaxRetryError(None, "http://internal.host/x", NewConnectionError(None, "refused")), "upstream"),
+    (json.JSONDecodeError("Expecting value", "<html>", 0), "upstream"),
     (KeyError("internal.host"), "internal"),
 ])
 def test_each_exception_maps_to_one_error_code(exc, code):
     error = failure(exc).error
     assert error.code == code
-    if code == "internal":
-        assert "internal.host" not in error.message
+    assert "internal.host" not in error.message
 
 
 def test_an_api_error_keeps_its_status_and_body():

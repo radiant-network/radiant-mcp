@@ -18,6 +18,7 @@ the JSON text the agent reads, the same object as structured content, the
 chart's PNG (``ok(..., image=png)``) as an image part, and ``isError`` on failures.
 """
 
+import json
 import logging
 from typing import Any, Literal
 
@@ -122,6 +123,7 @@ _API_STATUS_CODES: dict[int, ErrorCode] = {
 def failure(exc: Exception) -> ToolOutput:
     """The error result of an exception raised while a tool ran."""
     from radiant_python.exceptions import ApiException
+    from urllib3.exceptions import HTTPError as TransportError
 
     from .sql import InvalidInput, SqlError
 
@@ -139,6 +141,11 @@ def failure(exc: Exception) -> ToolOutput:
             details["body"] = body[:2000]
         code = _API_STATUS_CODES.get(exc.status, "upstream")
         return error(code, f"Radiant API error {exc.status}: {exc.reason}", **details)
+    if isinstance(exc, (TransportError, json.JSONDecodeError)):
+        # Timeout, refused connection, broken response: the portal, not the tool. The
+        # message names the internal host, so it is logged, not returned.
+        logger.warning("Radiant API unreachable: %r", exc)
+        return error("upstream", f"The Radiant API did not answer ({type(exc).__name__}); retry once.")
     # The message of an unexpected error (a connection error, say) can name internal
     # hosts and URLs: log it, and give the agent the error type only.
     logger.exception("tool failed")

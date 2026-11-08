@@ -17,9 +17,9 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-import anyio
 from fastmcp.tools import ToolResult
 
+from . import workers
 from .results import AUTH_REQUIRED, ToolFailure, ToolOutput, failure, respond
 from .settings import get_settings
 
@@ -54,8 +54,10 @@ def get_jwt_token() -> str | None:
     return None
 
 
-def _timeout() -> float:
-    return get_settings().radiant_api_timeout
+def _timeout() -> tuple[float, float]:
+    """(connect, read): a portal that does not answer fails in seconds, not after the read timeout."""
+    settings = get_settings()
+    return settings.radiant_api_connect_timeout, settings.radiant_api_timeout
 
 
 class RadiantApi:
@@ -98,6 +100,10 @@ def connect(token: str) -> Iterator[RadiantApi]:
 
     host = get_settings().radiant_api_url
     configuration = radiant_python.Configuration(host=host, access_token=token)
+    # urllib3 retries a GET 3 times by default, each with a fresh timeout: a hung
+    # portal would hold the worker 4 times the timeout. The tool reports the error
+    # instead, and the agent retries once.
+    configuration.retries = False
     client = radiant_python.ApiClient(configuration)
     try:
         yield RadiantApi(client)
@@ -174,6 +180,6 @@ async def run(fn: Callable[..., ToolOutput], *args) -> ToolResult:
             return fn(api, token, *args)
 
     try:
-        return respond(await anyio.to_thread.run_sync(_body))
+        return respond(await workers.run(_body))
     except Exception as exc:  # noqa: BLE001 — every failure becomes a tool result
         return respond(failure(exc))
