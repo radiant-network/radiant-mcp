@@ -53,6 +53,13 @@ async def main():
     mcp = FastMCP("radiant-mcp", instructions=INSTRUCTIONS)
     print(f"Starting server on {args.host}:{args.port}")
     print(f"Default database: {starrocks.default_database() or 'None'}")
+    if settings.starrocks_ca_file:
+        print(f"StarRocks TLS: certificate verified against {settings.starrocks_ca_file}")
+    else:
+        logging.getLogger(__name__).warning(
+            "StarRocks TLS certificate is not verified: set STARROCKS_SSL_VERIFY=true "
+            "(and STARROCKS_SSL_CA for a private CA)"
+        )
 
     # ---- OAuth 2.1 configuration ----
     from fastmcp.server.auth.providers.keycloak import KeycloakAuthProvider

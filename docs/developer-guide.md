@@ -187,6 +187,13 @@ malformed value stops the server with one line per variable. Modules call
 `get_settings()`, never `os.getenv`. The variables and their defaults are listed
 in the README.
 
+The StarRocks connection is always TLS, because StarRocks requires it for JWT
+logins. `STARROCKS_SSL_VERIFY=true` also checks the FE certificate, against
+`STARROCKS_SSL_CA` for a private CA (QA and prod: the CA generated in
+`qlin-*-infra/terraform/secrets`) or against the system CA bundle. Leave it off
+only for the local stack: without it, anything on the path can read the JWT the
+server forwards.
+
 ## Contracts with the other modules
 
 The server reads what the ETL and the portal own. The unit tests read their
