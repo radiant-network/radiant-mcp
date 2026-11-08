@@ -39,6 +39,8 @@ def test_defaults_and_values_come_from_the_environment(env):
     ("STARROCKS_MAX_ROWS", "0"),
     ("RADIANT_API_TIMEOUT", "-1"),
     ("RADIANT_SHARED_DB", "radiant; DROP"),
+    ("STARROCKS_SSL_VERIFY", "maybe"),
+    ("STARROCKS_SSL_CA", "/nonexistent/ca.pem"),
 ])
 def test_a_malformed_value_is_rejected(env, name, value):
     env.setenv(name, value)
@@ -55,6 +57,32 @@ def test_startup_stops_on_a_bad_environment_with_one_line_per_variable(env):
     message = str(exc.value)
     assert message.startswith("Invalid configuration:")
     assert "KEYCLOAK_REALM_URL: Field required" in message and "STARROCKS_PORT:" in message
+
+
+def test_starrocks_tls_is_not_verified_by_default(env):
+    assert Settings().starrocks_ca_file is None
+
+
+def test_starrocks_tls_verifies_against_the_given_ca(env, tmp_path):
+    ca = tmp_path / "ca.pem"
+    ca.write_text("PEM")
+    env.setenv("STARROCKS_SSL_VERIFY", "true")
+    env.setenv("STARROCKS_SSL_CA", str(ca))
+    assert Settings().starrocks_ca_file == str(ca)
+
+
+def test_starrocks_tls_falls_back_to_the_system_ca_bundle(env, monkeypatch):
+    env.setenv("STARROCKS_SSL_VERIFY", "true")
+    monkeypatch.setattr(settings_module, "system_ca_bundle", lambda: "/etc/ssl/certs/ca-certificates.crt")
+    assert Settings().starrocks_ca_file == "/etc/ssl/certs/ca-certificates.crt"
+
+
+def test_starrocks_tls_verification_needs_a_ca(env, monkeypatch):
+    env.setenv("STARROCKS_SSL_VERIFY", "true")
+    monkeypatch.setattr(settings_module, "system_ca_bundle", lambda: None)
+    settings_module.use_settings(None)
+    with pytest.raises(SystemExit, match="STARROCKS_SSL_VERIFY needs STARROCKS_SSL_CA"):
+        load_or_exit()
 
 
 def test_describe_schema_names_the_configured_shared_database(configure):

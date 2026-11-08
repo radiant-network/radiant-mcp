@@ -7,6 +7,10 @@ service account and no static-credential fallback: a call without a JWT
 fails. ``STARROCKS_HOST``, ``STARROCKS_PORT`` and ``STARROCKS_DB`` only say
 where to connect.
 
+The connection is always TLS (StarRocks requires it for JWT logins). With
+``STARROCKS_SSL_VERIFY`` the FE certificate chain and hostname are checked
+against ``STARROCKS_SSL_CA``, or the system CA bundle when it is unset.
+
 Each session gets a ``query_timeout``, and the socket a read timeout a little
 longer, so one slow query cannot hold a worker thread forever. ``max_rows``
 reads at most that many rows plus one, to flag a truncated result without
@@ -74,6 +78,13 @@ def _username(token: str) -> str:
     return json.loads(base64.urlsafe_b64decode(payload)).get("sub", "unknown")
 
 
+def _tls(ca_file: str | None) -> dict:
+    """Connector TLS arguments: verify chain and hostname against ``ca_file``, or nothing."""
+    if ca_file is None:
+        return {"ssl_verify_cert": False, "ssl_verify_identity": False}
+    return {"ssl_ca": ca_file, "ssl_verify_cert": True, "ssl_verify_identity": True}
+
+
 @contextmanager
 def connect(token: str | None, database: str | None = None) -> Iterator[Any]:
     """Open a connection as the caller; it is closed on exit."""
@@ -101,8 +112,7 @@ def connect(token: str | None, database: str | None = None) -> Iterator[Any]:
             openid_token_file=token_path,
             database=database or settings.starrocks_db or "",
             autocommit=True,
-            ssl_verify_cert=False,
-            ssl_verify_identity=False,
+            **_tls(settings.starrocks_ca_file),
             connect_timeout=settings.starrocks_connection_timeout,
             read_timeout=timeout + _READ_TIMEOUT_MARGIN,
             init_command=f"SET query_timeout = {int(timeout)}",

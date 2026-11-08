@@ -118,6 +118,23 @@ def test_connects_as_the_jwt_subject_with_timeouts(starrocks_server, configure):
     assert conn.closed
 
 
+def test_the_certificate_is_not_verified_by_default(starrocks_server):
+    starrocks.query(jwt("alice"), "SELECT 1")
+    kwargs = starrocks_server.connections[0].kwargs
+    assert kwargs["ssl_verify_cert"] is False and kwargs["ssl_verify_identity"] is False
+    assert "ssl_ca" not in kwargs
+
+
+def test_the_certificate_chain_and_hostname_are_verified_against_the_ca(starrocks_server, configure, tmp_path):
+    ca = tmp_path / "ca.pem"
+    ca.write_text("PEM")
+    configure(starrocks_ssl_verify=True, starrocks_ssl_ca=str(ca))
+    starrocks.query(jwt("alice"), "SELECT 1")
+    kwargs = starrocks_server.connections[0].kwargs
+    assert kwargs["ssl_ca"] == str(ca)
+    assert kwargs["ssl_verify_cert"] is True and kwargs["ssl_verify_identity"] is True
+
+
 def test_max_rows_reads_one_extra_row_and_flags_truncation(starrocks_server):
     starrocks_server.data = {"alice": [(f"MRN-{i}",) for i in range(10)]}
     result = starrocks.query(jwt("alice"), "SELECT patient_id FROM t", max_rows=3)

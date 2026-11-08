@@ -8,9 +8,11 @@ instance with ``use_settings()``.
 """
 
 import re
+import ssl
+from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _DB_NAME = re.compile(r"^[A-Za-z0-9_]{1,64}$")
@@ -47,6 +49,11 @@ class Settings(BaseSettings):
     starrocks_connection_timeout: int = Field(10, gt=0)
     starrocks_query_timeout: int = Field(60, gt=0)
     starrocks_max_rows: int = Field(500, ge=1)
+    # Check the FE certificate chain and hostname. Off by default until every
+    # deployment sets it (the local stack uses a self-signed keystore).
+    starrocks_ssl_verify: bool = False
+    # PEM file of the CA that signed the FE certificate. Unset: the system CA bundle.
+    starrocks_ssl_ca: str | None = None
 
     # -- Radiant portal ------------------------------------------------------------
     # Unset: the tools backed by the portal API are not registered.
@@ -63,7 +70,8 @@ class Settings(BaseSettings):
         return _split(value)
 
     @field_validator(
-        "keycloak_audience", "starrocks_db", "radiant_api_url", "radiant_portal_url", mode="before",
+        "keycloak_audience", "starrocks_db", "starrocks_ssl_ca", "radiant_api_url", "radiant_portal_url",
+        mode="before",
     )
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
@@ -82,6 +90,35 @@ class Settings(BaseSettings):
         if not _DB_NAME.match(value):
             raise ValueError(f"not a database name: {value!r}")
         return value
+
+    @field_validator("starrocks_ssl_ca")
+    @classmethod
+    def _existing_file(cls, value: str | None) -> str | None:
+        if value is not None and not Path(value).is_file():
+            raise ValueError(f"no such file: {value}")
+        return value
+
+    @model_validator(mode="after")
+    def _ca_to_verify_with(self) -> "Settings":
+        if self.starrocks_ssl_verify and self.starrocks_ssl_ca is None and system_ca_bundle() is None:
+            raise ValueError("STARROCKS_SSL_VERIFY needs STARROCKS_SSL_CA: no system CA bundle found")
+        return self
+
+    @property
+    def starrocks_ca_file(self) -> str | None:
+        """The CA file the StarRocks connection verifies against, or None when it does not verify."""
+        if not self.starrocks_ssl_verify:
+            return None
+        return self.starrocks_ssl_ca or system_ca_bundle()
+
+
+def system_ca_bundle() -> str | None:
+    """The system CA bundle (``SSL_CERT_FILE`` or OpenSSL's default), if the file exists.
+
+    The connector's C extension does not load the system store by itself: it
+    needs the bundle as ``ssl_ca``.
+    """
+    return ssl.get_default_verify_paths().cafile
 
 
 _current: Settings | None = None
@@ -107,6 +144,7 @@ def load_or_exit() -> Settings:
         return get_settings()
     except ValidationError as exc:
         lines = [
-            f"  {str(err['loc'][0]).upper() if err['loc'] else '?'}: {err['msg']}" for err in exc.errors()
+            f"  {str(err['loc'][0]).upper()}: {err['msg']}" if err["loc"] else f"  {err['msg']}"
+            for err in exc.errors()
         ]
         raise SystemExit("Invalid configuration:\n" + "\n".join(lines)) from None

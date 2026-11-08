@@ -60,6 +60,8 @@ this component holds no StarRocks credentials.
 | `STARROCKS_CONNECTION_TIMEOUT` | No | `10` | Connection timeout, in seconds |
 | `STARROCKS_QUERY_TIMEOUT` | No | `60` | StarRocks `query_timeout` of every statement, in seconds |
 | `STARROCKS_MAX_ROWS` | No | `500` | Maximum rows returned by `read_query` (more rows set `truncated: true`) |
+| `STARROCKS_SSL_VERIFY` | No | `false` | Verify the FE certificate chain and hostname. Off, the connection is still TLS but anyone on the path can pose as StarRocks and read the forwarded JWT |
+| `STARROCKS_SSL_CA` | No | - | PEM file of the CA that signed the FE certificate (a private CA). Unset, `STARROCKS_SSL_VERIFY` checks against the system CA bundle |
 | `RADIANT_API_URL` | No | - | Radiant portal API base URL. When set, registers the Radiant API tools below (the caller's JWT is forwarded as a Bearer token) |
 | `RADIANT_API_TIMEOUT` | No | `60` | Timeout of one Radiant API request, in seconds |
 | `RADIANT_PORTAL_URL` | No | - | Radiant portal base URL. When set, the tools return a `portal_url` for every case, patient, occurrence and variant |
