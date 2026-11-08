@@ -132,14 +132,24 @@ def failure(exc: Exception) -> ToolOutput:
     if isinstance(exc, InvalidInput):
         return error("invalid_input", str(exc), **exc.details)
     if isinstance(exc, SqlError):
-        logger.warning("StarRocks query failed (%s): %s", exc.kind, exc)
+        # The message can quote the statement, and a statement can hold patient
+        # identifiers: the warning keeps the kind and the error number only.
+        logger.warning("StarRocks error: kind=%s errno=%s", exc.kind, exc.errno)
+        logger.debug("StarRocks error message: %s", exc)
         if exc.kind == "denied":
             return error("forbidden", f"StarRocks denied access: {exc}")
         return error("upstream", f"StarRocks error: {exc}")
     if isinstance(exc, ApiException):
         details: dict[str, Any] = {"status": exc.status}
-        if exc.body:
-            body = exc.body.decode() if isinstance(exc.body, bytes) else str(exc.body)
+        body = (exc.body.decode() if isinstance(exc.body, bytes) else str(exc.body)) if exc.body else ""
+        correlation_id = (getattr(exc, "headers", None) or {}).get("X-Correlation-ID")
+        if correlation_id:
+            details["correlation_id"] = correlation_id
+        if exc.status >= 500:
+            # A server error body can carry the portal's internals (SQL, stack): logged, not returned.
+            logger.warning("Radiant API error %s (correlation id %s): %s", exc.status, correlation_id, body[:2000])
+        elif body:
+            # A 4xx body says what was wrong with the request: the agent can fix it.
             details["body"] = body[:2000]
         code = _API_STATUS_CODES.get(exc.status, "upstream")
         return error(code, f"Radiant API error {exc.status}: {exc.reason}", **details)

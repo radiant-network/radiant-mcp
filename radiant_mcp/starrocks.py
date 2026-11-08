@@ -19,6 +19,7 @@ loading the rest.
 
 import base64
 import json
+import logging
 import os
 import re
 import tempfile
@@ -31,6 +32,8 @@ import mysql.connector
 from mysql.connector.errors import Error as MySQLError
 
 from .settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 # Extra seconds the socket waits beyond query_timeout, so StarRocks' own
 # timeout error normally arrives first.
@@ -61,9 +64,10 @@ class StarRocksError(RuntimeError):
     timed out, internal error).
     """
 
-    def __init__(self, message: str, kind: str = "failed") -> None:
+    def __init__(self, message: str, kind: str = "failed", errno: int | None = None) -> None:
         super().__init__(message)
         self.kind = kind
+        self.errno = errno
 
 
 def _error(exc: MySQLError) -> StarRocksError:
@@ -75,7 +79,7 @@ def _error(exc: MySQLError) -> StarRocksError:
         kind = "invalid"
     else:
         kind = "failed"
-    return StarRocksError(message, kind)
+    return StarRocksError(message, kind, exc.errno)
 
 
 @dataclass
@@ -119,8 +123,14 @@ def _tls(ca_file: str | None) -> dict:
 
 
 @contextmanager
-def connect(token: str | None, database: str | None = None) -> Iterator[Any]:
-    """Open a connection as the caller; it is closed on exit."""
+def connect(token: str | None, database: str | None = None, max_rows: int | None = None) -> Iterator[Any]:
+    """Open a connection as the caller; it is closed on exit.
+
+    With ``max_rows``, the session's ``sql_select_limit`` stops a statement without
+    its own LIMIT at ``max_rows + 1`` rows in StarRocks: closing the connection
+    would otherwise read and discard the rest of the result (an explicit LIMIT
+    still wins, as in MySQL).
+    """
     if not token:
         raise StarRocksError(AUTH_REQUIRED)
     if database is not None:
@@ -148,10 +158,17 @@ def connect(token: str | None, database: str | None = None) -> Iterator[Any]:
             **_tls(settings.starrocks_ca_file),
             connect_timeout=settings.starrocks_connection_timeout,
             read_timeout=timeout + _READ_TIMEOUT_MARGIN,
-            init_command=f"SET query_timeout = {int(timeout)}",
+            init_command=f"SET query_timeout = {int(timeout)}"
+            + (f", sql_select_limit = {int(max_rows) + 1}" if max_rows is not None else ""),
         )
     except MySQLError as exc:
-        raise _error(exc) from exc
+        error = _error(exc)
+        if error.kind == "denied":
+            raise error from exc
+        # A connection error names the host, the port or the TLS failure: logged, not returned.
+        logger.warning("StarRocks connection failed: %s", exc)
+        raise StarRocksError(f"Could not connect to StarRocks (error {exc.errno}); the details are in the "
+                             "server logs.", "failed", exc.errno) from exc
     finally:
         with suppress(OSError):
             os.unlink(token_path)
@@ -177,7 +194,7 @@ def query(
     ``params`` are bound by the MySQL connector: ``%s`` placeholders with a
     tuple, ``%(name)s`` with a dict. A literal ``%`` must then be ``%%``.
     """
-    with connect(token, database) as conn:
+    with connect(token, database, max_rows) as conn:
         cursor = conn.cursor()
         try:
             cursor.execute(sql, params)

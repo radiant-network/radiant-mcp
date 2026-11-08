@@ -57,7 +57,7 @@ def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], 
     try:
         rows = _sql.run(token, *parts_query(case_id))
     except Exception as exc:  # noqa: BLE001
-        return {}, f"part lookup failed: {exc}"
+        return {}, f"part lookup failed: {describe(exc)}"
     return {(int(r["seq_id"]), int(r["task_id"])): int(r["part"]) for r in rows if r["part"] is not None}, None
 
 

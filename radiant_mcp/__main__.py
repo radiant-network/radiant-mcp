@@ -31,6 +31,7 @@ from fastmcp import FastMCP
 
 from . import starrocks
 from .app import create_app
+from .call_log import CallLog
 from .results import INSTRUCTIONS
 from .settings import load_or_exit
 from .tools import register_tools
@@ -51,6 +52,7 @@ async def main():
     settings = load_or_exit()
 
     mcp = FastMCP("radiant-mcp", instructions=INSTRUCTIONS)
+    mcp.add_middleware(CallLog())
     print(f"Starting server on {args.host}:{args.port}")
     print(f"Default database: {starrocks.default_database() or 'None'}")
     if settings.starrocks_ca_file:
