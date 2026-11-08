@@ -60,6 +60,24 @@ def test_logrank_matches_scipy_for_two_groups():
     assert p == pytest.approx(reference.pvalue, rel=1e-6)
 
 
+def test_logrank_matches_scipy_on_random_cohorts():
+    # Day-level survival in years, as survival_curve passes it: numpy's default rank
+    # tolerance used to count df = 2 for two groups in about one test in five.
+    import numpy as np
+    from scipy.stats import CensoredData, logrank
+
+    rng = np.random.default_rng(20261108)
+    for _ in range(300):
+        sizes = rng.integers(5, 200, 2)
+        times = [rng.integers(1, 3000, n) / 365.25 for n in sizes]
+        events = [rng.random(n) < 0.6 for n in sizes]
+        groups = [charts.SurvivalGroup(f"G{i}", list(t), list(e)) for i, (t, e) in enumerate(zip(times, events, strict=True))]
+        result = charts.logrank(groups)
+        reference = logrank(*(CensoredData(uncensored=t[e], right=t[~e]) for t, e in zip(times, events, strict=True)))
+        assert result is not None and result[1] == 1
+        assert result[2] == pytest.approx(reference.pvalue, rel=1e-6, abs=1e-12)
+
+
 def test_logrank_with_three_groups_does_not_depend_on_the_group_order():
     groups = [
         charts.SurvivalGroup("A", DRUG_T[:11], [bool(e) for e in DRUG_E[:11]]),

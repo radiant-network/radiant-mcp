@@ -1,7 +1,9 @@
 """SQL of ``second_hit``. Every occurrence query filters on its key's ``part``.
 
 An SNV belongs to every gene it has a consequence on (``snv__consequence_filter``),
-not only its picked gene, and its impact is the impact on that gene."""
+not only its picked gene, and its impact is the impact on that gene. A gene it is
+only near (upstream, downstream, intergenic: ``rules.NEARBY_CONSEQUENCES``) does
+not count, or a variant of one gene would be a hit in its neighbours too."""
 
 from .. import sql as _sql
 from ..domain import rules as _rules
@@ -26,10 +28,12 @@ def _interpretations(p: _sql.Params, tenant_db: str, seq_id: int) -> str:
     )
 
 
-def _gene_join() -> str:
+def _gene_join(p: _sql.Params) -> str:
     """One row per gene of each variant: its consequences on the transcripts of every
-    gene it touches, so a variant of two overlapping genes counts for both."""
-    return f" JOIN {_sql.shared_db()}.snv__consequence_filter cf ON cf.locus_id = o.locus_id"
+    gene it lies in, so a variant of two overlapping genes counts for both. A gene the
+    variant is only near (upstream, downstream) does not count."""
+    return (f" JOIN {_sql.shared_db()}.snv__consequence_filter cf ON cf.locus_id = o.locus_id"
+            f" AND cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})")
 
 
 def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _sql.Params]:
@@ -40,7 +44,7 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
         "  v.gnomad_v3_af, v.clinvar_interpretation, o.exomiser_acmg_classification, v.chromosome, v.start"
         f" FROM {tenant_db}.germline__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(snv_key['variant_part'])}"
-        f"{_gene_join()}"
+        f"{_gene_join(p)}"
         f" LEFT JOIN {_interpretations(p, tenant_db, snv_key['seq_id'])} ig ON ig.locus_id = CAST(o.locus_id AS VARCHAR)"
         f" WHERE o.seq_id = {p(snv_key['seq_id'])} AND o.task_id = {p(snv_key['task_id'])} AND o.part = {p(snv_key['part'])}"
         f"  AND o.zygosity IN ({p.list(_rules.ALT_ZYGOSITIES)})"
@@ -126,7 +130,7 @@ def germline_plp_query(tenant_db: str, key: dict) -> tuple[str, _sql.Params]:
         " o.exomiser_acmg_classification, (ig.locus_id IS NOT NULL) AS interpreted_plp"
         f" FROM {tenant_db}.germline__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(key['variant_part'])}"
-        f"{_gene_join()}"
+        f"{_gene_join(p)}"
         f" LEFT JOIN {_interpretations(p, tenant_db, key['seq_id'])} ig ON ig.locus_id = CAST(o.locus_id AS VARCHAR)"
         f" WHERE o.seq_id = {p(key['seq_id'])} AND o.task_id = {p(key['task_id'])} AND o.part = {p(key['part'])}"
         f"  AND {_plp_condition(p)}"
@@ -141,7 +145,7 @@ def somatic_snv_query(tenant_db: str, key: dict, genes: list[str]) -> tuple[str,
         "SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, v.vep_impact, o.tumor_ad_ratio"
         f" FROM {tenant_db}.somatic__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(key['variant_part'])}"
-        f"{_gene_join()}"
+        f"{_gene_join(p)}"
         f" WHERE o.tumor_seq_id = {p(key['seq_id'])} AND o.task_id = {p(key['task_id'])} AND o.part = {p(key['part'])}"
         f"  AND o.filter = {p(_rules.PASS)} AND cf.vep_impact IN ({p.list(_rules.QUALIFYING_IMPACTS)})"
         f"  AND cf.symbol IN ({p.list(genes)})"

@@ -22,7 +22,9 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
 
     An SNV is in the gene when one of its consequences is on a transcript of the
     gene (``snv__consequence_filter``), not only its picked one, so a variant of two
-    overlapping genes counts for both; ``vep_impact`` is its impact on that gene.
+    overlapping genes counts for both; ``vep_impact`` is its impact on that gene. An
+    upstream, downstream or intergenic consequence does not count
+    (``rules.NEARBY_CONSEQUENCES``): VEP reports every gene within 5 kb.
     """
     tenant_db, shared_db = _sql.tenant_db(tenant), _sql.shared_db()
     sequencing = latest_task_join(p, tenant, criteria.data_type)
@@ -31,7 +33,8 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
         " x.seq_id, x.task_id, x.variant_id"
     )
     if criteria.is_snv:
-        gene_where = [f"cf.symbol = {p(criteria.gene)}"]
+        gene_where = [f"cf.symbol = {p(criteria.gene)}",
+                      f"cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"]
         if criteria.vep_impact:
             gene_where.append(f"cf.vep_impact IN ({p.list(criteria.vep_impact)})")
         where = []

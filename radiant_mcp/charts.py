@@ -142,6 +142,10 @@ def _km_steps(group: SurvivalGroup) -> tuple[np.ndarray, np.ndarray]:
     return xs, ys
 
 
+# Relative eigenvalue cut-off of the log-rank variance matrix (rank and pseudo-inverse).
+_RANK_RTOL = 1e-9
+
+
 def logrank(groups: Sequence[SurvivalGroup]) -> tuple[float, int, float] | None:
     """k-sample log-rank test: ``(chi-square, degrees of freedom, p-value)``,
     or None without any death or with fewer than two informative groups.
@@ -175,10 +179,19 @@ def logrank(groups: Sequence[SurvivalGroup]) -> tuple[float, int, float] | None:
     weight = d[several] * (n[several] - d[several]) / (n[several] - 1)
     weighted = weight[:, None] * share
     variance = np.diag(weighted.sum(axis=0)) - weighted.T @ share
-    df = int(np.linalg.matrix_rank(variance))
+    # The matrix is singular by construction (its rows sum to 0). Rank and
+    # pseudo-inverse use the same relative cut-off: numpy's default rank
+    # tolerance is below the rounding residue of the null eigenvalue, which
+    # counted one degree of freedom too many in about one two-group test in five.
+    eigenvalues = np.linalg.eigvalsh(variance)
+    largest = float(eigenvalues.max(initial=0.0))
+    if largest <= 0:
+        return None
+    df = int((eigenvalues > _RANK_RTOL * largest).sum())
     if df == 0:
         return None
-    statistic = float(observed_minus_expected @ np.linalg.pinv(variance) @ observed_minus_expected)
+    inverse = np.linalg.pinv(variance, rcond=_RANK_RTOL, hermitian=True)
+    statistic = float(observed_minus_expected @ inverse @ observed_minus_expected)
     return statistic, df, float(chi2.sf(statistic, df))
 
 

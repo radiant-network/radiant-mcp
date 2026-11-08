@@ -48,8 +48,9 @@ def test_carriers(fake_api, fake_sql, run):
     assert result["data"]["criteria"] == {
         "data_type": "germline_snv", "gene": "SCN1A", "vep_impact": ["HIGH"],
         "max_gnomad_af": "< 0.01 or absent from gnomAD",
-        "gene_match": "a consequence on a transcript of the gene (not only the picked one); "
-                      "vep_impact is the impact on that gene",
+        "gene_match": "a consequence on a transcript of the gene (not only the picked one), "
+                      "other than upstream, downstream or intergenic (a variant only near "
+                      "the gene does not count); vep_impact is the impact on that gene",
         "reruns": "the latest task of each sequencing in each case "
                   "(tumor-normal and tumor-only somatic analyses apart)",
     }
