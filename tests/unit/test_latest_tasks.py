@@ -13,7 +13,7 @@ from radiant_mcp import sql as _sql
 from radiant_mcp.queries.sequencing import latest_tasks
 
 COLUMNS = ("case_id", "seq_id", "task_id", "task_type", "patient_id", "family_role", "affected_status",
-           "experimental_strategy", "histology_type", "tenant_code", "deleted")
+           "experimental_strategy", "histology_type", "tenant_code", "deleted", "ingested_at")
 
 
 def _kept(rows: list[tuple], data_type: str) -> set[tuple[int, int, int]]:
@@ -25,6 +25,7 @@ def _kept(rows: list[tuple], data_type: str) -> set[tuple[int, int, int]]:
             "patient_id": row[1], "family_role": "proband", "affected_status": "affected",
             "experimental_strategy": "wgs", "histology_type": row[4] if len(row) > 4 else None,
             "tenant_code": "demo", "deleted": row[5] if len(row) > 5 else False,
+            "ingested_at": row[6] if len(row) > 6 else "2026-11-01 10:00:00",
         }
         db.execute(f"INSERT INTO radiant.staging_sequencing_experiment VALUES ({', '.join('?' * len(COLUMNS))})",
                    [values[c] for c in COLUMNS])
@@ -41,6 +42,13 @@ def test_a_re_analysis_replaces_the_older_task_of_the_sequencing():
     # Task 2 re-ran sequencing 10: the occurrences of task 1 must not be read any more.
     assert _kept([(1, 10, 1, GERMLINE), (1, 10, 2, GERMLINE), (1, 11, 3, GERMLINE)], "germline_snv") == {
         (1, 10, 2), (1, 11, 3)}
+
+
+def test_a_re_analysis_not_imported_yet_keeps_the_loaded_task():
+    # The ETL inserts the new task at the epoch; its occurrences come with the import.
+    rows = [(1, 10, 1, GERMLINE), (1, 10, 2, GERMLINE, None, False, "1970-01-01 00:00:00"),
+            (1, 11, 3, GERMLINE, None, False, None)]
+    assert _kept(rows, "germline_snv") == {(1, 10, 1)}
 
 
 def test_only_the_task_type_of_the_data_type_counts():

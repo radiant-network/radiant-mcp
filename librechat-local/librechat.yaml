@@ -38,7 +38,7 @@ mcpServers:
   # REMOTE radiant-mcp. LibreChat forwards the logged-in user's Keycloak access
   # token as a Bearer header. Because the token is supplied here, LibreChat does
   # NOT run the MCP OAuth discovery/DCR flow — it hits the server's direct-JWT
-  # verifier path (MultiAuth). The placeholder is only populated when
+  # verifier path (KeycloakAuthProvider). The placeholder is only populated when
   # OPENID_REUSE_TOKENS=true.
   radiant:
     type: streamable-http
@@ -53,5 +53,6 @@ mcpServers:
     # misclassify it as OAuth-protected and launch the consent/redirect flow.
     # We authenticate purely via the static header above, so opt out of OAuth.
     requiresOAuth: false
-    timeout: 60000
+    # A tool call chains several statements, each bounded at 60 s by the server.
+    timeout: 180000
     initTimeout: 10000

@@ -10,7 +10,8 @@ def latest_tasks(p: _sql.Params, tenant: str, data_type: str) -> str:
 
     A re-analysis adds a task next to the old one, and the old task's occurrences
     stay: only the latest task of the type that produces ``data_type`` is kept, so
-    a call the re-analysis dropped is not counted. Tumor-normal and tumor-only
+    a call the re-analysis dropped is not counted. Only imported tasks compete: a
+    re-analysis whose occurrences are not loaded yet would otherwise hide the case. Tumor-normal and tumor-only
     somatic SNV tasks share a type but are separate analyses, kept apart: a task
     with a normal sample is tumor-normal. A task shared by several cases (a
     per-sequencing task) has one row per case and counts for each.
@@ -27,7 +28,8 @@ def latest_tasks(p: _sql.Params, tenant: str, data_type: str) -> str:
         f" s.experimental_strategy, {paired} AS paired"
         f" FROM {_sql.shared_db()}.staging_sequencing_experiment s"
         f" WHERE s.tenant_code = {p(tenant)} AND s.deleted = false"
-        f" AND s.task_type = {p(_rules.TASK_TYPES[data_type])}) t) l WHERE l.rerun = 1)"
+        f" AND s.task_type = {p(_rules.TASK_TYPES[data_type])}"
+        f" AND s.ingested_at > {p(_rules.NOT_INGESTED)}) t) l WHERE l.rerun = 1)"
     )
 
 

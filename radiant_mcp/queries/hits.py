@@ -113,6 +113,8 @@ def germline_keys_query(shared_db: str, tenant: str, patient_id: int) -> tuple[s
         f" FROM {shared_db}.staging_sequencing_experiment"
         f" WHERE tenant_code = {p(tenant)} AND patient_id = {p(patient_id)}"
         f"  AND task_type = {p(_rules.GERMLINE_SNV_TASK_TYPE)} AND deleted = false AND part IS NOT NULL"
+        # A task not imported yet has no occurrences: it must not win over the loaded one.
+        f"  AND ingested_at > {p(_rules.NOT_INGESTED)}"
     )
     return sql, p
 

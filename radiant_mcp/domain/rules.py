@@ -41,6 +41,11 @@ TASK_TYPES = {
     "somatic_snv_all": "radiant_somatic_annotation",
     "somatic_cnv": "tumor_only_variant_calling",
 }
+# staging_sequencing_experiment.ingested_at of a task whose occurrences are not loaded
+# yet: the ETL inserts the row at the epoch and sets the time once the partition is
+# imported (NULL: to import again). The ETL's own "imported" test is `> this`
+# (clinical/case_status_select.sql).
+NOT_INGESTED = "1970-01-01 00:00:00"
 # staging_sequencing_experiment.histology_type of a normal sample. A somatic SNV task
 # with one is tumor-normal, without one tumor-only (the portal's somaticCohortCounts).
 NORMAL_HISTOLOGY = "normal"

@@ -167,8 +167,6 @@ def _proband_patient_id(case: dict) -> int | None:
     for member in case.get("members", []):
         if member.get("relationship_to_proband") == "proband" and member.get("patient_id") is not None:
             return int(member["patient_id"])
-    if case.get("proband_id") is not None:
-        return int(case["proband_id"])
     return None
 
 

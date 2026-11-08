@@ -151,7 +151,7 @@ def _variant_carriers(api: RadiantApi, _token: str, locus_id: str, tenant: str |
 # -- tools -------------------------------------------------------------------
 
 async def variant_details(
-    locus_id: str,
+    locus_id: str | int,
     tenant: str | None = None,
     case_id: int | None = None,
     seq_id: int | None = None,
@@ -175,7 +175,8 @@ async def variant_details(
     section that fails is listed in ``warnings``.
 
     Args:
-        locus_id: The variant's locus_id (from ``prioritize_snv``).
+        locus_id: The variant's locus_id, a string or a number (from ``prioritize_snv``,
+            ``second_hit``, ``cohort_carriers``...).
         tenant: Tenant code (auto-resolved when the user has only one).
         case_id: Case of the optional occurrence key: pass case_id, seq_id and
             task_id together, or none of them.
@@ -192,7 +193,7 @@ async def variant_details(
     return await _api.run(_variant_details, str(locus_id), tenant, case_id, seq_id, task_id, data_type)
 
 
-async def variant_carriers(locus_id: str, tenant: str | None = None, limit: int = 20) -> ToolResult:
+async def variant_carriers(locus_id: str | int, tenant: str | None = None, limit: int = 20) -> ToolResult:
     """List the cases of the tenant that carry a germline SNV.
 
     Same lists as the "Cases" section of the portal's variant page:
@@ -204,7 +205,7 @@ async def variant_carriers(locus_id: str, tenant: str | None = None, limit: int 
     case carries a ``portal_url`` to the occurrence in that case.
 
     Args:
-        locus_id: The variant's locus_id.
+        locus_id: The variant's locus_id, a string or a number.
         tenant: Tenant code (auto-resolved when the user has only one).
         limit: Max cases returned per list (1–100, default 20).
     """

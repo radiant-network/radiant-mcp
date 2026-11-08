@@ -338,7 +338,15 @@ def portal_field_lists(types_dir: Path) -> dict[str, dict[str, dict[str, bool]]]
     lists = {}
     for name in raw:
         members = [fields[f] for f in resolve(name)]
-        lists[name] = {alias: {"filter": f, "sort": s} for alias, f, s in members if alias}
+        # Two fields can share an alias (``SymbolField`` filters, ``PickedSymbolField`` does
+        # not): the API finds the first match by capability, so OR the flags.
+        merged: dict[str, dict[str, bool]] = {}
+        for alias, f, s in members:
+            if alias:
+                flags = merged.setdefault(alias, {"filter": False, "sort": False})
+                flags["filter"] |= f
+                flags["sort"] |= s
+        lists[name] = merged
     return lists
 
 

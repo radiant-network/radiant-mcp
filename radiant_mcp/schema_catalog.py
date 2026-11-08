@@ -176,9 +176,13 @@ GERMLINE_CNV_FREQUENCY = Table(
 )
 CONSEQUENCE_FILTER = Table(
     SHARED_DB, "snv__consequence_filter_partitioned",
-    "Picked consequence and in-silico scores per locus_id, for filters on predictors.",
+    "Consequences and in-silico scores of every transcript, NOT only the picked one: one row per "
+    "(locus_id, gene, consequence), so a variant has several rows. Use it to FILTER variants "
+    "(LEFT SEMI JOIN or EXISTS on locus_id), never JOIN it to count: counts would be inflated. "
+    "The picked annotation is in snv__variant_partitioned.",
     {
-        "locus_id": "variant id", "symbol": "gene", "consequence": "consequence", "biotype": "biotype",
+        "locus_id": "variant id (several rows per variant)", "symbol": "gene of this row",
+        "consequence": "consequence on this gene", "biotype": "biotype",
         "vep_impact": "VEP impact", "is_deleterious": "deleterious flag", "cadd_phred": "CADD phred",
         "revel_score": "REVEL", "spliceai_ds": "SpliceAI delta score", "sift_pred": "SIFT",
         "polyphen2_hvar_pred": "PolyPhen-2", "gnomad_pli": "pLI", "gnomad_loeuf": "LOEUF",

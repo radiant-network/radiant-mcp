@@ -1,10 +1,11 @@
 """Chart rendering for the D.A.V.I.D chart tools (RAD-254).
 
 Pure functions: data in, PNG bytes (plus the statistics drawn) out. The tools
-in ``tools/charts.py`` fetch the data and call these. matplotlib runs headless
+in ``tools/charts/`` fetch the data and call these. matplotlib runs headless
 (``Agg``); Kaplan-Meier estimates come from SciPy (``scipy.stats.ecdf`` on
-right-censored data); the log-rank test is the k-sample form (chi-square,
-k - 1 degrees of freedom), equal to ``scipy.stats.logrank`` for two groups.
+right-censored data); the log-rank test is the k-sample form (chi-square with
+the rank of the variance matrix as degrees of freedom, k - 1 when every group
+has patients at risk), equal to ``scipy.stats.logrank`` for two groups.
 """
 
 import functools
