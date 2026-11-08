@@ -320,3 +320,28 @@ def test_the_shown_impact_is_the_most_severe_on_the_reported_gene():
                    hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["TP53"])):
         assert "OVER (PARTITION BY o.locus_id, cf.symbol)" in sql and "AS vep_impact" in sql
         assert "v.vep_impact AS picked_vep_impact" in sql
+
+
+def test_compound_het_impacts_are_those_on_the_pair_gene():
+    # A pair in ATM whose picked transcript is on the overlapping NPAT: the rule says
+    # vep_impact is the impact on the gene, so the pair reads it from the consequences.
+    sql, params = hit_queries.comphet_query("demo_tenant", SNV_KEY)
+    assert "gene_impact" in sql and "g1.impact_rank" in sql and "g2.impact_rank" in sql
+    assert "v1.vep_impact AS picked_vep_impact" in sql and "v2.vep_impact AS partner_picked_vep_impact" in sql
+    assert "LEFT JOIN gene_impact g1" in sql  # a pair is never lost for a missing impact row
+
+
+def test_an_unknown_impact_stays_unknown():
+    import re
+    import sqlite3
+
+    from radiant_mcp import sql as _sql
+
+    p = _sql.Params()
+    expr = hit_queries._impact_label(p, f"MIN({hit_queries._impact_rank(p, 'vep_impact')})")
+    expr = re.sub(r"%\((p\d+)\)s", r":\1", expr)
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE t (g, vep_impact)")
+    db.executemany("INSERT INTO t VALUES (?, ?)", [(1, "LOW"), (1, "HIGH"), (2, None), (3, "MODIFIER")])
+    got = dict(db.execute(f"SELECT g, {expr} FROM t GROUP BY g", p.values).fetchall())
+    assert got == {1: "HIGH", 2: None, 3: "MODIFIER"}

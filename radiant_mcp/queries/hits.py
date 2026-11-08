@@ -32,13 +32,23 @@ def _interpretations(p: _sql.Params, tenant_db: str, seq_id: int) -> str:
 _IMPACTS = ("HIGH", "MODERATE", "LOW", "MODIFIER")
 
 
+def _impact_rank(p: _sql.Params, column: str = "cf.vep_impact") -> str:
+    """0 for HIGH ... 3 for MODIFIER, NULL when unknown: MIN of it is the most severe impact
+    (MIN skips NULLs, so an unknown impact stays NULL instead of reading as MODIFIER)."""
+    rank = " ".join(f"WHEN {p(impact)} THEN {i}" for i, impact in enumerate(_IMPACTS))
+    return f"CASE {column} {rank} END"
+
+
+def _impact_label(p: _sql.Params, rank: str) -> str:
+    """The impact name of a ``_impact_rank`` value; NULL stays NULL."""
+    label = " ".join(f"WHEN {i} THEN {p(impact)}" for i, impact in enumerate(_IMPACTS))
+    return f"CASE {rank} {label} END"
+
+
 def _impact_on_gene(p: _sql.Params) -> str:
     """The most severe impact of the variant on the gene, over the rows the query kept: a
     window, so DISTINCT folds the per-transcript rows before the LIMIT counts them."""
-    rank = " ".join(f"WHEN {p(impact)} THEN {i}" for i, impact in enumerate(_IMPACTS[:-1]))
-    label = " ".join(f"WHEN {i} THEN {p(impact)}" for i, impact in enumerate(_IMPACTS[:-1]))
-    return (f"CASE MIN(CASE cf.vep_impact {rank} ELSE {len(_IMPACTS) - 1} END)"
-            f" OVER (PARTITION BY o.locus_id, cf.symbol) {label} ELSE {p(_IMPACTS[-1])} END")
+    return _impact_label(p, f"MIN({_impact_rank(p)}) OVER (PARTITION BY o.locus_id, cf.symbol)")
 
 
 def _gene_join(p: _sql.Params) -> str:
@@ -118,13 +128,26 @@ def comphet_query(tenant_db: str, snv_key: dict) -> tuple[str, _sql.Params]:
         "  GREATEST(c.locus_id, c.partner_locus_id) AS partner_locus_id"
         f" FROM {tenant_db}.germline__snv__comphet c"
         f" WHERE c.seq_id = {p(snv_key['seq_id'])} AND c.task_id = {p(snv_key['task_id'])} AND c.part = {p(snv_key['part'])}"
+        # The most severe impact of each variant of the pairs on the pair's gene, as in
+        # the other lists (vep_impact); the picked transcript can be another gene's.
+        "), gene_impact AS ("
+        f" SELECT cf.locus_id, cf.symbol, MIN({_impact_rank(p)}) AS impact_rank"
+        f" FROM {_sql.shared_db()}.snv__consequence_filter cf"
+        " JOIN (SELECT locus_id, symbol FROM pairs UNION SELECT partner_locus_id, symbol FROM pairs) l"
+        "  ON l.locus_id = cf.locus_id AND l.symbol = cf.symbol"
+        f" WHERE cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"
+        " GROUP BY cf.locus_id, cf.symbol"
         ")"
-        " SELECT pairs.symbol AS gene, pairs.locus_id, v1.hgvsg, v1.vep_impact, v1.gnomad_v3_af,"
-        " pairs.partner_locus_id, v2.hgvsg AS partner_hgvsg, v2.vep_impact AS partner_vep_impact,"
+        f" SELECT pairs.symbol AS gene, pairs.locus_id, v1.hgvsg, {_impact_label(p, 'g1.impact_rank')} AS vep_impact,"
+        " v1.vep_impact AS picked_vep_impact, v1.gnomad_v3_af,"
+        " pairs.partner_locus_id, v2.hgvsg AS partner_hgvsg,"
+        f" {_impact_label(p, 'g2.impact_rank')} AS partner_vep_impact, v2.vep_impact AS partner_picked_vep_impact,"
         " v2.gnomad_v3_af AS partner_gnomad_v3_af"
         " FROM pairs"
         f" JOIN {tenant_db}.snv__variant_partitioned v1 ON v1.locus_id = pairs.locus_id AND v1.part = {p(snv_key['variant_part'])}"
         f" JOIN {tenant_db}.snv__variant_partitioned v2 ON v2.locus_id = pairs.partner_locus_id AND v2.part = {p(snv_key['variant_part'])}"
+        " LEFT JOIN gene_impact g1 ON g1.locus_id = pairs.locus_id AND g1.symbol = pairs.symbol"
+        " LEFT JOIN gene_impact g2 ON g2.locus_id = pairs.partner_locus_id AND g2.symbol = pairs.symbol"
         f" ORDER BY gene, pairs.locus_id LIMIT {p(ROW_LIMIT + 1)}"
     )
     return sql, p
