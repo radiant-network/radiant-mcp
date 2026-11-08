@@ -28,7 +28,11 @@ _LOCUS_ID = re.compile(r"^-?\d{1,20}$")
 
 
 class InvalidInput(ValueError):
-    """A value that cannot safely go into a query."""
+    """A value that cannot safely go into a query. ``details`` go to ``error.details``."""
+
+    def __init__(self, message: str, **details: Any) -> None:
+        super().__init__(message)
+        self.details = details
 
 
 # StarRocks rejected or failed the query.
@@ -91,7 +95,7 @@ def locus_id(value: Any) -> str:
 def one_of(value: Any, allowed: Iterable[str], what: str) -> str:
     allowed = tuple(allowed)
     if value not in allowed:
-        raise InvalidInput(f"invalid {what}: {value!r} (allowed: {', '.join(allowed)})")
+        raise InvalidInput(f"invalid {what}: {value!r} (allowed: {', '.join(allowed)})", allowed=list(allowed))
     return value
 
 

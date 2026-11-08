@@ -44,7 +44,14 @@ async def _run(fn: Callable[..., ToolOutput], *args) -> ToolResult:
 
 def _read_query(token: str, query: str, db: str | None) -> ToolOutput:
     max_rows = _max_rows()
-    result = starrocks.query(token, query, database=db, max_rows=max_rows)
+    try:
+        result = starrocks.query(token, query, database=db, max_rows=max_rows)
+    except starrocks.StarRocksError as exc:
+        # The agent wrote the statement: a syntax error or an unknown column is
+        # its to fix, not a StarRocks outage to retry.
+        if exc.kind == "invalid":
+            raise invalid(f"StarRocks rejected the statement: {exc}") from exc
+        raise
     truncated = None
     if result.truncated:
         truncated = (f"Only the first {max_rows} rows are returned. Aggregate (COUNT, GROUP BY) "
