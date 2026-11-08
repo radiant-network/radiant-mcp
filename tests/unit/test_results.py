@@ -70,6 +70,15 @@ def test_each_exception_maps_to_one_error_code(exc, code):
     assert "internal.host" not in error.message
 
 
+def test_an_invalid_value_lists_the_allowed_ones():
+    from radiant_mcp.sql import one_of
+
+    with pytest.raises(InvalidInput) as exc:
+        one_of("HIGHEST", ("HIGH", "MODERATE"), "vep_impact")
+    error = failure(exc.value).error
+    assert error.code == "invalid_input" and error.details == {"allowed": ["HIGH", "MODERATE"]}
+
+
 def test_an_api_error_keeps_its_status_and_body():
     error = failure(api_exception(400, '{"message":"unknown field: foo"}')).error
     assert error.message == "Radiant API error 400: error"

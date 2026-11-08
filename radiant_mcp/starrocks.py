@@ -42,8 +42,41 @@ _DB_NAME = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 AUTH_REQUIRED = "Authentication required: no JWT in request context"
 
 
+# MySQL error numbers for access denied, and for an unknown database, column or
+# table. StarRocks also reports many unrelated errors, timeouts included, as 1064
+# (HY000), so a statement it cannot parse or analyse is told by its message.
+_DENIED_ERRNOS = {1044, 1045, 1142, 1143, 1227}
+_INVALID_ERRNOS = {1049, 1054, 1146}
+_INVALID_MESSAGE = re.compile(
+    r"getting syntax error|getting analyzing error|cannot be resolved|unknown (database|table|column)"
+    r"|no viable alternative|mismatched input|syntax error",
+    re.IGNORECASE,
+)
+
+
 class StarRocksError(RuntimeError):
-    """The connection or the statement failed."""
+    """The connection or the statement failed.
+
+    ``kind`` says whose fault it is: ``denied`` (the caller's grants),
+    ``invalid`` (the statement or a name), or ``failed`` (StarRocks itself: down,
+    timed out, internal error).
+    """
+
+    def __init__(self, message: str, kind: str = "failed") -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+def _error(exc: MySQLError) -> StarRocksError:
+    message = str(exc)
+    if exc.errno in _DENIED_ERRNOS or "access denied" in message.lower():
+        kind = "denied"
+    elif (exc.errno in _INVALID_ERRNOS or _INVALID_MESSAGE.search(message)
+          or str(exc.sqlstate or "").startswith("42")):
+        kind = "invalid"
+    else:
+        kind = "failed"
+    return StarRocksError(message, kind)
 
 
 @dataclass
@@ -64,7 +97,7 @@ def query_timeout() -> int:
 def database_name(value: str) -> str:
     """A database or table name that is safe to write into a statement."""
     if not isinstance(value, str) or not _DB_NAME.match(value):
-        raise StarRocksError(f"invalid name: {value!r}")
+        raise StarRocksError(f"invalid name: {value!r}", "invalid")
     return value
 
 
@@ -123,7 +156,7 @@ def connect(token: str | None, database: str | None = None) -> Iterator[Any]:
             init_command=f"SET query_timeout = {int(timeout)}",
         )
     except MySQLError as exc:
-        raise StarRocksError(str(exc)) from exc
+        raise _error(exc) from exc
     finally:
         with suppress(OSError):
             os.unlink(token_path)
@@ -161,7 +194,7 @@ def query(
             rows = list(cursor.fetchmany(max_rows + 1))
             return Result(columns, rows[:max_rows], truncated=len(rows) > max_rows)
         except MySQLError as exc:
-            raise StarRocksError(str(exc)) from exc
+            raise _error(exc) from exc
         finally:
             # Unread rows of a truncated result can make the close fail.
             with suppress(Exception):

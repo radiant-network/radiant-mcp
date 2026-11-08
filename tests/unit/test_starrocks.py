@@ -171,9 +171,31 @@ def test_read_query_returns_rows_and_says_when_it_cut_them(starrocks_server, mon
 
 def test_read_query_reports_starrocks_errors_and_missing_jwt(starrocks_server, monkeypatch):
     assert call_as(monkeypatch, None, query.read_query, "SELECT 1")["error"]["code"] == "auth_required"
-    starrocks_server.error = DatabaseError(msg="Access denied")
+    starrocks_server.error = DatabaseError(msg="Access denied for user bob", errno=1227, sqlstate="42000")
     assert call_as(monkeypatch, "bob", query.read_query, "SELECT 1")["error"] == {
-        "code": "upstream", "message": "StarRocks error: Access denied"}
+        "code": "forbidden", "message": "StarRocks denied access: 1227 (42000): Access denied for user bob"}
+
+
+@pytest.mark.parametrize("errno, sqlstate, msg, code", [
+    # The agent wrote the statement: a syntax error or an unknown column is its to fix.
+    (1064, "42000", "Getting syntax error at line 1", "invalid_input"),
+    (1064, "HY000", "Getting analyzing error. Detail message: Column 'foo' cannot be resolved.", "invalid_input"),
+    (1054, "42S22", "Unknown column 'foo'", "invalid_input"),
+    (1146, "42S02", "Unknown table 'bar'", "invalid_input"),
+    # StarRocks itself: retry once.
+    (1064, "HY000", "Query exceeded time limit of 60 seconds", "upstream"),
+    (2013, "HY000", "Lost connection to MySQL server during query", "upstream"),
+])
+def test_read_query_tells_a_bad_statement_from_a_starrocks_failure(starrocks_server, monkeypatch, errno, sqlstate,
+                                                                    msg, code):
+    starrocks_server.error = DatabaseError(msg=msg, errno=errno, sqlstate=sqlstate)
+    error = call_as(monkeypatch, "bob", query.read_query, "SELECT foo FROM bar")["error"]
+    assert error["code"] == code and msg in error["message"]
+
+
+def test_read_query_rejects_a_bad_database_name_as_input(starrocks_server, monkeypatch):
+    error = call_as(monkeypatch, "bob", query.read_query, "SELECT 1", "x; DROP")["error"]
+    assert error["code"] == "invalid_input" and starrocks_server.connections == []
 
 
 def test_table_overview_runs_under_each_caller_grants(starrocks_server, monkeypatch):

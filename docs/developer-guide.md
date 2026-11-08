@@ -171,7 +171,12 @@ flowchart LR
 - `ToolFailure`: the code it carries, such as `not_found`, `ambiguous_tenant`
   (with `details.tenants`) or `unavailable` (a tenant without clinical data).
 - `sql.InvalidInput`: `invalid_input`.
-- `starrocks.StarRocksError`: `upstream`, with the StarRocks message.
+- `starrocks.StarRocksError`: `forbidden` when StarRocks denies access, otherwise
+  `upstream`, with the StarRocks message. `read_query` turns a statement StarRocks
+  cannot parse or analyse (`kind == "invalid"`) into `invalid_input`: the agent
+  wrote it and must fix it, not retry it.
+- `sql.InvalidInput`: `invalid_input`; `one_of` / `all_of` put the accepted values
+  in `details.allowed`.
 - `ApiException`: by status. 400 and 422 give `invalid_input`, 401
   `auth_required`, 403 `forbidden` and 404 `not_found`; any other status gives
   `upstream`. `details` keeps the `status` and the response `body`.

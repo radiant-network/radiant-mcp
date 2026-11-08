@@ -130,9 +130,11 @@ def failure(exc: Exception) -> ToolOutput:
     if isinstance(exc, ToolFailure):
         return ToolOutput(ok=False, error=exc.error)
     if isinstance(exc, InvalidInput):
-        return error("invalid_input", str(exc))
+        return error("invalid_input", str(exc), **exc.details)
     if isinstance(exc, SqlError):
-        logger.warning("StarRocks query failed: %s", exc)
+        logger.warning("StarRocks query failed (%s): %s", exc.kind, exc)
+        if exc.kind == "denied":
+            return error("forbidden", f"StarRocks denied access: {exc}")
         return error("upstream", f"StarRocks error: {exc}")
     if isinstance(exc, ApiException):
         details: dict[str, Any] = {"status": exc.status}
