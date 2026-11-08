@@ -28,7 +28,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import mysql.connector
-from mysql.connector.constants import ClientFlag
 from mysql.connector.errors import Error as MySQLError
 
 from .settings import get_settings
@@ -146,10 +145,6 @@ def connect(token: str | None, database: str | None = None) -> Iterator[Any]:
             openid_token_file=token_path,
             database=database or settings.starrocks_db or "",
             autocommit=True,
-            # One statement per call: only the first result set is read, so a
-            # leading `SET ...;` would return an empty result and a trailing
-            # statement would run unseen.
-            client_flags=[-ClientFlag.MULTI_STATEMENTS],
             **_tls(settings.starrocks_ca_file),
             connect_timeout=settings.starrocks_connection_timeout,
             read_timeout=timeout + _READ_TIMEOUT_MARGIN,
