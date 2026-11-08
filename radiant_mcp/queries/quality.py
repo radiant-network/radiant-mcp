@@ -12,5 +12,8 @@ def germline_qualifies(p: _sql.Params, alias: str = "o") -> str:
     PASS, genotype quality and alternate depth at least the thresholds. ``filter`` is
     per site, ``gq`` per sample: a PASS site can still hold a poor call of one member.
     """
-    return (f"({alias}.filter = {p(_rules.PASS)} AND {alias}.gq >= {p(_rules.GERMLINE_MIN_GQ)}"
-            f" AND {alias}.ad_alt >= {p(_rules.GERMLINE_MIN_AD_ALT)})")
+    # The ETL stores a GQ or alternate depth of 0 as NULL: a NULL fails the rule (it
+    # does in the ETL's WHERE too), and COALESCE keeps `NOT germline_qualifies` true
+    # for it instead of NULL.
+    return (f"COALESCE({alias}.filter = {p(_rules.PASS)} AND {alias}.gq >= {p(_rules.GERMLINE_MIN_GQ)}"
+            f" AND {alias}.ad_alt >= {p(_rules.GERMLINE_MIN_AD_ALT)}, FALSE)")

@@ -51,8 +51,8 @@ def _link(tenant: str, criteria: Criteria, row: dict) -> str | None:
         # Tumor-normal analyses only (latest_tasks), so the variants section is known.
         return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "somatic_snv_tn",
                               task_id=row.get("task_id"), variant_id=str(row.get("first_variant_id")))
-    if criteria.data_type == "somatic_cnv":
-        return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "somatic_cnv", task_id=row.get("task_id"))
+    # Somatic CNV: the portal's somatic variants tab has no CNV view yet (only the SNV
+    # sub-tabs), so a deep link would land on the SNV list: open the variants tab.
     return case_url(tenant, row.get("case_id"), tab="variants")
 
 
@@ -154,7 +154,8 @@ async def cohort_carriers(
             absent from gnomAD (e.g. 0.01).
         zygosity: SNV only, e.g. ["HOM"] (tumor zygosity for somatic).
         cnv_types: CNV only, among LOSS, GAIN, CNLOH, GAINLOH (default all).
-            CNVs are always PASS; somatic SNVs too.
+            CNVs are always PASS; somatic SNVs too; germline SNV calls follow the
+            platform's carrier quality rule (PASS, GQ >= 20, alternate depth >= 3).
         limit: Max carriers listed (1–200, default 50); counts cover all.
         tenant: Tenant code (auto-resolved when the user has only one).
     """
@@ -199,7 +200,8 @@ async def genotype_phenotype(
             absent from gnomAD (e.g. 0.01).
         zygosity: SNV only, e.g. ["HOM"] (tumor zygosity for somatic).
         cnv_types: CNV only, among LOSS, GAIN, CNLOH, GAINLOH (default all).
-            CNVs are always PASS; somatic SNVs too.
+            CNVs are always PASS; somatic SNVs too; germline SNV calls follow the
+            platform's carrier quality rule (PASS, GQ >= 20, alternate depth >= 3).
         limit: Max phenotypes listed (1–100, default 30).
         tenant: Tenant code (auto-resolved when the user has only one).
     """

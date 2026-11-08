@@ -294,3 +294,21 @@ def test_second_hit_marks_germline_calls_outside_the_quality_rule(fake_api, fake
     assert "low_quality" in result["data"]["rules"]
     [(sql, values)] = [(q, v) for q, v in fake_sql.queries if "germline__cnv__occurrence" in q]
     assert bound_value(sql, values, "o.gq >= ") == 20
+
+
+def test_a_null_gq_or_alt_depth_is_low_quality():
+    # The ETL stores GQ 0 and alt depth 0 as NULL: `NOT qualifies` must be true, not NULL.
+    import re
+    import sqlite3
+
+    from radiant_mcp import sql as _sql
+    from radiant_mcp.queries.quality import germline_qualifies
+
+    p = _sql.Params()
+    condition = re.sub(r"%\((p\d+)\)s", r":\1", germline_qualifies(p))
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE o (filter, gq, ad_alt)")
+    db.executemany("INSERT INTO o VALUES (?, ?, ?)",
+                   [("PASS", 40, 10), ("PASS", None, 10), ("PASS", 40, None), ("LowQual", 40, 10), ("PASS", 5, 10)])
+    low_quality = [r[0] for r in db.execute(f"SELECT NOT {condition} FROM o", p.values)]
+    assert low_quality == [0, 1, 1, 1, 1]
