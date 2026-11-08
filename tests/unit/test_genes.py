@@ -27,7 +27,10 @@ def test_gene_info(fake_api, fake_sql, run):
 
 def test_gene_info_unknown_gene(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [])
-    assert "not found" in run(gene_info("NOPE1", tenant="demo"))["error"]["message"]
+    error = run(gene_info("NOPE1", tenant="demo"))["error"]
+    # The portal search does not read aliases: the agent is told to retry with the HGNC symbol.
+    assert error["code"] == "not_found" and "official HGNC symbol" in error["message"]
+    assert "aliases are not resolved" in error["message"]
 
 
 def test_lookup_terms(fake_api, run):

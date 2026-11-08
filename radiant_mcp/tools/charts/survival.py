@@ -15,7 +15,7 @@ from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.carriers import carrier_patients_query
 from ...results import ToolOutput, failure, invalid, ok, respond
 from ...services.cases import merge_criteria, search_criteria
-from ...services.genes import resolve_gene
+from ...services.genes import not_found_message, resolve_gene
 from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, no_clinical_data, unknown_filter_fields
 from ._common import DAYS_PER_YEAR
 
@@ -41,7 +41,7 @@ class CarrierSource(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    gene: str
+    gene: str = Field(description="Official HGNC symbol (case-insensitive) or Ensembl gene id; aliases are not resolved.")
     data_type: CohortDataType = "germline_snv"
     vep_impact: list[str] | None = None
     clinvar: list[str] | None = None
@@ -235,7 +235,7 @@ def _resolve_genes(api: RadiantApi, tenant: str, specs: list[GroupSpec]) -> list
         if spec.criteria is not None:
             gene = resolve_gene(api, tenant, spec.criteria.gene)
             if gene is None:
-                raise _sql.InvalidInput(f"group {spec.label!r}: gene {spec.criteria.gene!r} not found")
+                raise _sql.InvalidInput(f"group {spec.label!r}: {not_found_message(spec.criteria.gene)}")
             resolved = spec.model_copy()
             resolved._criteria = replace(spec.criteria, gene=_sql.symbol(gene["symbol"]))
             spec = resolved
