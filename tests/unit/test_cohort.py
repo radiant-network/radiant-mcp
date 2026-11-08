@@ -43,7 +43,8 @@ def test_carriers(fake_api, fake_sql, run):
         "max_gnomad_af": "< 0.01 or absent from gnomAD",
         "gene_match": "a consequence on a transcript of the gene (not only the picked one); "
                       "vep_impact is the impact on that gene",
-        "reruns": "the latest task of each sequencing",
+        "reruns": "the latest task of each sequencing in each case "
+                  "(tumor-normal and tumor-only somatic analyses apart)",
     }
     for sql, values in fake_sql.queries:
         assert bound_value(sql, values, "WHERE cf.symbol = ") == "SCN1A"
@@ -91,9 +92,10 @@ def test_carriers_match_any_transcript_of_the_gene_and_the_latest_task():
     assert "radiant.snv__consequence_filter cf" in sql
     assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
     assert "demo_tenant.snv__variant sv" in sql and "snv__variant_partitioned" not in sql
-    assert "ROW_NUMBER() OVER (PARTITION BY x.seq_id, x.variant_id ORDER BY x.task_id DESC)" in sql
-    cnv_sql, _ = carrier_queries.totals_query("demo", build_criteria("germline_cnv", "SCN1A", None, None, None, None, None))
-    assert "ROW_NUMBER()" in cnv_sql
+    assert bound_value(sql, params.values, "s.task_type = ") == "radiant_germline_annotation"
+    cnv_sql, cnv_params = carrier_queries.totals_query(
+        "demo", build_criteria("germline_cnv", "SCN1A", None, None, None, None, None))
+    assert bound_value(cnv_sql, cnv_params.values, "s.task_type = ") == "alignment_germline_variant_calling"
 
 
 def test_phenotypes_leave_fetal_observations_out():

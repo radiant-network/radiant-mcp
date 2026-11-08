@@ -2,14 +2,40 @@
 that maps an occurrence's (seq_id, task_id) to its case, patient and ``part``."""
 
 from .. import sql as _sql
+from ..domain import rules as _rules
 
 
-def sequencing_join(p: _sql.Params, tenant: str, source: str = "x") -> str:
-    """Join ``source`` (with seq_id / task_id) to its live sequencing experiment row ``s``, in ``tenant``."""
+def latest_tasks(p: _sql.Params, tenant: str, data_type: str) -> str:
+    """Subquery: the live staging rows of the latest task of each (case, sequencing) for ``data_type``.
+
+    A re-analysis adds a task next to the old one, and the old task's occurrences
+    stay: only the latest task of the type that produces ``data_type`` is kept, so
+    a call the re-analysis dropped is not counted. Tumor-normal and tumor-only
+    somatic SNV tasks share a type but are separate analyses, kept apart: a task
+    with a normal sample is tumor-normal. A task shared by several cases (a
+    per-sequencing task) has one row per case and counts for each.
+    """
+    paired = (
+        f"MAX(CASE WHEN s.histology_type = {p(_rules.NORMAL_HISTOLOGY)} THEN 1 ELSE 0 END)"
+        " OVER (PARTITION BY s.task_id)"
+        if data_type == "somatic_snv_all" else "0"
+    )
     return (
-        f"JOIN {_sql.shared_db()}.staging_sequencing_experiment s"
+        "(SELECT case_id, seq_id, task_id, patient_id, family_role, affected_status, experimental_strategy"
+        " FROM (SELECT t.*, ROW_NUMBER() OVER (PARTITION BY t.case_id, t.seq_id, t.paired ORDER BY t.task_id DESC)"
+        " AS rerun FROM (SELECT s.case_id, s.seq_id, s.task_id, s.patient_id, s.family_role, s.affected_status,"
+        f" s.experimental_strategy, {paired} AS paired"
+        f" FROM {_sql.shared_db()}.staging_sequencing_experiment s"
+        f" WHERE s.tenant_code = {p(tenant)} AND s.deleted = false"
+        f" AND s.task_type = {p(_rules.TASK_TYPES[data_type])}) t) l WHERE l.rerun = 1)"
+    )
+
+
+def latest_task_join(p: _sql.Params, tenant: str, data_type: str, source: str = "x") -> str:
+    """Join ``source`` (with seq_id / task_id) to ``latest_tasks`` as ``s``: rows of older tasks drop out."""
+    return (
+        f"JOIN {latest_tasks(p, tenant, data_type)} s"
         f" ON s.seq_id = {source}.seq_id AND s.task_id = {source}.task_id"
-        f" AND s.tenant_code = {p(tenant)} AND s.deleted = false"
     )
 
 

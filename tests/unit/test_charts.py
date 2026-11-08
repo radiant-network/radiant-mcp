@@ -318,9 +318,11 @@ def test_oncoprint_keeps_parents_out_of_germline_cases_only(fake_api, fake_sql, 
     fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
     run(oncoprint(["TP53"], data_types=["somatic_snv_all", "somatic_cnv", "germline_cnv"], tenant="demo"))
     by_table = {re.search(r"(\w+__\w+__occurrence)", sql).group(1): sql for sql, _ in fake_sql.queries}
-    assert "family_role" not in by_table["somatic__snv__occurrence"]
-    assert "family_role" not in by_table["somatic__cnv__occurrence"]
-    assert "family_role" in by_table["germline__cnv__occurrence"]
+    assert "s.family_role = " not in by_table["somatic__snv__occurrence"]
+    assert "s.family_role = " not in by_table["somatic__cnv__occurrence"]
+    assert "s.family_role = " in by_table["germline__cnv__occurrence"]
+    # Every data type reads the latest task of each sequencing only.
+    assert all("AS rerun" in sql for sql in by_table.values())
 
 
 def test_oncoprint_counts_every_altered_case_and_flags_a_cut(fake_api, fake_sql, run, monkeypatch):
