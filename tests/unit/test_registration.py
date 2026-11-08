@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import re
 
 from fastmcp import FastMCP
 
@@ -57,3 +58,15 @@ def test_the_assistant_sees_every_line_of_each_tool_docstring(configure):
         undocumented = [name for name, schema in tool.parameters["properties"].items()
                         if not schema.get("description")]
         assert not undocumented, f"{tool.name}: no description for {undocumented}"
+
+
+def test_every_tool_has_its_entry_in_the_tools_page(configure):
+    # docs/tools.md explains each tool in plain words: a new or renamed tool needs its entry.
+    from pathlib import Path
+
+    configure(radiant_api_url="http://api.example")
+    mcp = FastMCP("test")
+    register_tools(mcp)
+    page = (Path(__file__).parents[2] / "docs" / "tools.md").read_text()
+    documented = set(re.findall(r"^### (\w+)$", page, re.MULTILINE))
+    assert documented == _names(mcp)

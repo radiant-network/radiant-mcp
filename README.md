@@ -12,6 +12,8 @@ The server provides:
 
 It runs in **streamable-http** mode, exposing an HTTP endpoint for MCP clients. `KEYCLOAK_REALM_URL` is required — the server refuses to boot without it.
 
+What each tool does and how it decides, in plain words, is in [docs/tools.md](docs/tools.md).
+
 To change the code, start with the [developer guide](docs/developer-guide.md): the system around the server, the layers, a tool call, the result envelope, the contracts with the ETL and the portal, and how to add a tool, with diagrams.
 
 ## Quick Start

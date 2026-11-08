@@ -292,7 +292,8 @@ next to the repo and requires both (`RADIANT_REQUIRE_ETL=1`,
 6. Test the body with the `fake_api`, `fake_sql` and `run` fixtures
    (`tests/unit/conftest.py`). `run` returns the envelope, and its `png` attribute
    holds a chart's image.
-7. List the tool in the README and `CLAUDE.md`, and tell the agents when to use
+7. List the tool in the README and `CLAUDE.md`, explain it in plain words in
+   `docs/tools.md` (a test checks every tool has an entry), and tell the agents when to use
    it in `librechat-local/agent-radiant-*.md`. The QA LibreChat config
    (`qlin-qa-infra`, `kubernetes-manifests/apps/librechat/librechat.yaml`) holds a
    copy of these prompts: sync it in the same release.

@@ -159,6 +159,7 @@ All of them are fields of `settings.Settings`: add a new variable there, never a
 
 ## Other
 
+- `docs/tools.md` explains each tool in plain English for users and reviewers (what it returns and how it decides, no code). Update its entry when a tool's behaviour or rules change; `test_every_tool_has_its_entry_in_the_tools_page` fails when a tool has no `### <name>` entry.
 - `docs/developer-guide.md` shows how the pieces fit, with diagrams: the system around the server (clients, Keycloak, portal API, StarRocks), the layers, the lifecycle of a tool call, the result envelope, the schema contracts with the ETL and the portal, and the checklist to add a tool. Update it with the code when one of these changes.
 - `docs/oauth-jwt-auth-plan.md` is the original design doc for the OAuth/JWT work; useful background but predates the `radiant_mcp/` package and the removal of `mcp-server-starrocks` (it references a monolithic `server.py` and the monkey-patched upstream client).
 - CI (`.github/workflows/build_and_push.yml`) only builds and pushes the image to `ghcr.io/radiant-network/radiant-mcp` on push to `main` / `v*` tags — it does **not** run the integration tests.
