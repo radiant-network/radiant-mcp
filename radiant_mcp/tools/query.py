@@ -8,11 +8,10 @@ at most ``STARROCKS_MAX_ROWS`` rows and says when it cut the result.
 
 from collections.abc import Callable
 
-import anyio
 from fastmcp.tools import ToolResult
 
 from .. import portal_api as _api
-from .. import starrocks
+from .. import starrocks, workers
 from ..results import AUTH_REQUIRED, ToolOutput, failure, invalid, ok, respond
 from ..settings import get_settings
 from ..sql import plain
@@ -38,7 +37,7 @@ async def _run(fn: Callable[..., ToolOutput], *args) -> ToolResult:
     if not token:
         return respond(AUTH_REQUIRED)
     try:
-        return respond(await anyio.to_thread.run_sync(lambda: fn(token, *args)))
+        return respond(await workers.run(lambda: fn(token, *args)))
     except Exception as exc:  # noqa: BLE001 — every failure becomes a tool result
         return respond(failure(exc))
 

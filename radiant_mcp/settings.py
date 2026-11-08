@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     mcp_base_url: str = "http://localhost:8000"
     # Proxies whose X-Forwarded-* headers uvicorn trusts.
     forwarded_allow_ips: str = "*"
+    # Tool bodies running at once, for all callers (see workers.py), and how long a
+    # call waits for a free slot before failing with "busy".
+    mcp_max_concurrent_calls: int = Field(20, ge=1)
+    mcp_queue_timeout: float = Field(10.0, gt=0)
 
     # -- StarRocks (connection target only: each call authenticates with the caller's JWT)
     starrocks_host: str = "localhost"
@@ -58,7 +62,9 @@ class Settings(BaseSettings):
     # -- Radiant portal ------------------------------------------------------------
     # Unset: the tools backed by the portal API are not registered.
     radiant_api_url: str | None = None
+    # Seconds to wait for each response (read), and to open the connection.
     radiant_api_timeout: float = Field(60.0, gt=0)
+    radiant_api_connect_timeout: float = Field(5.0, gt=0)
     # Unset: the tools return no portal_url.
     radiant_portal_url: str | None = None
     # StarRocks database of the shared tables (staging_sequencing_experiment, clinvar, ...).

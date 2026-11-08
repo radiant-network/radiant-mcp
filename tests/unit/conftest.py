@@ -21,6 +21,7 @@ from schema_sources import (  # noqa: F401
 )
 
 from radiant_mcp import portal_api as _api
+from radiant_mcp import workers
 from radiant_mcp.settings import Settings, use_settings
 
 PORTAL = "https://portal.example"
@@ -99,10 +100,14 @@ def configure() -> Callable[..., Settings]:
     def _configure(**values) -> Settings:
         settings = _test_settings(**values)
         use_settings(settings)
+        # Each test runs its own event loop, and the pool is sized from the settings.
+        workers.reset()
         return settings
 
+    workers.reset()
     yield _configure
     use_settings(_test_settings())
+    workers.reset()
 
 
 @pytest.fixture
