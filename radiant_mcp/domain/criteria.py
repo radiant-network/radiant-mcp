@@ -47,7 +47,8 @@ class Criteria:
         if self.is_snv:
             out["gene_match"] = ("a consequence on a transcript of the gene (not only the picked one), "
                                  "other than upstream, downstream or intergenic (a variant only near "
-                                 "the gene does not count); vep_impact is the impact on that gene")
+                                 "the gene does not count); a vep_impact filter keeps a variant by "
+                                 "its most severe impact on that gene")
         out["reruns"] = "the latest imported task of each sequencing in each case"
         if self.data_type == "somatic_snv_tn":
             out["analyses"] = ("tumor-normal only: tumor-only analyses keep the germline variants and are "

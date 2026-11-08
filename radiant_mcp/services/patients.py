@@ -136,7 +136,6 @@ def patient_context(
     return result
 
 
-
 def unknown_filter_fields(filters: dict) -> list[str]:
     """The keys of ``filters`` that ``POST /patients/search`` cannot filter on."""
     return sorted(set(filters) - set(PATIENT_SEARCH_FILTER_FIELDS))

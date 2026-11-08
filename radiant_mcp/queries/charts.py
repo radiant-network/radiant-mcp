@@ -5,6 +5,7 @@ from .. import sql as _sql
 from ..domain import data_types
 from ..domain import rules as _rules
 from ..domain.rules import ALT_ZYGOSITIES
+from .impact import most_severe_in
 from .quality import germline_qualifies
 from .sequencing import latest_task_join
 
@@ -57,21 +58,27 @@ def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af
         sequencing += f" AND s.family_role = {p(_rules.PROBAND)}"
     tail = f" ORDER BY s.case_id, x.gene LIMIT {p(ONCOPRINT_ROW_LIMIT + 1)}"
     if data_types.is_snv(data_type):
-        where = [f"symbol IN ({p.list(genes)})"]
+        # Same gene membership as the carrier tools: a consequence on a transcript of the
+        # gene other than upstream / downstream / intergenic.
+        gene_where = [f"cf.symbol IN ({p.list(genes)})",
+                      f"cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"]
+        # The impact filter is on the variant's most severe impact on the gene.
+        having = f" HAVING {most_severe_in(p, vep_impact)}" if vep_impact else ""
+        rare = ""
         if max_gnomad_af is not None:
-            where.append(f"(gnomad_v3_af IS NULL OR gnomad_v3_af < {p(max_gnomad_af)})")
-        if vep_impact:
-            where.append(f"vep_impact IN ({p.list(vep_impact)})")
+            rare = (f" JOIN {tenant_db}.snv__variant sv ON sv.locus_id = o.locus_id"
+                    f" AND (sv.gnomad_v3_af IS NULL OR sv.gnomad_v3_af < {p(max_gnomad_af)})")
         somatic = data_types.is_somatic(data_type)
         table = "somatic__snv__occurrence" if somatic else "germline__snv__occurrence"
         seq = "tumor_seq_id" if somatic else "seq_id"
         occ_filter = (f"o.filter = {p(_rules.PASS)}" if somatic
                       else f"o.zygosity IN ({p.list(ALT_ZYGOSITIES)}) AND {germline_qualifies(p)}")
         return (
-            f"WITH v AS (SELECT locus_id, symbol, consequences FROM {tenant_db}.snv__variant_partitioned"
-            f" WHERE {' AND '.join(where)}),"
-            f" x AS (SELECT o.{seq} AS seq_id, o.task_id, v.symbol AS gene, array_join(v.consequences, ',') AS kind"
-            f" FROM {tenant_db}.{table} o JOIN v ON v.locus_id = o.locus_id WHERE {occ_filter})"
+            "WITH g AS (SELECT cf.locus_id, cf.symbol AS gene, array_join(array_agg(DISTINCT cf.consequence), ',') AS kind"
+            f" FROM {_sql.shared_db()}.snv__consequence_filter cf WHERE {' AND '.join(gene_where)}"
+            f" GROUP BY cf.locus_id, cf.symbol{having}),"
+            f" x AS (SELECT o.{seq} AS seq_id, o.task_id, g.gene, g.kind"
+            f" FROM {tenant_db}.{table} o JOIN g ON g.locus_id = o.locus_id{rare} WHERE {occ_filter})"
             f" SELECT DISTINCT s.case_id, x.gene, x.kind FROM x {sequencing}{tail}"
         ), p
     table = "somatic__cnv__occurrence" if data_types.is_somatic(data_type) else "germline__cnv__occurrence"

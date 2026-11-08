@@ -1,7 +1,7 @@
 """Curated SQL run in StarRocks under the caller's JWT.
 
 The tools that have no portal API endpoint (``gene_info``, ``second_hit``,
-``cohort_carriers``, ``genotype_phenotype``) build fixed queries here and run
+``cohort_carriers``, ``genotype_phenotype`` and the charts) build fixed queries and run
 them through ``starrocks.query`` under the caller's JWT, exactly like the
 ``part`` lookup of ``get_case_context``: no service account, the caller's
 StarRocks rights apply.

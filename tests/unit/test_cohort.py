@@ -1,11 +1,17 @@
 """``cohort_carriers`` and ``genotype_phenotype``."""
 
+import re
+import sqlite3
+
 import pytest
 from conftest import PORTAL, bound_value, echo_gene_search
 
 from radiant_mcp import sql as _sql
+from radiant_mcp.domain import rules
 from radiant_mcp.domain.criteria import build_criteria
 from radiant_mcp.queries import carriers as carrier_queries
+from radiant_mcp.queries.charts import oncoprint_query
+from radiant_mcp.queries.impact import most_severe_in
 from radiant_mcp.tools.cohort import cohort_carriers, genotype_phenotype
 
 
@@ -31,7 +37,7 @@ def test_carriers(fake_api, fake_sql, run):
         "case_id": 1, "patient_id": 100, "seq_id": 10, "task_id": 20, "variant_count": 2,
         "variants": '["chr2:g.1A>T", "chr2:g.2C>G"]', "first_variant_id": 1001,
     }])
-    fake_sql.on("u.consequence", [{"consequence": "stop_gained", "variants": 1, "patients": 1}])
+    fake_sql.on("SELECT cf.consequence", [{"consequence": "stop_gained", "variants": 1, "patients": 1}])
 
     result = run(cohort_carriers("scn1a", vep_impact=["high"], max_gnomad_af=0.01, tenant="demo"))
 
@@ -50,7 +56,8 @@ def test_carriers(fake_api, fake_sql, run):
         "max_gnomad_af": "< 0.01 or absent from gnomAD",
         "gene_match": "a consequence on a transcript of the gene (not only the picked one), "
                       "other than upstream, downstream or intergenic (a variant only near "
-                      "the gene does not count); vep_impact is the impact on that gene",
+                      "the gene does not count); a vep_impact filter keeps a variant by its most severe impact on "
+                      "that gene",
         "reruns": "the latest imported task of each sequencing in each case",
         "quality": "germline SNV calls with FILTER PASS, GQ >= 20 and alternate depth >= 3 "
                    "(the platform's carrier rule, as in the variant frequencies)",
@@ -106,7 +113,8 @@ def test_carriers_match_any_transcript_of_the_gene_and_the_latest_task():
     sql, params = carrier_queries.totals_query("demo", criteria)
     # The gene and the impact come from the consequences on the gene's transcripts.
     assert "radiant.snv__consequence_filter cf" in sql
-    assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
+    # The impact filter is on the most severe impact per variant and gene: HIGH is rank 0.
+    assert "HAVING MIN(CASE cf.vep_impact" in sql and bound_value(sql, params.values, "END) IN (") == 0
     assert "demo_tenant.snv__variant sv" in sql and "snv__variant_partitioned" not in sql
     assert bound_value(sql, params.values, "s.task_type = ") == "radiant_germline_annotation"
     cnv_sql, cnv_params = carrier_queries.totals_query(
@@ -124,8 +132,6 @@ def test_phenotypes_leave_fetal_observations_out():
 
 def test_germline_carriers_pass_the_platform_quality_rule():
     # Same rule as the ETL's carrier frequencies: a LowQual or GQ 5 call is not a carrier.
-    from radiant_mcp.queries.charts import oncoprint_query
-
     for sql, params in [
         carrier_queries.totals_query("demo", build_criteria("germline_snv", "TP53", None, None, None, None, None)),
         oncoprint_query("demo", "germline_snv", ["TP53"], None, []),
@@ -136,3 +142,56 @@ def test_germline_carriers_pass_the_platform_quality_rule():
     somatic_sql, _ = carrier_queries.totals_query(
         "demo", build_criteria("somatic_snv_tn", "TP53", None, None, None, None, None))
     assert "o.gq >=" not in somatic_sql
+
+
+def test_oncoprint_uses_the_same_gene_membership_as_the_carriers():
+    # Upstream / downstream / intergenic consequences do not put a variant in a gene, and
+    # the impact filter is on the most severe impact on that gene, as in cohort_carriers.
+    sql, params = oncoprint_query("demo", "germline_snv", ["TP53"], 0.01, ["HIGH"])
+    assert "snv__consequence_filter cf" in sql and "snv__variant_partitioned" not in sql
+    # The impact filter is on the most severe impact per variant and gene: HIGH is rank 0.
+    assert "HAVING MIN(CASE cf.vep_impact" in sql and bound_value(sql, params.values, "END) IN (") == 0
+
+    match = re.search(r"cf\.consequence NOT IN \(((?:%\(p\d+\)s(?:, )?)+)\)", sql)
+    assert match and [params.values[n] for n in re.findall(r"%\((p\d+)\)s", match.group(1))] == list(
+        rules.NEARBY_CONSEQUENCES)
+
+
+def test_a_complete_list_of_exactly_limit_rows_is_not_cut(fake_api, fake_sql, run):
+    echo_gene_search(fake_api)
+    fake_sql.on("cases_any_member", [{"cases": 2, "cases_any_member": 2, "patients": 2, "variants": 2}])
+    fake_sql.on("array_agg", [{"case_id": i, "patient_id": i, "seq_id": i, "task_id": 1, "variants": "[]",
+                               "first_variant_id": 1} for i in range(2)])
+    assert run(cohort_carriers("SCN1A", limit=2, tenant="demo")).get("truncated") is None
+    fake_sql.on("array_agg", [{"case_id": i, "patient_id": i, "seq_id": i, "task_id": 1, "variants": "[]",
+                               "first_variant_id": 1} for i in range(3)])
+    fake_sql.rules.reverse()
+    result = run(cohort_carriers("SCN1A", limit=2, tenant="demo"))
+    assert result["data"]["returned"] == 2 and result["truncated"]["lists"] == ["carriers"]
+
+
+def test_an_impact_filter_keeps_a_variant_by_its_most_severe_impact_on_the_gene():
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE cf (locus_id, vep_impact)")
+    # 1: missense + intronic on the gene; 2: stop + missense; 3: synonymous only.
+    db.executemany("INSERT INTO cf VALUES (?, ?)", [(1, "MODERATE"), (1, "MODIFIER"), (2, "HIGH"), (2, "MODERATE"),
+                                                    (3, "LOW")])
+
+    def kept(impacts):
+        p = _sql.Params()
+        having = re.sub(r"%\((p\d+)\)s", r":\1", most_severe_in(p, impacts))
+        return [r[0] for r in db.execute(f"SELECT locus_id FROM cf GROUP BY locus_id HAVING {having} "
+                                         "ORDER BY locus_id", p.values)]
+
+    assert kept(["MODIFIER"]) == []      # 1 is MODERATE on the gene, not MODIFIER
+    assert kept(["MODERATE"]) == [1]     # 2 is HIGH on the gene
+    assert kept(["HIGH", "MODERATE"]) == [1, 2]
+
+
+def test_genotype_phenotype_names_only_the_lists_it_cut(fake_api, fake_sql, run):
+    echo_gene_search(fake_api)
+    fake_sql.on("cases_any_member", [{"patients": 3}])
+    fake_sql.on("obs.code_value", [{"hpo_term_id": f"HP:000000{i}", "patients": 1} for i in range(3)])
+    result = run(genotype_phenotype("SCN1A", limit=2, tenant="demo"))
+    assert result["truncated"]["lists"] == ["phenotypes"]
+    assert "carriers_with_term" not in result["truncated"]["reason"]

@@ -1,7 +1,7 @@
 """Clinical rules of the RAD-252 tools, in one place.
 
-They decide what ``second_hit``, ``cohort_carriers`` and ``genotype_phenotype``
-report to geneticists, so they are fixed by the spec
+They decide what ``second_hit``, the carrier tools (``cohort_carriers``,
+``genotype_phenotype``) and the charts report to geneticists, so they are fixed by the spec
 (hub ``docs/features/RAD-252-david-p2-tools.md``) and restated in each tool's
 output. Every stored value used here is checked against ``enums.ENUMS`` by
 the unit tests.

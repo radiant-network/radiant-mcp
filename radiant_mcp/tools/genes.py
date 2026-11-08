@@ -8,7 +8,7 @@ from fastmcp.tools import ToolResult
 from .. import portal_api as _api
 from .. import sql as _sql
 from ..portal_api import RadiantApi, clamp, resolve_tenant
-from ..queries.genes import gene_queries
+from ..queries.genes import LIST_LIMITS, gene_queries
 from ..results import ToolOutput, Truncation, error, failure, not_found, ok, respond
 from ..services.genes import not_found_message, resolve_gene
 
@@ -42,7 +42,7 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> To
         "ensembl_gene_id": resolved.get("ensembl_gene_id"),
     }
     warnings: list[str] = []
-    cut = None
+    cut_lists: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=_WORKERS) as pool:
         rows = {}
         for name, data, warning in pool.map(_fetch, queries.items()):
@@ -51,6 +51,12 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> To
             else:
                 rows[name] = data
 
+    # OMIM, Orphanet and constraint are read one row past their limit to tell a cut.
+    for name, field, what in (("omim", "omim_conditions", "conditions"), ("orphanet", "orphanet_disorders", "disorders"),
+                              ("constraint", "gnomad_constraint", "transcripts, highest pLI first")):
+        if name in rows and len(rows[name]) > LIST_LIMITS[name]:
+            rows[name] = rows[name][:LIST_LIMITS[name]]
+            cut_lists[field] = f"`{field}` lists the first {LIST_LIMITS[name]} {what}"
     if "omim" in rows:
         result["omim_conditions"] = [
             {**r, "inheritance_code": _sql.as_list(r.get("inheritance_code"))} for r in rows["omim"]
@@ -59,8 +65,8 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> To
         result["hpo_terms_count"] = len(rows["hpo"])
         result["hpo_terms"] = rows["hpo"][:_HPO_TERMS_SHOWN]
         if len(rows["hpo"]) > _HPO_TERMS_SHOWN:
-            cut = Truncation(reason=f"`hpo_terms` lists the first {_HPO_TERMS_SHOWN} of {len(rows['hpo'])} "
-                                    "terms; `hpo_terms_count` counts them all.", lists=["hpo_terms"])
+            cut_lists["hpo_terms"] = (f"`hpo_terms` lists the first {_HPO_TERMS_SHOWN} of {len(rows['hpo'])} terms; "
+                                      "`hpo_terms_count` counts them all")
     if "orphanet" in rows:
         result["orphanet_disorders"] = [
             {**r, "inheritance_code": _sql.as_list(r.get("inheritance_code"))} for r in rows["orphanet"]
@@ -73,6 +79,7 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> To
         result["tenant_gene_panels"] = [r["panel"] for r in rows["tenant_panels"]]
     if "constraint" in rows:
         result["gnomad_constraint"] = rows["constraint"]
+    cut = Truncation(reason="; ".join(cut_lists.values()) + ".", lists=list(cut_lists)) if cut_lists else None
     return ok(result, warnings=warnings, truncated=cut)
 
 

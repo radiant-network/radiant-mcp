@@ -46,3 +46,14 @@ def test_lookup_terms(fake_api, run):
 def test_lookup_terms_validates(fake_api, run):
     assert "Unknown ontology" in run(lookup_terms("go", "x"))["error"]["message"]
     assert "non-empty" in run(lookup_terms("hpo", "  "))["error"]["message"]
+
+
+def test_gene_info_says_which_lists_it_cut(fake_api, fake_sql, run):
+    # OMIM, Orphanet and constraint are read one row past their limit: a cut list says so.
+    echo_gene_search(fake_api)
+    fake_sql.on("omim_gene_panel", [{"condition_name": f"c{i}", "inheritance_code": "[]"} for i in range(51)])
+    fake_sql.on("orphanet_gene_panel", [{"disorder": "d", "inheritance_code": "[]"}])
+    fake_sql.on("gnomad_constraint", [{"transcript_id": f"ENST{i}", "pli": 1.0} for i in range(11)])
+    result = run(gene_info("SCN1A", tenant="demo"))
+    assert len(result["data"]["omim_conditions"]) == 50 and len(result["data"]["gnomad_constraint"]) == 10
+    assert sorted(result["truncated"]["lists"]) == ["gnomad_constraint", "omim_conditions"]

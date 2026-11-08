@@ -42,7 +42,8 @@ _QUALITY_RULE = (f"`low_quality` marks a germline call outside the platform's ca
                  "`snv_gq` in snv_cnv).")
 # How an SNV is assigned to a gene (queries/hits.py), stated in every result.
 _GENE_RULE = ("An SNV is in a gene when it has a consequence on one of its transcripts other than upstream, "
-              "downstream or intergenic; its impact is the impact on that gene.")
+              "downstream or intergenic; `vep_impact` is its most severe impact on that gene, while `aa_change` "
+              "and `picked_vep_impact` describe the picked transcript, which can be another gene's.")
 
 
 _NOT_FIRST_HIT = object()
@@ -54,6 +55,7 @@ def _imbalance(row: dict, germline_zygosity: str | None) -> bool:
     zygosity is not informative (the caller writes HET on almost every call)."""
     ratio = row.get("tumor_ad_ratio")
     return germline_zygosity == _rules.HET and ratio is not None and float(ratio) >= _rules.ALLELIC_IMBALANCE_MIN_RATIO
+
 
 def mechanism(zygosity: str, inside: bool) -> str:
     if zygosity in _rules.HEMIZYGOUS_CALLS and inside:

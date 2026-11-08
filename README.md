@@ -1,6 +1,6 @@
 # Radiant MCP Server
 
-A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI assistants (the Radiant D.A.V.I.D agents) access to Radiant data: curated tools over the Radiant portal API and [StarRocks](https://www.starrocks.io/), plus read-only SQL as a last resort.
+A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI assistants (the Radiant D.A.V.I.D agents) access to Radiant data: curated tools over the Radiant portal API and [StarRocks](https://www.starrocks.io/), plus SQL as a last resort, limited by the caller's own StarRocks rights.
 
 ## Overview
 
@@ -11,6 +11,8 @@ The server provides:
 - **Per-request JWT pass-through** — each MCP tool call runs its StarRocks queries under the authenticated user's identity. This component holds **no** StarRocks credentials.
 
 It runs in **streamable-http** mode, exposing an HTTP endpoint for MCP clients. `KEYCLOAK_REALM_URL` is required — the server refuses to boot without it.
+
+What each tool does and how it decides, in plain words, is in [docs/tools.md](docs/tools.md).
 
 To change the code, start with the [developer guide](docs/developer-guide.md): the system around the server, the layers, a tool call, the result envelope, the contracts with the ETL and the portal, and how to add a tool, with diagrams.
 
@@ -54,7 +56,7 @@ this component holds no StarRocks credentials.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `STARROCKS_HOST` | Yes | - | StarRocks FE (Frontend) hostname or IP (connection target only) |
+| `STARROCKS_HOST` | No | `localhost` | StarRocks FE (Frontend) hostname or IP (connection target only) |
 | `STARROCKS_PORT` | No | `9030` | StarRocks FE query port |
 | `STARROCKS_DB` | No | - | Default database to use |
 | `STARROCKS_CONNECTION_TIMEOUT` | No | `10` | Connection timeout, in seconds |
@@ -79,7 +81,7 @@ Every variable is validated at startup: a missing `KEYCLOAK_REALM_URL` or a malf
 
 > **Client timeout.** The timeouts above apply to one SQL statement or one API
 > request, not to a whole tool call: `cohort_carriers` runs 2 API calls and up to
-> 6 statements in sequence. Give the MCP client a timeout well above
+> 5 statements in sequence. Give the MCP client a timeout well above
 > `STARROCKS_QUERY_TIMEOUT` (e.g. `timeout: 180000` ms for the server in LibreChat's
 > `mcpServers`), or a slow call is cut client-side before StarRocks' own error
 > (which tells the agent to narrow the query) comes back.
@@ -148,7 +150,7 @@ services:
 
 ### Deployment Considerations
 
-- **Memory**: Recommend at least 1GB due to pandas/pyarrow dependencies
+- **Memory**: Recommend at least 1GB (SciPy and matplotlib for the charts)
 - **Credentials**: None to store — the component holds no StarRocks user/password. Access is governed entirely by the caller's Keycloak JWT and the matching StarRocks JWT user.
 
 ## MCP Client Configuration
@@ -158,7 +160,7 @@ Configure your MCP client to connect to the server:
 ```json
 {
   "mcpServers": {
-    "starrocks": {
+    "radiant": {
       "url": "http://localhost:8000/mcp"
     }
   }
@@ -196,7 +198,7 @@ cache nothing, so StarRocks applies the caller's own grants on every call.
 
 | Tool | Description |
 |------|-------------|
-| `read_query` | Run one SQL statement; returns at most `STARROCKS_MAX_ROWS` rows, with `truncated` set when more exist |
+| `read_query` | Run a SQL query (send one SELECT; with several statements all run, the first result set is returned and a warning counts the others); returns at most `STARROCKS_MAX_ROWS` rows, with `truncated` set when more exist |
 | `table_overview` | Row count, columns and up to 3 sample rows of a `db.table` |
 | `describe_schema` | Curated description of the StarRocks tables of a topic (`germline_snv`, `somatic_snv`, `cnv`, `annotations`, `frequencies`, `clinical`): tables and portal clinical views to use, keys, partitions, stored enum values, join rules, example queries |
 
@@ -216,8 +218,8 @@ variant they return carries a `portal_url` when `RADIANT_PORTAL_URL` is set:
 | `case_cnv` | Germline or somatic CNV occurrences of a sequencing, filtered and sorted like the case CNV tab |
 | `variant_details` | One SNV's annotations (predictions, OMIM, ClinVar, external and internal frequencies, key transcripts) and, with an occurrence key, its genotype and transmission in a case |
 | `variant_carriers` | The cases of the tenant that carry a germline SNV, interpreted or not |
-| `second_hit` | Genes hit twice in a case: germline rare HET SNV + LOSS CNV, compound heterozygous pairs; somatic: germline P/LP + tumor-normal somatic SNV or LOSS/CNLOH CNV (tumor-only SNV analyses are skipped). States the rules applied |
-| `cohort_carriers` | Cases and patients of the tenant carrying a variant in a gene (germline or somatic, SNV or CNV): `cases` whose proband carries, `cases_any_member` (a relative only counts too), `patients`, with counts by consequence, variant class and family role |
+| `second_hit` | Genes hit twice in a case: germline rare SNV + LOSS CNV (HET anywhere in the gene, or HOM/HEM inside the deletion), compound heterozygous pairs; somatic: germline P/LP + tumor-normal somatic SNV or LOSS/CNLOH CNV (tumor-only SNV analyses are skipped). States the rules applied |
+| `cohort_carriers` | Cases and patients of the tenant carrying a variant in a gene (germline or somatic, SNV or CNV): `cases` whose proband carries, `cases_any_member` (a relative only counts too), `patients`, with counts by consequence, variant class, CNV type and family role |
 | `genotype_phenotype` | Observed HPO phenotypes of a gene's carriers, and the carriers of a given HPO term |
 | `gene_info` | A gene's OMIM, HPO, Orphanet, DDD and COSMIC associations, tenant gene panels and gnomAD pLI/LOEUF |
 | `lookup_terms` | HPO or MONDO terms and ids from a name |

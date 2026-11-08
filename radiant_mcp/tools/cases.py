@@ -18,7 +18,6 @@ _AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
 _AUTOCOMPLETE_TEXT_FIELDS = ("proband_submitter_sample_ids",)
 
 
-
 def _list_tenants(api: RadiantApi, _token: str) -> ToolOutput:
     return ok({"tenants": _api.list_tenants(api)})
 

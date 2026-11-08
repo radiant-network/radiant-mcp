@@ -7,6 +7,7 @@ not count, or a variant of one gene would be a hit in its neighbours too."""
 
 from .. import sql as _sql
 from ..domain import rules as _rules
+from .impact import impact_label, impact_rank
 from .quality import germline_qualifies
 
 # Rows a list returns; one more is fetched to tell a truncated list.
@@ -29,6 +30,12 @@ def _interpretations(p: _sql.Params, tenant_db: str, seq_id: int) -> str:
     )
 
 
+def _impact_on_gene(p: _sql.Params) -> str:
+    """The most severe impact of the variant on the gene, over the rows the query kept: a
+    window, so DISTINCT folds the per-transcript rows before the LIMIT counts them."""
+    return impact_label(p, f"MIN({impact_rank(p)}) OVER (PARTITION BY o.locus_id, cf.symbol)")
+
+
 def _gene_join(p: _sql.Params) -> str:
     """One row per gene of each variant: its consequences on the transcripts of every
     gene it lies in, so a variant of two overlapping genes counts for both. A gene the
@@ -41,7 +48,11 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
     p = _sql.Params()
     sql = (
         "WITH snv AS ("
-        " SELECT DISTINCT o.locus_id, o.zygosity, o.transmission_mode, cf.symbol, v.hgvsg, v.aa_change, v.vep_impact,"
+        # vep_impact = the most severe impact on this gene; hgvsg / aa_change /
+        # picked_vep_impact describe the picked transcript.
+        " SELECT DISTINCT o.locus_id, o.zygosity, o.transmission_mode, cf.symbol, v.hgvsg, v.aa_change,"
+        f"  {_impact_on_gene(p)} AS vep_impact,"
+        "  v.vep_impact AS picked_vep_impact,"
         "  v.gnomad_v3_af, v.clinvar_interpretation, o.exomiser_acmg_classification, v.chromosome, v.start,"
         f"  NOT {germline_qualifies(p)} AS low_quality, o.filter, o.gq"
         f" FROM {tenant_db}.germline__snv__occurrence o"
@@ -60,7 +71,8 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
         ")"
         " SELECT snv.symbol AS gene, snv.locus_id, snv.hgvsg, snv.start AS snv_start, snv.aa_change, snv.zygosity,"
         "  snv.transmission_mode,"
-        "  snv.vep_impact, snv.gnomad_v3_af, snv.clinvar_interpretation, snv.exomiser_acmg_classification,"
+        "  snv.vep_impact, snv.picked_vep_impact, snv.gnomad_v3_af, snv.clinvar_interpretation,"
+        "  snv.exomiser_acmg_classification,"
         "  snv.low_quality, snv.filter AS snv_filter, snv.gq AS snv_gq,"
         "  cnv.cnv_id, cnv.type AS cnv_type, cnv.chromosome AS cnv_chromosome, cnv.start AS cnv_start,"
         "  cnv.end AS cnv_end, cnv.length AS cnv_length, cnv.cn AS cnv_cn,"
@@ -101,13 +113,26 @@ def comphet_query(tenant_db: str, snv_key: dict) -> tuple[str, _sql.Params]:
         "  GREATEST(c.locus_id, c.partner_locus_id) AS partner_locus_id"
         f" FROM {tenant_db}.germline__snv__comphet c"
         f" WHERE c.seq_id = {p(snv_key['seq_id'])} AND c.task_id = {p(snv_key['task_id'])} AND c.part = {p(snv_key['part'])}"
+        # The most severe impact of each variant of the pairs on the pair's gene, as in
+        # the other lists (vep_impact); the picked transcript can be another gene's.
+        "), gene_impact AS ("
+        f" SELECT cf.locus_id, cf.symbol, MIN({impact_rank(p)}) AS impact_rank"
+        f" FROM {_sql.shared_db()}.snv__consequence_filter cf"
+        " JOIN (SELECT locus_id, symbol FROM pairs UNION SELECT partner_locus_id, symbol FROM pairs) l"
+        "  ON l.locus_id = cf.locus_id AND l.symbol = cf.symbol"
+        f" WHERE cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"
+        " GROUP BY cf.locus_id, cf.symbol"
         ")"
-        " SELECT pairs.symbol AS gene, pairs.locus_id, v1.hgvsg, v1.vep_impact, v1.gnomad_v3_af,"
-        " pairs.partner_locus_id, v2.hgvsg AS partner_hgvsg, v2.vep_impact AS partner_vep_impact,"
+        f" SELECT pairs.symbol AS gene, pairs.locus_id, v1.hgvsg, {impact_label(p, 'g1.impact_rank')} AS vep_impact,"
+        " v1.vep_impact AS picked_vep_impact, v1.gnomad_v3_af,"
+        " pairs.partner_locus_id, v2.hgvsg AS partner_hgvsg,"
+        f" {impact_label(p, 'g2.impact_rank')} AS partner_vep_impact, v2.vep_impact AS partner_picked_vep_impact,"
         " v2.gnomad_v3_af AS partner_gnomad_v3_af"
         " FROM pairs"
         f" JOIN {tenant_db}.snv__variant_partitioned v1 ON v1.locus_id = pairs.locus_id AND v1.part = {p(snv_key['variant_part'])}"
         f" JOIN {tenant_db}.snv__variant_partitioned v2 ON v2.locus_id = pairs.partner_locus_id AND v2.part = {p(snv_key['variant_part'])}"
+        " LEFT JOIN gene_impact g1 ON g1.locus_id = pairs.locus_id AND g1.symbol = pairs.symbol"
+        " LEFT JOIN gene_impact g2 ON g2.locus_id = pairs.partner_locus_id AND g2.symbol = pairs.symbol"
         f" ORDER BY gene, pairs.locus_id LIMIT {p(ROW_LIMIT + 1)}"
     )
     return sql, p
@@ -153,7 +178,8 @@ def somatic_snv_query(tenant_db: str, key: dict, genes: list[str],
         loci = ", ".join(p(int(locus)) for locus in first_hit_loci)
         impact = f"({impact} OR o.locus_id IN ({loci}))"
     sql = (
-        "SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, v.vep_impact, o.tumor_ad_ratio,"
+        f"SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, {_impact_on_gene(p)} AS vep_impact,"
+        " v.vep_impact AS picked_vep_impact, o.tumor_ad_ratio,"
         " o.tumor_zygosity"
         f" FROM {tenant_db}.somatic__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(key['variant_part'])}"

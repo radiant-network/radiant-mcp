@@ -116,3 +116,14 @@ def test_search_cases_rejects_a_retired_field(fake_api, run):
     assert "Unknown filter field" in result["error"]["message"] and "project_name" in result["error"]["details"]["allowed"]
     assert "Unknown sort field" in run(search_cases(query="1", sort_by="resolution_status_code", tenant="t"))["error"]["message"]
     assert fake_api.calls == []
+
+
+def test_a_family_case_asks_for_the_germline_data_types_only(fake_api, run, monkeypatch):
+    # The portal returns `germline_family` for a germline case with several members.
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({}, None))
+    fake_api.on("cases", "case_entity", {"case_id": 8, "case_type": "germline_family", "members": [],
+                                          "sequencing_experiments": [{"seq_id": 21, "has_variants": True}]})
+    fake_api.on("cases", "case_tasks_with_occurrences", [])
+    run(get_case_context(8, tenant="radiant"))
+    asked = sorted(kw["data_type"] for _, op, kw in fake_api.calls if op == "case_tasks_with_occurrences")
+    assert asked == ["germline_cnv", "germline_snv"]

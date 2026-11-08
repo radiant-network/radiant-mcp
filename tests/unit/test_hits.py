@@ -1,10 +1,18 @@
 """``second_hit``: germline SNV + deletion, compound heterozygous pairs and somatic two-hit genes."""
 
 import re
+import sqlite3
 
 from conftest import CNV_KEY, PORTAL, SNV_KEY, bound_value
 
+from radiant_mcp import sql as _sql
+from radiant_mcp.domain import rules
+from radiant_mcp.domain.criteria import build_criteria
+from radiant_mcp.enums import ENUMS
+from radiant_mcp.queries import carriers
 from radiant_mcp.queries import hits as hit_queries
+from radiant_mcp.queries.impact import IMPACTS, impact_label, impact_rank
+from radiant_mcp.queries.quality import germline_qualifies
 from radiant_mcp.services import cases as case_service
 from radiant_mcp.tools import hits
 from radiant_mcp.tools.hits import second_hit
@@ -140,6 +148,7 @@ def test_a_tumor_only_analysis_is_not_searched_for_second_hits(fake_api, fake_sq
     assert gene["somatic_snv"] == [] and [c["cnv_id"] for c in gene["somatic_cnv"]] == [601]
     assert any("tumor-only SNV analyses are not searched" in w for w in result["warnings"])
 
+
 def test_second_hit_somatic_without_germline_sequencing(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
@@ -197,9 +206,7 @@ def test_mechanism_wording():
 
 
 def test_second_hit_flags_a_cut_list(fake_api, fake_sql, run, monkeypatch):
-    from radiant_mcp.tools import hits as hits_tool
-
-    monkeypatch.setattr(hits_tool, "ROW_LIMIT", 2)
+    monkeypatch.setattr(hits, "ROW_LIMIT", 2)
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5}, None))
     fake_sql.on("germline__snv__comphet", [
@@ -263,10 +270,6 @@ def _excluded_consequences(sql: str, values: dict) -> list[str]:
 def test_a_variant_only_near_a_gene_is_not_a_hit_in_it():
     # VEP reports every gene within 5 kb: a pathogenic WRAP53 variant is "upstream"
     # of TP53 and must not become a TP53 first hit or SNV + CNV hit.
-    from radiant_mcp.domain import rules
-    from radiant_mcp.domain.criteria import build_criteria
-    from radiant_mcp.queries import carriers
-
     queries = [
         hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
         hit_queries.germline_plp_query("demo_tenant", SNV_KEY),
@@ -298,12 +301,6 @@ def test_second_hit_marks_germline_calls_outside_the_quality_rule(fake_api, fake
 
 def test_a_null_gq_or_alt_depth_is_low_quality():
     # The ETL stores GQ 0 and alt depth 0 as NULL: `NOT qualifies` must be true, not NULL.
-    import re
-    import sqlite3
-
-    from radiant_mcp import sql as _sql
-    from radiant_mcp.queries.quality import germline_qualifies
-
     p = _sql.Params()
     condition = re.sub(r"%\((p\d+)\)s", r":\1", germline_qualifies(p))
     db = sqlite3.connect(":memory:")
@@ -312,3 +309,35 @@ def test_a_null_gq_or_alt_depth_is_low_quality():
                    [("PASS", 40, 10), ("PASS", None, 10), ("PASS", 40, None), ("LowQual", 40, 10), ("PASS", 5, 10)])
     low_quality = [r[0] for r in db.execute(f"SELECT NOT {condition} FROM o", p.values)]
     assert low_quality == [0, 1, 1, 1, 1]
+
+
+def test_the_shown_impact_is_the_most_severe_on_the_reported_gene():
+    # One row per variant and gene (the LIMIT counts variants), with the impact on that gene.
+    for sql, _ in (hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
+                   hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["TP53"])):
+        assert "OVER (PARTITION BY o.locus_id, cf.symbol)" in sql and "AS vep_impact" in sql
+        assert "v.vep_impact AS picked_vep_impact" in sql
+
+
+def test_compound_het_impacts_are_those_on_the_pair_gene():
+    # A pair in ATM whose picked transcript is on the overlapping NPAT: the rule says
+    # vep_impact is the impact on the gene, so the pair reads it from the consequences.
+    sql, params = hit_queries.comphet_query("demo_tenant", SNV_KEY)
+    assert "gene_impact" in sql and "g1.impact_rank" in sql and "g2.impact_rank" in sql
+    assert "v1.vep_impact AS picked_vep_impact" in sql and "v2.vep_impact AS partner_picked_vep_impact" in sql
+    assert "LEFT JOIN gene_impact g1" in sql  # a pair is never lost for a missing impact row
+
+
+def test_an_unknown_impact_stays_unknown():
+    p = _sql.Params()
+    expr = impact_label(p, f"MIN({impact_rank(p, 'vep_impact')})")
+    expr = re.sub(r"%\((p\d+)\)s", r":\1", expr)
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE t (g, vep_impact)")
+    db.executemany("INSERT INTO t VALUES (?, ?)", [(1, "LOW"), (1, "HIGH"), (2, None), (3, "MODIFIER")])
+    got = dict(db.execute(f"SELECT g, {expr} FROM t GROUP BY g", p.values).fetchall())
+    assert got == {1: "HIGH", 2: None, 3: "MODIFIER"}
+
+
+def test_the_impact_order_is_the_stored_vep_impact_values():
+    assert IMPACTS == tuple(ENUMS["vep_impact"]) == ("HIGH", "MODERATE", "LOW", "MODIFIER")

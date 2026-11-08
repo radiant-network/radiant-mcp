@@ -32,17 +32,30 @@ class FakeCursor:
         self.conn.statements.append((sql, params))
         if self.conn.error:
             raise self.conn.error
-        columns, rows = self.conn.answer(sql)
+        # A statement list "A; B" answers one result set per statement, like StarRocks.
+        self._sets = [self.conn.answer(part.strip()) for part in sql.split(";") if part.strip()]
+        self._next()
+
+    def _next(self):
+        columns, rows = self._sets.pop(0)
         self.description = [(c,) for c in columns] if columns else None
         self._rows = list(rows)
 
+    def nextset(self):
+        if not self._sets:
+            return None
+        self._next()
+        return True
+
     def fetchall(self):
         self.fetched.append("all")
-        return self._rows
+        rows, self._rows = self._rows, []
+        return rows
 
     def fetchmany(self, n):
         self.fetched.append(n)
-        return self._rows[:n]
+        rows, self._rows = self._rows[:n], self._rows[n:]
+        return rows
 
     def close(self):
         pass
@@ -63,6 +76,8 @@ class FakeConnection:
             return ["count(*)"], [(len(rows),)]
         if sql.startswith("DESCRIBE"):
             return ["Field", "Type"], [("patient_id", "varchar")]
+        if sql.startswith(("USE ", "SET ")):
+            return [], []
         return ["patient_id"], rows
 
     def cursor(self):
@@ -187,6 +202,8 @@ def test_max_rows_reads_one_extra_row_and_flags_truncation(starrocks_server):
     result = starrocks.query(jwt("alice"), "SELECT patient_id FROM t", max_rows=3)
     assert result.rows == [("MRN-0",), ("MRN-1",), ("MRN-2",)]
     assert result.truncated
+    # One extra row fetched to flag the cut; the rest is never fetched into memory (an
+    # explicit LIMIT overrides sql_select_limit): nextset / close discard it.
     assert starrocks_server.connections[0].cursors[0].fetched == [4]
 
 
@@ -262,3 +279,17 @@ def test_table_overview_rejects_unsafe_or_incomplete_names(starrocks_server, mon
     out = call_as(monkeypatch, "alice", query.table_overview, "germline__snv__occurrence")
     assert "no database given" in out["error"]["message"]
     assert starrocks_server.connections == []
+
+
+def test_a_use_before_the_select_returns_the_select(starrocks_server, monkeypatch):
+    # StarRocks runs every statement: `USE db; SELECT ...` used to come back empty.
+    starrocks_server.data = {"bob": [("MRN-1",), ("MRN-2",)]}
+    out = call_as(monkeypatch, "bob", query.read_query, "USE t1_tenant; SELECT patient_id FROM t")
+    assert out["data"]["rows"] == [["MRN-1"], ["MRN-2"]] and out["warnings"] == []
+
+
+def test_later_result_sets_are_counted_and_warned(starrocks_server, monkeypatch):
+    starrocks_server.data = {"bob": [("MRN-1",)]}
+    out = call_as(monkeypatch, "bob", query.read_query, "SELECT patient_id FROM t; SELECT patient_id FROM u")
+    assert out["data"]["returned"] == 1
+    assert out["warnings"] and "1 later statement(s)" in out["warnings"][0]
