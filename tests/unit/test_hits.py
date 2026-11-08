@@ -1,10 +1,16 @@
 """``second_hit``: germline SNV + deletion, compound heterozygous pairs and somatic two-hit genes."""
 
 import re
+import sqlite3
 
 from conftest import CNV_KEY, PORTAL, SNV_KEY, bound_value
 
+from radiant_mcp import sql as _sql
+from radiant_mcp.domain import rules
+from radiant_mcp.domain.criteria import build_criteria
+from radiant_mcp.queries import carriers
 from radiant_mcp.queries import hits as hit_queries
+from radiant_mcp.queries.quality import germline_qualifies
 from radiant_mcp.services import cases as case_service
 from radiant_mcp.tools import hits
 from radiant_mcp.tools.hits import second_hit
@@ -140,6 +146,7 @@ def test_a_tumor_only_analysis_is_not_searched_for_second_hits(fake_api, fake_sq
     assert gene["somatic_snv"] == [] and [c["cnv_id"] for c in gene["somatic_cnv"]] == [601]
     assert any("tumor-only SNV analyses are not searched" in w for w in result["warnings"])
 
+
 def test_second_hit_somatic_without_germline_sequencing(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
@@ -197,9 +204,7 @@ def test_mechanism_wording():
 
 
 def test_second_hit_flags_a_cut_list(fake_api, fake_sql, run, monkeypatch):
-    from radiant_mcp.tools import hits as hits_tool
-
-    monkeypatch.setattr(hits_tool, "ROW_LIMIT", 2)
+    monkeypatch.setattr(hits, "ROW_LIMIT", 2)
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5}, None))
     fake_sql.on("germline__snv__comphet", [
@@ -263,10 +268,6 @@ def _excluded_consequences(sql: str, values: dict) -> list[str]:
 def test_a_variant_only_near_a_gene_is_not_a_hit_in_it():
     # VEP reports every gene within 5 kb: a pathogenic WRAP53 variant is "upstream"
     # of TP53 and must not become a TP53 first hit or SNV + CNV hit.
-    from radiant_mcp.domain import rules
-    from radiant_mcp.domain.criteria import build_criteria
-    from radiant_mcp.queries import carriers
-
     queries = [
         hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
         hit_queries.germline_plp_query("demo_tenant", SNV_KEY),
@@ -298,11 +299,6 @@ def test_second_hit_marks_germline_calls_outside_the_quality_rule(fake_api, fake
 
 def test_a_null_gq_or_alt_depth_is_low_quality():
     # The ETL stores GQ 0 and alt depth 0 as NULL: `NOT qualifies` must be true, not NULL.
-    import re
-    import sqlite3
-
-    from radiant_mcp import sql as _sql
-    from radiant_mcp.queries.quality import germline_qualifies
 
     p = _sql.Params()
     condition = re.sub(r"%\((p\d+)\)s", r":\1", germline_qualifies(p))
@@ -332,10 +328,6 @@ def test_compound_het_impacts_are_those_on_the_pair_gene():
 
 
 def test_an_unknown_impact_stays_unknown():
-    import re
-    import sqlite3
-
-    from radiant_mcp import sql as _sql
 
     p = _sql.Params()
     expr = hit_queries._impact_label(p, f"MIN({hit_queries._impact_rank(p, 'vep_impact')})")

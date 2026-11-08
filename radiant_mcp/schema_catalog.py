@@ -181,7 +181,10 @@ CONSEQUENCE_FILTER = Table(
     "Consequences and in-silico scores of every transcript, NOT only the picked one: one row per "
     "(locus_id, gene, consequence), so a variant has several rows. Use it to FILTER variants "
     "(LEFT SEMI JOIN or EXISTS on locus_id), never JOIN it to count: counts would be inflated. "
-    "The picked annotation is in snv__variant_partitioned.",
+    "The picked annotation is in snv__variant_partitioned. It also holds the upstream_gene_variant / "
+    "downstream_gene_variant rows of every gene within 5 kb: the tools count a variant in a gene only for "
+    "another consequence (add consequence NOT IN ('upstream_gene_variant', 'downstream_gene_variant', "
+    "'intergenic_variant') to match them).",
     {
         "locus_id": "variant id (several rows per variant)", "symbol": "gene of this row",
         "consequence": "consequence on this gene", "biotype": "biotype",

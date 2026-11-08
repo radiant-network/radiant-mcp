@@ -1,6 +1,6 @@
 # Radiant MCP Server
 
-A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI assistants (the Radiant D.A.V.I.D agents) access to Radiant data: curated tools over the Radiant portal API and [StarRocks](https://www.starrocks.io/), plus read-only SQL as a last resort.
+A containerized [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI assistants (the Radiant D.A.V.I.D agents) access to Radiant data: curated tools over the Radiant portal API and [StarRocks](https://www.starrocks.io/), plus SQL as a last resort, limited by the caller's own StarRocks rights.
 
 ## Overview
 
@@ -150,7 +150,7 @@ services:
 
 ### Deployment Considerations
 
-- **Memory**: Recommend at least 1GB due to pandas/pyarrow dependencies
+- **Memory**: Recommend at least 1GB (SciPy and matplotlib for the charts)
 - **Credentials**: None to store — the component holds no StarRocks user/password. Access is governed entirely by the caller's Keycloak JWT and the matching StarRocks JWT user.
 
 ## MCP Client Configuration
@@ -160,7 +160,7 @@ Configure your MCP client to connect to the server:
 ```json
 {
   "mcpServers": {
-    "starrocks": {
+    "radiant": {
       "url": "http://localhost:8000/mcp"
     }
   }
@@ -218,8 +218,8 @@ variant they return carries a `portal_url` when `RADIANT_PORTAL_URL` is set:
 | `case_cnv` | Germline or somatic CNV occurrences of a sequencing, filtered and sorted like the case CNV tab |
 | `variant_details` | One SNV's annotations (predictions, OMIM, ClinVar, external and internal frequencies, key transcripts) and, with an occurrence key, its genotype and transmission in a case |
 | `variant_carriers` | The cases of the tenant that carry a germline SNV, interpreted or not |
-| `second_hit` | Genes hit twice in a case: germline rare HET SNV + LOSS CNV, compound heterozygous pairs; somatic: germline P/LP + tumor-normal somatic SNV or LOSS/CNLOH CNV (tumor-only SNV analyses are skipped). States the rules applied |
-| `cohort_carriers` | Cases and patients of the tenant carrying a variant in a gene (germline or somatic, SNV or CNV): `cases` whose proband carries, `cases_any_member` (a relative only counts too), `patients`, with counts by consequence, variant class and family role |
+| `second_hit` | Genes hit twice in a case: germline rare SNV + LOSS CNV (HET anywhere in the gene, or HOM/HEM inside the deletion), compound heterozygous pairs; somatic: germline P/LP + tumor-normal somatic SNV or LOSS/CNLOH CNV (tumor-only SNV analyses are skipped). States the rules applied |
+| `cohort_carriers` | Cases and patients of the tenant carrying a variant in a gene (germline or somatic, SNV or CNV): `cases` whose proband carries, `cases_any_member` (a relative only counts too), `patients`, with counts by consequence, variant class, CNV type and family role |
 | `genotype_phenotype` | Observed HPO phenotypes of a gene's carriers, and the carriers of a given HPO term |
 | `gene_info` | A gene's OMIM, HPO, Orphanet, DDD and COSMIC associations, tenant gene panels and gnomAD pLI/LOEUF |
 | `lookup_terms` | HPO or MONDO terms and ids from a name |

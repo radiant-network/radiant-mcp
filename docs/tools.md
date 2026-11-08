@@ -8,7 +8,7 @@ How the tools are built is in the [developer guide](developer-guide.md).
 The assistant chooses and calls these tools itself. Knowing what they do helps
 to ask good questions and to judge an answer.
 
-## Rules shared by all tools
+## Rules for every tool
 
 **Everything runs as you.** The assistant sees exactly what you can see in the
 portal, no more. Two users asking the same question can get different answers.
@@ -17,51 +17,67 @@ portal, no more. Two users asking the same question can get different answers.
 research cohort). If you belong to one tenant it is chosen for you; if you
 belong to several, the assistant asks which one.
 
-**Links back to the portal.** Every case, patient, variant and occurrence
-returned comes with a link that opens the matching page of the portal.
+**Links back to the portal.** Cases, patients, variants and occurrences come
+with a link that opens the matching page of the portal, when the portal
+address is configured. A patient link appears only when the portal's patient
+page is available for that tenant and you may see that patient.
 
 **Answers say what they left out.** When a list is cut, the answer says so and
-says which list. Warnings name the parts that could not be read (a portal
-section that failed, an analysis not loaded yet). Errors say what to fix: an
-unknown value comes with the list of accepted values.
-
-**Re-analyses.** When a sequencing was analysed again, only its latest
-analysis is read. An analysis the pipeline has not finished loading is
-ignored until it is loaded, and the previous one is used meanwhile.
-
-**Somatic variants come from tumor-normal analyses only.** A tumor-only
-analysis cannot tell the patient's inherited variants from the tumor's own:
-most of what it calls is inherited. So the somatic small variants (SNVs) used
-by the cohort tools, the charts and the second-hit search come from analyses
-that compare the tumor with a normal sample of the same patient. Somatic copy
-number changes (CNVs) are the exception: the platform only produces them from
-tumor-only calling, so they are used as they are.
-
-**Germline call quality.** A germline variant call counts only when it passes
-the same quality rule as the portal's variant frequencies: the variant passes
-the caller's filters, the genotype quality is at least 20 and at least 3 reads
-show the variant. The second-hit search keeps the calls that fail this rule,
-marked as low quality, so a real but poorly covered event is not hidden.
-
-**Which variants are "in" a gene.** A variant belongs to a gene when it has a
-consequence on one of that gene's transcripts, not only on the transcript the
-annotation picked. A variant inside an intron counts. A variant only near the
-gene (just upstream or downstream of it, as the annotation reports for every
-gene within 5 kb) does not. A variant can therefore belong to two overlapping
-genes.
+says which list (the few exceptions are named in the tools below). Warnings
+name the parts that could not be read (a portal section that failed, an
+analysis not loaded yet). Errors say what to fix: an unknown value comes with
+the list of accepted values.
 
 **Gene names.** Use the official gene symbol (ERBB2, not HER2; TP53, not P53)
 or the Ensembl gene id. Other names are not recognised: the assistant is told
 to ask for the official symbol.
 
-**Families.** In a germline case, the parents' and siblings' sequencings
-belong to the proband's case. When a tool counts cases, it says whether it
-counts the cases where the proband carries the variant, or those where any
-member does.
+## Case tables versus analyses
+
+Two kinds of tools read variants, and they do not apply the same rules.
+
+**The case tables** (prioritize_snv, case_cnv, variant_details,
+variant_carriers) show exactly what the portal shows for a case or a variant:
+every call of the analysis you point to, with the portal's own filters. They
+apply none of the rules below.
+
+**The analyses** (second_hit, cohort_carriers, genotype_phenotype, oncoprint,
+lollipop, the carrier groups of survival_curve, and family_venn where noted)
+compute their own answers, and follow these rules:
+
+- **Re-analyses.** When a sequencing was analysed again, only its latest
+  analysis is read. An analysis the pipeline has not finished loading is
+  ignored until it is loaded, and the previous one is used meanwhile.
+- **Somatic variants come from tumor-normal analyses only.** A tumor-only
+  analysis cannot tell the patient's inherited variants from the tumor's own:
+  most of what it calls is inherited. So the somatic small variants (SNVs)
+  come from analyses that compare the tumor with a normal sample of the same
+  patient. Somatic copy number changes (CNVs) are the exception: the platform
+  only produces them from tumor-only calling, so they are used as they are.
+- **Germline call quality.** A germline variant call counts only when it
+  passes the same quality rule as the portal's variant frequencies: the
+  variant passes the caller's filters, the genotype quality is at least 20
+  and at least 3 reads show the variant. The second-hit search keeps the
+  calls that fail this rule, marked as low quality, so a real but poorly
+  covered event is not hidden. family_venn does not apply it.
+- **Which variants are "in" a gene.** A variant belongs to a gene when it has
+  a consequence on one of that gene's transcripts, not only on the transcript
+  the annotation picked. A variant inside an intron counts. A variant only
+  near the gene (just upstream or downstream of it, as the annotation reports
+  for every gene within 5 kb) does not. A variant can therefore belong to two
+  overlapping genes. Its impact is its most severe impact on that gene; the
+  protein change shown is the one of the picked transcript, which can belong
+  to the overlapping gene.
+- **Families.** In a germline case, the parents' and siblings' sequencings
+  belong to the proband's case. When a tool counts cases, it says whether it
+  counts the cases where the proband carries the variant, or those where any
+  member does.
 
 **Common words.** *Rare* means a gnomAD v3 frequency below 1 %, or absent
-from gnomAD. *P/LP* (pathogenic or likely pathogenic) means classified so by
-ClinVar, by Exomiser, or by a geneticist in a portal interpretation.
+from gnomAD. In the second-hit search, *P/LP* (pathogenic or likely
+pathogenic) means classified so by ClinVar, by Exomiser, or by a geneticist
+in a portal interpretation. Elsewhere, a ClinVar filter means the ClinVar
+classification only.
 
 ## Finding the right case or patient
 
@@ -98,8 +114,10 @@ The starting point for any question about one case. Returns the case
 (type, status, analysis, panel, main condition, diagnosis hypothesis,
 prescriber, lab, note), its members (relationship to the proband, sex,
 affected status, observed and absent HPO phenotypes, family history), its
-sequencings, and the list of analyses that produced variants, one per
-sequencing and data type. That list is what the variant tools below need.
+sequencings, and the list of analyses that produced variants, for each
+sequencing and data type (several when a sequencing was analysed again; an
+analysis not loaded yet is marked and listed last). That list is what the
+variant tools below need.
 
 ### prioritize_snv
 
@@ -117,7 +135,7 @@ zygosity, transmission, parental origin and Exomiser classification.
 
 Lists and filters the copy number changes (CNVs) of one analysis of a case,
 like the CNV table of the case in the portal: type (loss, gain, copy-neutral
-loss of heterozygosity), genes covered, position, length, copy number,
+loss of heterozygosity, gain with loss of heterozygosity), genes covered, position, length, copy number,
 quality, gene panels. No CNV analysis listed for a sequencing means none was
 done.
 
@@ -132,8 +150,8 @@ genotype, read depth, quality, transmission, parental origin, Exomiser.
 
 ### variant_carriers
 
-The other cases of the tenant that carry one germline variant, as on the
-portal's variant page: the cases where a geneticist interpreted it
+The cases of the tenant that carry one germline variant (the case you are
+looking at included), as on the portal's variant page: the cases where a geneticist interpreted it
 (classification, condition, zygosity, phenotypes) and those where it is
 present but not interpreted. Up to 100 cases per list.
 
@@ -161,8 +179,10 @@ tumor-suppressor disease.
   Tumor-only small-variant analyses are not used.
 
 Each answer states the exact rules it applied. The impact shown is the
-variant's most severe impact on the gene reported. Low-quality germline calls
-are shown and marked. Each list stops at 200 entries.
+variant's most severe impact on the gene reported; the protein change shown
+is the one of the transcript the annotation picked, which can belong to an
+overlapping gene. Low-quality germline calls are shown and marked. Each list
+stops at 200 entries, and the answer says when one was cut.
 
 ### family_venn
 
@@ -197,7 +217,9 @@ imaging sessions and vital status.
 What is known about a gene, independently of any patient: OMIM conditions and
 their inheritance, associated HPO phenotypes, Orphanet disorders, membership
 of the DDD and COSMIC cancer gene lists, the tenant's own gene panels that
-contain it, and the gnomAD constraint scores (pLI, LOEUF) per transcript.
+contain it, and the gnomAD constraint scores (pLI, LOEUF) of its 10
+transcripts with the highest pLI. Long lists are cut (100 HPO terms, 50 OMIM
+conditions, 50 Orphanet disorders) and the answer says so.
 
 ### lookup_terms
 
@@ -217,7 +239,8 @@ Returns:
   carrier **patients** (relatives included) and the number of variants;
 - the list of carriers, most variants first, with their case, family role
   and affected status (up to 200);
-- counts by consequence, by variant class, by CNV type and by family role.
+- counts by consequence (on the gene itself), by variant class, by CNV type
+  and by family role, each limited to its 30 largest entries.
 
 The answer lists the filters and rules actually applied.
 
@@ -272,13 +295,14 @@ kind of change. The variants are drawn on the transcript most of them are
 described on, which the answer names. Variants on other transcripts, without
 a protein change, or described on an overlapping gene are counted, not drawn.
 Same filters as cohort_carriers, for germline or tumor-normal somatic small
-variants.
+variants. At most the 5,000 variants with the most carriers are used; the
+answer says when there were more.
 
 ### bar_chart
 
 Draws a bar chart of numbers the assistant already obtained with another tool
-(for example carriers per consequence, patients per diagnosis). It never uses
-patient names or identifiers as labels.
+(for example carriers per consequence, patients per diagnosis). The assistant
+is told never to use patient names or identifiers as labels.
 
 ## Direct database access
 

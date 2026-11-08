@@ -230,4 +230,3 @@ async def get_patient_context(
                              allowed=list(PATIENT_SECTIONS)))
     # Keys are stored lower-case: a key copied upper-case would not be found.
     return await _api.run(_get_patient_context, patient_key.lower(), tenant, chosen)
-

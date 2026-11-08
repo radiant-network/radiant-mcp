@@ -14,6 +14,8 @@ from .quality import germline_qualifies
 from .sequencing import latest_task_join
 
 _SUMMARY_LIMIT = 30
+# Carrier variants read for a lollipop; one more is read to tell a cut.
+LOLLIPOP_ROW_LIMIT = 5000
 
 
 def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
@@ -112,11 +114,15 @@ def summary_queries(tenant: str, criteria: Criteria) -> dict[str, tuple[str, _sq
     out = {}
     if criteria.is_snv:
         p = _sql.Params()
+        # The consequences on the gene's own transcripts, as the gene membership: the picked
+        # transcript can be an overlapping gene's.
+        impact = f" AND cf.vep_impact IN ({p.list(criteria.vep_impact)})" if criteria.vep_impact else ""
         out["by_consequence"] = (
             carriers_cte(p, tenant, criteria)
-            + " SELECT u.consequence, COUNT(DISTINCT car.variant_id) AS variants, COUNT(DISTINCT car.patient_id) AS patients"
-            " FROM car JOIN v ON v.locus_id = car.variant_id, unnest(v.consequences) AS u(consequence)"
-            f" GROUP BY u.consequence ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
+            + " SELECT cf.consequence, COUNT(DISTINCT car.variant_id) AS variants, COUNT(DISTINCT car.patient_id) AS patients"
+            f" FROM car JOIN {_sql.shared_db()}.snv__consequence_filter cf ON cf.locus_id = car.variant_id"
+            f" AND cf.symbol = {p(criteria.gene)} AND cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)}){impact}"
+            f" GROUP BY cf.consequence ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
             p,
         )
         p = _sql.Params()
@@ -210,5 +216,5 @@ def lollipop_query(tenant: str, criteria_: Criteria) -> tuple[str, _sql.Params]:
         " COUNT(DISTINCT car.patient_id) AS carriers"
         " FROM car LEFT JOIN va ON va.locus_id = car.variant_id"
         " GROUP BY car.variant_id, va.symbol, va.transcript_id, va.aa_change, va.kind"
-        f" ORDER BY carriers DESC LIMIT {p(5000)}"
+        f" ORDER BY carriers DESC LIMIT {p(LOLLIPOP_ROW_LIMIT + 1)}"
     ), p

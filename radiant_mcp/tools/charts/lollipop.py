@@ -12,7 +12,7 @@ from ...domain.consequences import consequence_class
 from ...domain.criteria import Criteria, build_criteria
 from ...domain.data_types import COHORT_SNV_DATA_TYPES, CohortSnvDataType
 from ...portal_api import RadiantApi, resolve_tenant
-from ...queries.carriers import lollipop_query
+from ...queries.carriers import LOLLIPOP_ROW_LIMIT, lollipop_query
 from ...results import ToolOutput, failure, not_found, ok, respond
 from ...services.genes import not_found_message, resolve_gene
 
@@ -26,6 +26,11 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | No
         raise not_found(not_found_message(criteria_.gene))
     criteria_ = replace(criteria_, gene=_sql.symbol(gene["symbol"]))
     rows = _sql.run(token, *lollipop_query(tenant_code, criteria_))
+    cut = None
+    if len(rows) > LOLLIPOP_ROW_LIMIT:
+        rows = rows[:LOLLIPOP_ROW_LIMIT]
+        cut = (f"Only the {LOLLIPOP_ROW_LIMIT} variants with the most carriers are counted and drawn: "
+               "add filters (impact, ClinVar, rarity) for a complete picture.")
     # A variant in the gene whose picked annotation is another (overlapping) gene has
     # no protein position on this gene's transcript: counted, not drawn.
     on_gene = [row for row in rows if (row.get("symbol") or "").upper() == criteria_.gene.upper()]
@@ -38,7 +43,7 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | No
     if not positioned:
         return ok({"tenant": tenant_code, "gene": criteria_.gene, "criteria": criteria_.describe(), "variants_drawn": 0,
                    "variants_without_protein_change": len(on_gene), "variants_picked_on_another_gene": other_gene},
-                  warnings=["No carrier variant with a protein change: no chart drawn."])
+                  warnings=["No carrier variant with a protein change: no chart drawn."], truncated=cut)
     per_transcript: dict[str, int] = {}
     for row, _ in positioned:
         per_transcript[row["transcript_id"]] = per_transcript.get(row["transcript_id"], 0) + 1
@@ -55,7 +60,7 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | No
         "variants_picked_on_another_gene": other_gene,
         "top_variants": [{"aa_change": p.label, "carriers": p.carriers, "class": p.kind}
                          for p in sorted(points, key=lambda p: -p.carriers)[:15]],
-    }, image=png)
+    }, image=png, truncated=cut)
 
 
 async def lollipop(

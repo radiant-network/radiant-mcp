@@ -588,3 +588,14 @@ def test_dollar_signs_in_titles_and_labels_are_plain_text(run):
     assert png.startswith(PNG)
     _, png = _parts(run(bar_chart("a $x_$ b", ["$a", "b$"], [1, 2])))
     assert png.startswith(PNG)
+
+
+def test_lollipop_says_when_it_capped_the_variants(fake_api, fake_sql, run, monkeypatch):
+    lollipop_module = importlib.import_module("radiant_mcp.tools.charts.lollipop")
+    monkeypatch.setattr(lollipop_module, "LOLLIPOP_ROW_LIMIT", 2)
+    fake_api.on("genes", "gene_search", [{"symbol": "SMARCB1"}])
+    fake_sql.on("COUNT(DISTINCT car.patient_id)", [
+        {"locus_id": i, "symbol": "SMARCB1", "transcript_id": "T1", "aa_change": f"p.Arg{i}Ter",
+         "kind": "stop_gained", "carriers": 5 - i} for i in range(1, 4)])
+    result = run(lollipop("smarcb1", tenant="demo"))
+    assert result["data"]["variants_drawn"] == 2 and "most carriers" in result["truncated"]["reason"]

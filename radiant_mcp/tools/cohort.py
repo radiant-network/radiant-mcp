@@ -60,7 +60,9 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
     tenant_code, criteria = _resolve(api, tenant, criteria)
     totals = _sql.first(_sql.run(token, *totals_query(tenant_code, criteria))) or {}
     carriers = []
-    for row in _sql.run(token, *carriers_query(tenant_code, criteria, limit)):
+    # One row past `limit` tells a cut list from a complete one of exactly `limit` rows.
+    rows = _sql.run(token, *carriers_query(tenant_code, criteria, limit + 1))
+    for row in rows[:limit]:
         row["variants"] = _sql.as_list(row.get("variants"))
         with_url(row, _link(tenant_code, criteria, row))
         row.pop("first_variant_id", None)
@@ -78,7 +80,7 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
         "summary": summary,
     }
     truncated = None
-    if len(carriers) >= limit:
+    if len(rows) > limit:
         truncated = Truncation(reason=f"`carriers` stops at {limit} rows (most variants first): raise `limit` (up to "
                                       f"{CARRIERS_MAX_LIMIT}) or add filters; the counts cover every carrier.",
                                lists=["carriers"])
@@ -96,18 +98,20 @@ def _genotype_phenotype(
         "criteria": criteria.describe(),
         "carrier_patients": totals.get("patients", 0),
         "carrier_patients_with_phenotypes": phenotyped.get("patients", 0),
-        "phenotypes": _sql.run(token, *phenotypes_query(tenant_code, criteria, limit)),
+        "phenotypes": _sql.run(token, *phenotypes_query(tenant_code, criteria, limit + 1)),
         "phenotype_source": ("positive HPO observations of the carrier patients; observations recorded for a "
                              "fetus are left out, since a fetal sample carries its mother's patient_id"),
     }
     cut: list[str] = []
     if hpo_term:
-        rows = _sql.run(token, *carriers_with_term_query(tenant_code, criteria, hpo_term, CARRIERS_MAX_LIMIT))
+        rows = _sql.run(token, *carriers_with_term_query(tenant_code, criteria, hpo_term, CARRIERS_MAX_LIMIT + 1))
         result["hpo_term"] = hpo_term
-        result["carriers_with_term"] = [with_url(r, case_url(tenant_code, r.get("case_id"))) for r in rows]
-        if len(rows) >= CARRIERS_MAX_LIMIT:
+        result["carriers_with_term"] = [with_url(r, case_url(tenant_code, r.get("case_id")))
+                                        for r in rows[:CARRIERS_MAX_LIMIT]]
+        if len(rows) > CARRIERS_MAX_LIMIT:
             cut.append("carriers_with_term")
-    if len(result["phenotypes"]) >= limit:
+    if len(result["phenotypes"]) > limit:
+        result["phenotypes"] = result["phenotypes"][:limit]
         cut.append("phenotypes")
     truncated = None
     if cut:

@@ -65,7 +65,7 @@ def _read_query(token: str, query: str, db: str | None) -> ToolOutput:
 
 
 async def read_query(query: str, db: str | None = None) -> ToolResult:
-    """Run one read-only SQL statement in StarRocks, as the caller.
+    """Run a SQL query in StarRocks, as the caller (your own StarRocks rights apply).
 
     Last resort: call ``describe_schema`` first and prefer the Radiant tools.
     Send one SELECT per call, with ``db`` rather than a ``USE`` statement: when
