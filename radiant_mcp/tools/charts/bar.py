@@ -26,7 +26,8 @@ async def bar_chart(
         title: Chart title.
         categories: Bar labels (1 to 50).
         values: One number per category.
-        x_label, y_label: Axis labels.
+        x_label: Label of the x axis.
+        y_label: Label of the y axis.
         horizontal: Horizontal bars, better for long labels.
     """
     if not categories or len(categories) > MAX_BARS:

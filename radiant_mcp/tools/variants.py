@@ -177,7 +177,10 @@ async def variant_details(
     Args:
         locus_id: The variant's locus_id (from ``prioritize_snv``).
         tenant: Tenant code (auto-resolved when the user has only one).
-        case_id, seq_id, task_id: Optional occurrence key, all three or none.
+        case_id: Case of the optional occurrence key: pass case_id, seq_id and
+            task_id together, or none of them.
+        seq_id: Sequencing of the optional occurrence key (with case_id and task_id).
+        task_id: Task of the optional occurrence key (with case_id and seq_id).
         data_type: germline_snv (default), somatic_snv_tn or somatic_snv_to;
             only used with the occurrence key.
     """

@@ -1,6 +1,7 @@
 """The tool list the assistant sees (RAD-251, acceptance criterion 4)."""
 
 import asyncio
+import inspect
 
 from fastmcp import FastMCP
 
@@ -39,3 +40,20 @@ def test_unexpected_errors_do_not_leak_their_message():
     error = failure(ConnectionError("HTTPConnectionPool(host='radiant-api.internal', port=8090): refused")).error
     assert error.code == "internal"
     assert error.message == "Unexpected ConnectionError in the tool; the details are in the server logs."
+
+
+def test_the_assistant_sees_every_line_of_each_tool_docstring(configure):
+    # FastMCP publishes only the text before ``Args:`` and one description per
+    # documented name: text after the block, or ``a, b: ...``, never reaches the model.
+    configure(radiant_api_url="http://api.example")
+    mcp = FastMCP("test")
+    register_tools(mcp)
+    for tool in asyncio.run(mcp.list_tools()):
+        doc = inspect.getdoc(tool.fn)
+        summary, _, args = doc.partition("\nArgs:\n")
+        assert tool.description == summary.strip(), tool.name
+        assert all(not line or line.startswith(" ") for line in args.splitlines()), (
+            f"{tool.name}: text after Args is not published")
+        undocumented = [name for name, schema in tool.parameters["properties"].items()
+                        if not schema.get("description")]
+        assert not undocumented, f"{tool.name}: no description for {undocumented}"

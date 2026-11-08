@@ -72,7 +72,11 @@ async def lollipop(
     Args:
         gene: Gene symbol.
         data_type: germline_snv (default) or somatic_snv_all (tumor-normal and tumor-only together).
-        vep_impact, clinvar, max_gnomad_af, zygosity: As in cohort_carriers.
+        vep_impact: e.g. ["HIGH", "MODERATE"].
+        clinvar: e.g. ["Pathogenic", "Likely_pathogenic"] (any of them).
+        max_gnomad_af: Keeps variants with gnomAD v3 AF below it OR absent from
+            gnomAD (e.g. 0.01).
+        zygosity: e.g. ["HOM"] (tumor zygosity for somatic).
         tenant: Tenant code (auto-resolved when the user has only one).
     """
     try:
