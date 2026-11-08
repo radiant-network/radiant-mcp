@@ -8,6 +8,7 @@ from ... import charts
 from ... import portal_api as _api
 from ... import sql as _sql
 from ...domain import data_types as _data_types
+from ...domain import rules as _rules
 from ...domain.consequences import consequence_class
 from ...domain.data_types import COHORT_DATA_TYPES, CohortDataType
 from ...enums import ENUMS, canonical_values
@@ -68,6 +69,8 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
     }
     if any(not _data_types.is_somatic(t) for t in data_types):
         result["germline"] = "a germline case counts the proband's variants only, not the parents'"
+        if "germline_snv" in data_types:
+            result["germline_snv_quality"] = _rules.GERMLINE_QUALITY_DEFINITION
         if "germline_snv" in data_types and max_gnomad_af is None and not vep_impact:
             warnings.append("no frequency or impact filter: common germline polymorphisms are counted; "
                             "pass max_gnomad_af (e.g. 0.01) or vep_impact for rare or damaging variants")
@@ -96,14 +99,16 @@ async def oncoprint(
     CNVs; 'multiple' when a case has several classes in a gene. A germline
     case counts the proband's variants only. Returns the image plus the
     altered cases per gene, over every altered case, not only those shown.
-    Germline SNVs have no default filter: pass max_gnomad_af or vep_impact
-    to leave out common polymorphisms.
+    Germline SNV calls follow the platform's carrier quality rule (FILTER
+    PASS, GQ >= 20, alternate depth >= 3) but have no rarity or impact filter
+    by default: pass max_gnomad_af or vep_impact to leave out common
+    polymorphisms.
 
     Args:
         genes: 1 to 20 official HGNC symbols (or Ensembl gene ids); aliases are
             not resolved.
-        data_types: Among germline_snv (default), germline_cnv, somatic_snv_all (tumor-normal
-            and tumor-only together), somatic_cnv.
+        data_types: Among germline_snv (default), germline_cnv, somatic_snv_tn (tumor-normal
+            analyses only), somatic_cnv.
         max_gnomad_af: SNV only; keeps variants below this gnomAD AF or absent (e.g. 0.01).
         vep_impact: SNV only, e.g. ["HIGH", "MODERATE"].
         tenant: Tenant code (auto-resolved when the user has only one).

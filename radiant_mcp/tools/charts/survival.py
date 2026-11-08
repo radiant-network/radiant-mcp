@@ -13,6 +13,7 @@ from ...domain.criteria import Criteria, build_criteria
 from ...domain.data_types import CohortDataType
 from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.carriers import carrier_patients_query
+from ...queries.sequencing import genotyped_patients_query
 from ...results import ToolOutput, failure, invalid, ok, respond
 from ...services.cases import merge_criteria, search_criteria
 from ...services.genes import not_found_message, resolve_gene
@@ -196,6 +197,20 @@ def _survival_group(name: str, patients: list[dict]) -> tuple[charts.SurvivalGro
     return charts.SurvivalGroup(name, times, events), missing
 
 
+def _genotyped_ids(token: str, tenant: str, specs: list[GroupSpec]) -> set[str] | None:
+    """Patient ids genotyped for every data type of the carrier groups, or None
+    without a carrier group. A Radiant case of another type (or not analysed
+    yet) says nothing about the genotype a carrier group is defined on."""
+    data_types = sorted({s.criteria.data_type for s in specs if s.criteria is not None})
+    if not data_types:
+        return None
+    ids: set[str] | None = None
+    for data_type in data_types:
+        found = {str(r["patient_id"]) for r in _sql.run(token, *genotyped_patients_query(tenant, data_type))}
+        ids = found if ids is None else ids & found
+    return ids or set()
+
+
 def _sequenced(patient: dict) -> bool:
     """The patient has at least one Radiant case: only then is the genotype known."""
     return (patient.get("case_count") or 0) > 0
@@ -256,7 +271,12 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
             cohort = reader.by_key(cohort_filters or {})
             if sequenced_only:
                 before = len(cohort)
-                cohort = {k: p for k, p in cohort.items() if _sequenced(p)}
+                genotyped = _genotyped_ids(token, tenant_code, specs)
+                if genotyped is None:
+                    cohort = {k: p for k, p in cohort.items() if _sequenced(p)}
+                else:
+                    cohort = {k: p for k, p in cohort.items()
+                              if p.get("radiant_patient_id") is not None and str(p["radiant_patient_id"]) in genotyped}
                 unsequenced = before - len(cohort)
         members: list[tuple[str, dict[str, dict]]] = []
         definition: dict[str, Any] = {}
@@ -276,13 +296,16 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
         members.append((others_label, others))
         definition[others_label] = "cohort patients in no other group"
         if any(s.criteria for s in specs) and not sequenced_only:
-            without_case = sum(1 for p in others.values() if not _sequenced(p))
+            # Same "genotyped" as sequenced_only: an imported analysis of the carriers' data type.
+            genotyped = _genotyped_ids(token, tenant_code, specs) or set()
+            not_genotyped = sum(1 for p in others.values()
+                                if p.get("radiant_patient_id") is None or str(p["radiant_patient_id"]) not in genotyped)
             definition[others_label] = {"definition": "cohort patients in no other group",
-                                        "patients_without_radiant_case": without_case}
-            if without_case:
-                warnings.append(f"{others_label!r} includes {without_case} patients without a Radiant case, whose "
-                                "genotype is unknown: pass sequenced_only=True to compare carriers with genotyped "
-                                "non-carriers")
+                                        "patients_not_genotyped": not_genotyped}
+            if not_genotyped:
+                warnings.append(f"{others_label!r} includes {not_genotyped} patients without an analysis of the "
+                                "carriers' data type, whose genotype is unknown: pass sequenced_only=True to compare "
+                                "carriers with genotyped non-carriers")
 
     groups, missing = [], {}
     for name, found in members:
@@ -317,7 +340,11 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
         "overlapping_patients": overlapping,
         "cohort": None if cohort is None else {
             "filters": cohort_filters or "all patients", "sequenced_only": sequenced_only, "patients": len(cohort),
-            "excluded_without_radiant_case": unsequenced if sequenced_only else None},
+            "excluded_not_genotyped": unsequenced if sequenced_only else None,
+            "genotyped_means": (None if not sequenced_only else
+                                "an imported analysis of every carrier group's data type (all of them): "
+                                + ", ".join(sorted({s.criteria.data_type for s in specs if s.criteria}))
+                                if any(s.criteria for s in specs) else "at least one Radiant case")},
         "definition": definition, "excluded_without_survival_data": missing,
         "excluded_without_patient_key": reader.without_key,
         "groups_without_survival_data": [g.name for g in groups if not g.times],
@@ -344,12 +371,15 @@ async def survival_curve(
       describe_schema("clinical") query returned for a treatment protocol;
     - ``filters``: search_patients filters, e.g. {"cns_integrated_diagnosis": [...]};
     - ``carriers``: cohort_carriers criteria, e.g. {"gene": "TP53",
-      "data_type": "somatic_snv_all", "vep_impact": ["HIGH"]}.
+      "data_type": "somatic_snv_tn", "vep_impact": ["HIGH"]}.
 
     ``cohort_filters`` (search_patients filters) restricts every group to one
     cohort, and ``others_label`` adds a group of the cohort's patients that are
-    in no other group. ``sequenced_only`` keeps the patients with at least one
-    Radiant case (their genotype is known). Example: medulloblastoma treated on a protocol vs the other
+    in no other group. ``sequenced_only`` keeps the genotyped patients: with a
+    carriers group, those with an imported analysis of its data type (a germline
+    case does not genotype a somatic gene); with carriers groups of several data
+    types, of every one of them, so a patient missing one type leaves every
+    group; otherwise those with a Radiant case. Example: medulloblastoma treated on a protocol vs the other
     medulloblastoma patients = groups=[{"label": "ACNS0334 Regimen B",
     "patient_keys": [...]}], cohort_filters={"cns_integrated_diagnosis": [...]},
     others_label="Other protocols". Carriers vs non-carriers =
@@ -367,7 +397,8 @@ async def survival_curve(
     Args:
         groups: 2 to 6 groups, or 1 to 5 with others_label (which adds one), see above.
         cohort_filters: search_patients filters applied to every group.
-        sequenced_only: Keep only the patients with a Radiant case. Use it to compare
+        sequenced_only: Keep only genotyped patients (an imported analysis of the
+            carriers groups' data type; otherwise a Radiant case). Use it to compare
             carriers with non-carriers, so the others group is genotyped.
         others_label: Name of the extra group "cohort patients in no other group".
         title: Chart title (default: the group names).

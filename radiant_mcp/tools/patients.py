@@ -219,7 +219,8 @@ async def get_patient_context(
             genomics, trial_eligibilities, external_records. Default: all but
             external_records.
     """
-    if not PATIENT_KEY.match(patient_key or ""):
+    patient_key = (patient_key or "").strip()
+    if not PATIENT_KEY.fullmatch(patient_key):
         return respond(error("invalid_input", f"`{patient_key}` is not a patient key (a UUID). "
                                               "Find the key with search_patients(query=<identifier>) first."))
     chosen = list(dict.fromkeys(sections)) if sections else list(DEFAULT_SECTIONS)
@@ -227,5 +228,6 @@ async def get_patient_context(
     if unknown:
         return respond(error("invalid_input", f"Unknown section(s): {', '.join(unknown)}",
                              allowed=list(PATIENT_SECTIONS)))
-    return await _api.run(_get_patient_context, patient_key, tenant, chosen)
+    # Keys are stored lower-case: a key copied upper-case would not be found.
+    return await _api.run(_get_patient_context, patient_key.lower(), tenant, chosen)
 

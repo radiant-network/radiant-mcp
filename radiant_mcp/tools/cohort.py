@@ -47,7 +47,12 @@ def _link(tenant: str, criteria: Criteria, row: dict) -> str | None:
                               task_id=row.get("task_id"), variant_id=str(row.get("first_variant_id")))
     if criteria.data_type == "germline_cnv":
         return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "germline_cnv", task_id=row.get("task_id"))
-    # Somatic: tumor-normal or tumor-only is not known here; open the variants tab.
+    if criteria.data_type == "somatic_snv_tn":
+        # Tumor-normal analyses only (latest_tasks), so the variants section is known.
+        return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "somatic_snv_tn",
+                              task_id=row.get("task_id"), variant_id=str(row.get("first_variant_id")))
+    # Somatic CNV: the portal's somatic variants tab has no CNV view yet (only the SNV
+    # sub-tabs), so a deep link would land on the SNV list: open the variants tab.
     return case_url(tenant, row.get("case_id"), tab="variants")
 
 
@@ -140,15 +145,17 @@ async def cohort_carriers(
     Args:
         gene: Official HGNC symbol (case-insensitive, e.g. ERBB2) or Ensembl gene
             id; aliases (HER2, P53) are not resolved.
-        data_type: germline_snv (default), germline_cnv, somatic_snv_all or somatic_cnv.
-            somatic_snv_all covers tumor-normal and tumor-only analyses together.
+        data_type: germline_snv (default), germline_cnv, somatic_snv_tn or somatic_cnv.
+            somatic_snv_tn reads the tumor-normal analyses only (tumor-only calls are mostly
+            germline variants); somatic_cnv comes from the tumor-only CNV calling.
         vep_impact: SNV only, e.g. ["HIGH", "MODERATE"].
         clinvar: SNV only, e.g. ["Pathogenic", "Likely_pathogenic"] (any of them).
         max_gnomad_af: SNV only; keeps variants with gnomAD v3 AF below it OR
             absent from gnomAD (e.g. 0.01).
         zygosity: SNV only, e.g. ["HOM"] (tumor zygosity for somatic).
         cnv_types: CNV only, among LOSS, GAIN, CNLOH, GAINLOH (default all).
-            CNVs are always PASS; somatic SNVs too.
+            CNVs are always PASS; somatic SNVs too; germline SNV calls follow the
+            platform's carrier quality rule (PASS, GQ >= 20, alternate depth >= 3).
         limit: Max carriers listed (1–200, default 50); counts cover all.
         tenant: Tenant code (auto-resolved when the user has only one).
     """
@@ -184,15 +191,17 @@ async def genotype_phenotype(
         gene: Official HGNC symbol (case-insensitive) or Ensembl gene id; aliases
             are not resolved.
         hpo_term: Optional HPO id (HP:0000000); find it with lookup_terms.
-        data_type: germline_snv (default), germline_cnv, somatic_snv_all or somatic_cnv.
-            somatic_snv_all covers tumor-normal and tumor-only analyses together.
+        data_type: germline_snv (default), germline_cnv, somatic_snv_tn or somatic_cnv.
+            somatic_snv_tn reads the tumor-normal analyses only (tumor-only calls are mostly
+            germline variants); somatic_cnv comes from the tumor-only CNV calling.
         vep_impact: SNV only, e.g. ["HIGH", "MODERATE"].
         clinvar: SNV only, e.g. ["Pathogenic", "Likely_pathogenic"] (any of them).
         max_gnomad_af: SNV only; keeps variants with gnomAD v3 AF below it OR
             absent from gnomAD (e.g. 0.01).
         zygosity: SNV only, e.g. ["HOM"] (tumor zygosity for somatic).
         cnv_types: CNV only, among LOSS, GAIN, CNLOH, GAINLOH (default all).
-            CNVs are always PASS; somatic SNVs too.
+            CNVs are always PASS; somatic SNVs too; germline SNV calls follow the
+            platform's carrier quality rule (PASS, GQ >= 20, alternate depth >= 3).
         limit: Max phenotypes listed (1–100, default 30).
         tenant: Tenant code (auto-resolved when the user has only one).
     """

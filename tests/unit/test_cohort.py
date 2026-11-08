@@ -51,8 +51,9 @@ def test_carriers(fake_api, fake_sql, run):
         "gene_match": "a consequence on a transcript of the gene (not only the picked one), "
                       "other than upstream, downstream or intergenic (a variant only near "
                       "the gene does not count); vep_impact is the impact on that gene",
-        "reruns": "the latest task of each sequencing in each case "
-                  "(tumor-normal and tumor-only somatic analyses apart)",
+        "reruns": "the latest imported task of each sequencing in each case",
+        "quality": "germline SNV calls with FILTER PASS, GQ >= 20 and alternate depth >= 3 "
+                   "(the platform's carrier rule, as in the variant frequencies)",
     }
     for sql, values in fake_sql.queries:
         assert bound_value(sql, values, "WHERE cf.symbol = ") == "SCN1A"
@@ -94,7 +95,7 @@ def test_genotype_phenotype_rejects_a_bad_hpo_id(fake_api, run):
 
 
 def test_somatic_carriers_have_no_family_role_summary():
-    criteria = build_criteria("somatic_snv_all", "TP53", None, None, None, None, None)
+    criteria = build_criteria("somatic_snv_tn", "TP53", None, None, None, None, None)
     assert set(carrier_queries.summary_queries("demo", criteria)) == {"by_consequence", "by_variant_class"}
     cnv = build_criteria("germline_cnv", "SCN1A", None, None, None, None, None)
     assert set(carrier_queries.summary_queries("demo", cnv)) == {"by_family_role", "by_cnv_type"}
@@ -119,3 +120,19 @@ def test_phenotypes_leave_fetal_observations_out():
                    carrier_queries.phenotyped_patients_query("demo", criteria),
                    carrier_queries.carriers_with_term_query("demo", criteria, "HP:0001250", 10)):
         assert "obs.fetus_id IS NULL" in sql
+
+
+def test_germline_carriers_pass_the_platform_quality_rule():
+    # Same rule as the ETL's carrier frequencies: a LowQual or GQ 5 call is not a carrier.
+    from radiant_mcp.queries.charts import oncoprint_query
+
+    for sql, params in [
+        carrier_queries.totals_query("demo", build_criteria("germline_snv", "TP53", None, None, None, None, None)),
+        oncoprint_query("demo", "germline_snv", ["TP53"], None, []),
+    ]:
+        assert bound_value(sql, params.values, "o.filter = ") == "PASS"
+        assert bound_value(sql, params.values, "o.gq >= ") == 20
+        assert bound_value(sql, params.values, "o.ad_alt >= ") == 3
+    somatic_sql, _ = carrier_queries.totals_query(
+        "demo", build_criteria("somatic_snv_tn", "TP53", None, None, None, None, None))
+    assert "o.gq >=" not in somatic_sql

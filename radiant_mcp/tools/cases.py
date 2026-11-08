@@ -174,7 +174,9 @@ async def get_case_context(case_id: int, tenant: str | None = None) -> ToolResul
     - Each key also carries the StarRocks partitions ``part`` and
       ``variant_part``, needed only for SQL (see ``describe_schema``). A key
       without ``part`` means the partition could not be resolved — see
-      ``warnings``.
+      ``warnings``. A key with ``imported: false`` is a re-analysis the
+      pipeline has not loaded yet: it has no occurrences, so use the other
+      (older) key of the same sequencing and data type, listed before it.
 
     Args:
         case_id: Numeric Radiant case ID.

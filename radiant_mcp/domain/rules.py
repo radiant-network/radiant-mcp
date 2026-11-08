@@ -25,11 +25,25 @@ SOMATIC_SECOND_HIT_CNV_TYPES = ("LOSS", "CNLOH")
 
 PASS = "PASS"
 HET = "HET"
+# A germline SNV call counts as a carrier when it passes the ETL's carrier rule
+# (`qualifies` in germline_snv_staging_variant_freq_insert.sql): FILTER PASS, GQ and
+# alternate depth at least these (queries/quality.py). Keep them equal to the ETL's.
+GERMLINE_MIN_GQ = 20
+GERMLINE_MIN_AD_ALT = 3
+GERMLINE_QUALITY_DEFINITION = (
+    f"germline SNV calls with FILTER PASS, GQ >= {GERMLINE_MIN_GQ} and alternate depth >= {GERMLINE_MIN_AD_ALT} "
+    "(the platform's carrier rule, as in the variant frequencies)"
+)
 # Calls with an alternate allele. The ETL loads only rows with one (has_alt), so a
 # filter on them is a safeguard, not a semantic change.
 ALT_ZYGOSITIES = ("HET", "HOM", "HEM")
 # An SNV inside a heterozygous deletion keeps one allele: the caller reports it HOM (or HEM).
 HEMIZYGOUS_CALLS = ("HOM", "HEM")
+
+# A tumor call of the germline first-hit variant itself is not a somatic second hit.
+# A high tumor allele ratio suggests the normal allele was lost (LOH), but tumor
+# purity is unknown, so it is flagged for the geneticist, never counted as a hit.
+ALLELIC_IMBALANCE_MIN_RATIO = 0.6
 
 # VEP consequences that place a variant NEAR a gene, not in it: VEP runs with its
 # default 5 kb distance and keeps every consequence (--flag_pick, not --pick), so a
@@ -44,7 +58,7 @@ GERMLINE_SNV_TASK_TYPE = "radiant_germline_annotation"
 TASK_TYPES = {
     "germline_snv": GERMLINE_SNV_TASK_TYPE,
     "germline_cnv": "alignment_germline_variant_calling",
-    "somatic_snv_all": "radiant_somatic_annotation",
+    "somatic_snv_tn": "radiant_somatic_annotation",
     "somatic_cnv": "tumor_only_variant_calling",
 }
 # staging_sequencing_experiment.ingested_at of a task whose occurrences are not loaded

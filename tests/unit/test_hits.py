@@ -47,6 +47,20 @@ def test_second_hit_germline(fake_api, fake_sql, run, monkeypatch):
             assert bound_value(sql, values, f"{alias}.part = ") == 5
 
 
+def test_second_hit_reads_the_loaded_task_while_a_re_analysis_is_imported(fake_api, fake_sql, run, monkeypatch):
+    # Task 22 re-analyses seq 10 but is not imported yet: task 20 must be read.
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}, {"id": 22}], "germline_cnv": [{"id": 21}]})
+    fake_sql.on("staging_sequencing_experiment", [
+        {"seq_id": 10, "task_id": 20, "part": 5, "imported": 1},
+        {"seq_id": 10, "task_id": 21, "part": 5, "imported": 1},
+        {"seq_id": 10, "task_id": 22, "part": 5, "imported": 0},
+    ])
+    result = run(second_hit(1, tenant="demo"))
+    snv_sql = [(sql, v) for sql, v in fake_sql.queries if "germline__snv__occurrence" in sql]
+    assert snv_sql and all(bound_value(sql, v, "o.task_id = ") == 20 for sql, v in snv_sql)
+    assert any("task_id=22 (germline_snv): not imported yet" in w for w in result["warnings"])
+
+
 def test_second_hit_skips_keys_without_part(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({}, "part lookup failed: boom"))
@@ -80,6 +94,51 @@ def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
     [(sql, values)] = fake_sql.matching("staging_sequencing_experiment")
     assert bound_value(sql, values, "task_type = ") == "radiant_germline_annotation"
 
+
+def test_the_germline_variant_called_in_the_tumor_is_not_a_second_hit(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
+    fake_sql.on("germline__snv__occurrence", [
+        {"gene": "TP53", "locus_id": 3, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]'},
+        {"gene": "RB1", "locus_id": 7, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]'},
+        {"gene": "ATRX", "locus_id": 9, "zygosity": "HEM", "clinvar_interpretation": '["Pathogenic"]'},
+    ])
+    fake_sql.on("somatic__snv__occurrence", [
+        {"gene": "TP53", "locus_id": 3, "tumor_ad_ratio": 0.48, "tumor_zygosity": "HET"},
+        {"gene": "RB1", "locus_id": 7, "tumor_ad_ratio": 0.71, "tumor_zygosity": "HET"},
+        {"gene": "ATRX", "locus_id": 9, "tumor_ad_ratio": 0.99, "tumor_zygosity": "HET"},
+    ])
+    data = run(second_hit(1, tenant="demo"))["data"]
+    assert data["genes"] == [] and data["germline_plp_without_somatic_event"] == ["ATRX", "RB1", "TP53"]
+    seen = {e["gene"]: e["calls"][0] for e in data["germline_variant_in_tumor"]}
+    assert seen["TP53"]["possible_allelic_imbalance"] is False
+    # A high tumor ratio of a germline HET may be loss of the normal allele: flagged, never counted.
+    assert seen["RB1"]["possible_allelic_imbalance"] is True and seen["RB1"]["same_variant_as_germline_hit"] is True
+    # A male X-linked (HEM) or homozygous germline variant is expected near 1: not an imbalance.
+    assert seen["ATRX"]["possible_allelic_imbalance"] is False
+    assert "not a second hit" in data["rules"]
+
+
+def test_a_germline_task_shared_by_two_cases_is_not_called_older_than_itself():
+    warnings: list[str] = []
+    keys = [{"case_id": 1, "seq_id": 11, "task_id": 22}, {"case_id": 2, "seq_id": 11, "task_id": 22}]
+    assert len(hits._latest_task(keys, "germline_snv", warnings)) == 1 and warnings == []
+
+
+def test_a_tumor_only_analysis_is_not_searched_for_second_hits(fake_api, fake_sql, run, monkeypatch):
+    # A tumor-only analysis keeps the germline variants: a common germline missense would be a "second hit".
+    _case_api(fake_api, "somatic", {"somatic_snv_to": [{"id": 40}], "somatic_cnv": [{"id": 41}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7, (10, 41): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
+    fake_sql.on("germline__snv__occurrence", [
+        {"gene": "TP53", "locus_id": 3, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]'}])
+    fake_sql.on("somatic__cnv__occurrence", [{"gene": "TP53", "cnv_id": 601, "cnv_type": "LOSS"}])
+    result = run(second_hit(1, tenant="demo"))
+    assert fake_sql.matching("somatic__snv__occurrence") == []
+    [gene] = result["data"]["genes"]
+    assert gene["somatic_snv"] == [] and [c["cnv_id"] for c in gene["somatic_cnv"]] == [601]
+    assert any("tumor-only SNV analyses are not searched" in w for w in result["warnings"])
 
 def test_second_hit_somatic_without_germline_sequencing(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
@@ -216,3 +275,40 @@ def test_a_variant_only_near_a_gene_is_not_a_hit_in_it():
     ]
     for sql, params in queries:
         assert _excluded_consequences(sql, params.values) == list(rules.NEARBY_CONSEQUENCES)
+
+
+def test_a_low_impact_first_hit_is_still_looked_up_in_the_tumor():
+    # A ClinVar P splice_region (LOW) first hit: its tumor call is fetched whatever the impact.
+    sql, params = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["TP53"], ["3"])
+    assert "OR o.locus_id IN (" in sql and 3 in params.values.values()
+
+
+def test_second_hit_marks_germline_calls_outside_the_quality_rule(fake_api, fake_sql, run, monkeypatch):
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}], "germline_cnv": [{"id": 21}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5, (10, 21): 5}, None))
+    fake_sql.on("germline__cnv__occurrence", [{"gene": "SCN1A", "locus_id": 1001, "cnv_id": 501, "snv_inside_cnv": 0,
+                                               "low_quality": 1, "snv_filter": "LowQual", "snv_gq": 5}])
+    result = run(second_hit(1, tenant="demo"))
+    [hit] = result["data"]["sequencings"][0]["snv_cnv"]
+    assert hit["low_quality"] is True and hit["snv_gq"] == 5
+    assert "low_quality" in result["data"]["rules"]
+    [(sql, values)] = [(q, v) for q, v in fake_sql.queries if "germline__cnv__occurrence" in q]
+    assert bound_value(sql, values, "o.gq >= ") == 20
+
+
+def test_a_null_gq_or_alt_depth_is_low_quality():
+    # The ETL stores GQ 0 and alt depth 0 as NULL: `NOT qualifies` must be true, not NULL.
+    import re
+    import sqlite3
+
+    from radiant_mcp import sql as _sql
+    from radiant_mcp.queries.quality import germline_qualifies
+
+    p = _sql.Params()
+    condition = re.sub(r"%\((p\d+)\)s", r":\1", germline_qualifies(p))
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE o (filter, gq, ad_alt)")
+    db.executemany("INSERT INTO o VALUES (?, ?, ?)",
+                   [("PASS", 40, 10), ("PASS", None, 10), ("PASS", 40, None), ("LowQual", 40, 10), ("PASS", 5, 10)])
+    low_quality = [r[0] for r in db.execute(f"SELECT NOT {condition} FROM o", p.values)]
+    assert low_quality == [0, 1, 1, 1, 1]

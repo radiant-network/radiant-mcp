@@ -97,6 +97,18 @@ def test_context_loads_the_sections_and_links_them(fake_api, run):
     assert result["data"]["case_ids"] == [8]
 
 
+def test_context_accepts_an_upper_case_key(fake_api, run):
+    fake_api.on("patients", "patient_entity", _patient(KEY))
+    run(get_patient_context(KEY.upper(), tenant="radiant", sections=[]))
+    assert fake_api.kwargs("patient_entity")["patient_key"] == KEY
+
+
+def test_context_strips_a_pasted_key(fake_api, run):
+    fake_api.on("patients", "patient_entity", _patient(KEY))
+    run(get_patient_context(KEY + "\n", tenant="radiant", sections=[]))
+    assert fake_api.kwargs("patient_entity")["patient_key"] == KEY
+
+
 def test_context_for_an_unknown_patient(fake_api, run):
     fake_api.on("patients", "patient_entity", api_exception(404, '{"status":404,"message":"patient not found"}'))
     result = run(get_patient_context(OTHER, tenant="radiant"))

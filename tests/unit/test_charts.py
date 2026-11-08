@@ -234,6 +234,8 @@ def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fak
               "vital_status": "alive"}]
     _patients(fake_api, rows)
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": str(i)} for i in range(1, 21)])
+    # Genotyped = an imported germline SNV analysis: patient 500 has none.
+    fake_sql.on("SELECT DISTINCT s.patient_id", [{"patient_id": i} for i in [*range(1, 151), 999]])
 
     data, _ = _parts(run(survival_curve(groups=[{"label": "SCN1A carriers", "carriers": {"gene": "scn1a"}}],
                                         sequenced_only=True, others_label="Other sequenced patients", tenant="demo")))
@@ -242,8 +244,27 @@ def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fak
     assert data["excluded_without_survival_data"] == {"SCN1A carriers": 0, "Other sequenced patients": 1}
     assert data["definition"]["SCN1A carriers"]["carrier_patients"] == 20
     assert data["cohort"] == {"filters": "all patients", "sequenced_only": True, "patients": 151,
-                              "excluded_without_radiant_case": 1}
+                              "excluded_not_genotyped": 1,
+                              "genotyped_means": "an imported analysis of every carrier group's data type (all of them): germline_snv"}
     assert len(_searches(fake_api)) == 2  # the cohort, paged by 100
+
+
+def test_somatic_non_carriers_are_patients_with_a_tumor_analysis(fake_api, fake_sql, run):
+    # A patient with only a germline case (or a case not analysed yet) has a Radiant
+    # case but no known somatic genotype: not a "non-carrier".
+    fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
+    _patients(fake_api, [{"patient_key": _key(i), "radiant_patient_id": i, "case_count": 1,
+                          "survival_days": 300 * i, "vital_status": "deceased" if i % 2 else "alive"}
+                         for i in range(1, 7)])
+    fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": "1"}, {"patient_id": "2"}])
+    fake_sql.on("SELECT DISTINCT s.patient_id", [{"patient_id": i} for i in (1, 2, 3, 4)])
+    data, _ = _parts(run(survival_curve(groups=[{"label": "TP53", "carriers": {"gene": "TP53",
+                                                                              "data_type": "somatic_snv_tn"}}],
+                                        sequenced_only=True, others_label="Non-carriers", tenant="demo")))
+    assert {g["group"]: g["patients"] for g in data["groups"]} == {"TP53": 2, "Non-carriers": 2}
+    assert data["cohort"]["excluded_not_genotyped"] == 2
+    values = next(v for q, v in fake_sql.queries if "SELECT DISTINCT s.patient_id" in q)
+    assert "radiant_somatic_annotation" in values.values()
 
 
 def test_survival_of_filter_groups_needs_no_cohort(fake_api, run):
@@ -334,7 +355,7 @@ def test_oncoprint(fake_api, fake_sql, run):
 
 def test_oncoprint_keeps_parents_out_of_germline_cases_only(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
-    run(oncoprint(["TP53"], data_types=["somatic_snv_all", "somatic_cnv", "germline_cnv"], tenant="demo"))
+    run(oncoprint(["TP53"], data_types=["somatic_snv_tn", "somatic_cnv", "germline_cnv"], tenant="demo"))
     by_table = {re.search(r"(\w+__\w+__occurrence)", sql).group(1): sql for sql, _ in fake_sql.queries}
     assert "s.family_role = " not in by_table["somatic__snv__occurrence"]
     assert "s.family_role = " not in by_table["somatic__cnv__occurrence"]
@@ -371,14 +392,22 @@ def test_oncoprint_validates(fake_api, run, kwargs, message):
 def test_lollipop_draws_the_main_transcript(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [{"symbol": "SMARCB1"}])
     fake_sql.on("COUNT(DISTINCT car.patient_id)", [
-        {"locus_id": 1, "transcript_id": "T1", "aa_change": "p.Arg201Ter", "kind": "stop_gained", "carriers": 4},
-        {"locus_id": 2, "transcript_id": "T1", "aa_change": "p.Ala150Val", "kind": "missense_variant", "carriers": 1},
-        {"locus_id": 3, "transcript_id": "T2", "aa_change": "p.Gly12Asp", "kind": "missense_variant", "carriers": 1},
-        {"locus_id": 4, "transcript_id": "T1", "aa_change": "", "kind": "splice_region_variant", "carriers": 1},
+        {"locus_id": 1, "symbol": "SMARCB1", "transcript_id": "T1", "aa_change": "p.Arg201Ter", "kind": "stop_gained",
+         "carriers": 4},
+        {"locus_id": 2, "symbol": "SMARCB1", "transcript_id": "T1", "aa_change": "p.Ala150Val",
+         "kind": "missense_variant", "carriers": 1},
+        {"locus_id": 3, "symbol": "SMARCB1", "transcript_id": "T2", "aa_change": "p.Gly12Asp",
+         "kind": "missense_variant", "carriers": 1},
+        {"locus_id": 4, "symbol": "SMARCB1", "transcript_id": "T1", "aa_change": None, "kind": "intron_variant",
+         "carriers": 1},
+        # In SMARCB1, but its picked annotation is the overlapping gene: counted, not drawn.
+        {"locus_id": 5, "symbol": "DERL3", "transcript_id": "T9", "aa_change": "p.Leu5Pro",
+         "kind": "missense_variant", "carriers": 2},
     ])
     data, _ = _parts(run(lollipop("smarcb1", tenant="demo")))
     assert data["transcript"] == "T1" and data["variants_drawn"] == 2
     assert data["variants_on_other_transcripts"] == 1 and data["variants_without_protein_change"] == 1
+    assert data["variants_picked_on_another_gene"] == 1
     assert data["top_variants"][0] == {"aa_change": "p.Arg201Ter", "carriers": 4, "class": "truncating"}
 
 
@@ -447,7 +476,7 @@ def test_family_venn_says_what_the_proband_only_region_holds(fake_api, fake_sql,
     result = run(family_venn(1, tenant="demo"))
     data, _ = _parts(result)
     assert data["members"] == ["Proband", "Mother"] and "not sequenced" in data["proband_only"]
-    assert any(w.startswith("father (seq_id=13)") for w in result["warnings"])
+    assert any(w.startswith("father (seq_id=13 ") for w in result["warnings"])
 
 
 def test_bar_chart_rejects_duplicate_categories(run):
@@ -508,16 +537,18 @@ def test_survival_overlap_counts_only_drawn_patients(fake_api, run):
     assert data["overlapping_patients"] == 0 and data["logrank_p"] is not None
 
 
-def test_survival_warns_when_non_carriers_include_patients_without_a_case(fake_api, fake_sql, run):
+def test_survival_warns_when_non_carriers_include_patients_not_genotyped(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
     rows = [{"patient_key": _key(i), "radiant_patient_id": i, "case_count": 1 if i < 5 else 0,
              "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 9)]
     _patients(fake_api, rows)
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": "1"}, {"patient_id": "2"}])
+    # Patients 1-3 have an imported germline SNV analysis; 4 has a case but no analysis yet.
+    fake_sql.on("SELECT DISTINCT s.patient_id", [{"patient_id": i} for i in (1, 2, 3)])
     result = run(survival_curve(groups=[{"label": "TP53", "carriers": {"gene": "TP53"}}],
                                 others_label="Others", tenant="demo"))
     data, _ = _parts(result)
-    assert data["definition"]["Others"]["patients_without_radiant_case"] == 4
+    assert data["definition"]["Others"]["patients_not_genotyped"] == 5
     assert any("sequenced_only=True" in w for w in result["warnings"])
 
 

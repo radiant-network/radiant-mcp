@@ -20,7 +20,6 @@ from fastmcp.tools import ToolResult
 from .. import portal_api as _api
 from .. import sql as _sql
 from ..domain import rules as _rules
-from ..domain.data_types import SOMATIC_SNV_CASE_DATA_TYPES
 from ..domain.keys import with_parts
 from ..portal_links import occurrence_url, variant_url, with_url
 from ..queries.hits import (
@@ -36,9 +35,25 @@ from ..queries.hits import (
 from ..results import ToolOutput, Truncation, failure, ok, respond
 from ..services.cases import case_context
 
+# The germline call quality, stated in every result: flagged, never filtered, so a real
+# but poorly covered hit stays visible to the geneticist.
+_QUALITY_RULE = (f"`low_quality` marks a germline call outside the platform's carrier rule "
+                 f"({_rules.GERMLINE_QUALITY_DEFINITION}): report it as uncertain, with its filter and GQ (`filter` / `gq`, `snv_filter` / "
+                 "`snv_gq` in snv_cnv).")
 # How an SNV is assigned to a gene (queries/hits.py), stated in every result.
 _GENE_RULE = ("An SNV is in a gene when it has a consequence on one of its transcripts other than upstream, "
               "downstream or intergenic; its impact is the impact on that gene.")
+
+
+_NOT_FIRST_HIT = object()
+
+
+def _imbalance(row: dict, germline_zygosity: str | None) -> bool:
+    """A germline HET first hit with a high tumor allele ratio: possible loss of the normal
+    allele. A germline HOM or HEM (male X) variant is expected near 1, and the tumor
+    zygosity is not informative (the caller writes HET on almost every call)."""
+    ratio = row.get("tumor_ad_ratio")
+    return germline_zygosity == _rules.HET and ratio is not None and float(ratio) >= _rules.ALLELIC_IMBALANCE_MIN_RATIO
 
 def mechanism(zygosity: str, inside: bool) -> str:
     if zygosity in _rules.HEMIZYGOUS_CALLS and inside:
@@ -58,7 +73,8 @@ def _latest_task(keys: list[dict], what: str, warnings: list[str]) -> list[dict]
         if kept is None or key["task_id"] > kept["task_id"]:
             latest[key["seq_id"]] = key
     for key in keys:
-        if latest[key["seq_id"]] is not key:
+        # The same task can come once per case (a sequencing shared by two cases): not older.
+        if latest[key["seq_id"]]["task_id"] != key["task_id"]:
             warnings.append(f"seq_id={key['seq_id']} task_id={key['task_id']} ({what}): older task, "
                             f"task {latest[key['seq_id']]['task_id']} read instead")
     return list(latest.values())
@@ -70,7 +86,8 @@ def _usable(keys: list[dict], data_type: str, warnings: list[str]) -> list[dict]
         if key.get("data_type") != data_type:
             continue
         if key.get("part") is None:
-            warnings.append(f"seq_id={key['seq_id']} task_id={key.get('task_id')} ({data_type}): no `part`, skipped")
+            reason = "not imported yet" if key.get("imported") is False else "no `part`"
+            warnings.append(f"seq_id={key['seq_id']} task_id={key.get('task_id')} ({data_type}): {reason}, skipped")
             continue
         out.append(key)
     return _latest_task(out, data_type, warnings)
@@ -111,6 +128,7 @@ def _germline(token: str, tenant: str, case: dict, keys: list[dict], warnings: l
                                truncated):
                 row["clinvar_interpretation"] = _sql.as_list(row.get("clinvar_interpretation"))
                 row["snv_inside_cnv"] = bool(row.get("snv_inside_cnv"))
+                row["low_quality"] = bool(row.get("low_quality"))
                 row["mechanism"] = mechanism(row.get("zygosity"), row["snv_inside_cnv"])
                 with_url(row, occurrence_url(tenant, case_id, seq_id, "germline_snv",
                                              task_id=snv_key["task_id"], variant_id=str(row["locus_id"])))
@@ -198,6 +216,7 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
                            truncated):
             row["clinvar_interpretation"] = _sql.as_list(row.get("clinvar_interpretation"))
             row["interpreted_plp"] = bool(row.get("interpreted_plp"))
+            row["low_quality"] = bool(row.get("low_quality"))
             with_url(row, occurrence_url(tenant, key["case_id"], key["seq_id"], "germline_snv",
                                          task_id=key["task_id"], variant_id=str(row["locus_id"])))
             with_url(row, variant_url(tenant, str(row["locus_id"])), key="variant_portal_url")
@@ -205,13 +224,31 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
 
     genes = sorted(g for g in germline if g)
     hits: dict[str, dict[str, list]] = {g: {"somatic_snv": [], "somatic_cnv": []} for g in genes}
+    # A tumor-normal call of the first-hit variant itself is not a second hit (a caller
+    # can keep it when the tumor lost the normal allele): kept apart with its ratio.
+    first_hit_zygosity = {g: {str(r["locus_id"]): r.get("zygosity") for r in germline[g]} for g in genes}
+    in_tumor: dict[str, list[dict]] = {g: [] for g in genes}
     if genes:
-        for data_type in SOMATIC_SNV_CASE_DATA_TYPES:
+        # Tumor-only analyses keep the germline variants (most of their calls): only the
+        # tumor-normal analyses can show a somatic SNV.
+        if any(k.get("data_type") == "somatic_snv_to" for k in keys):
+            warnings.append("tumor-only SNV analyses are not searched for second hits: they cannot tell germline "
+                            "from somatic variants; somatic CNVs are")
+        for data_type in ("somatic_snv_tn",):  # see above: never somatic_snv_to
             for key in _usable(keys, data_type, warnings):
-                for row in _capped(token, somatic_snv_query(tenant_db, key, genes),
+                loci = sorted({locus for zygosities in first_hit_zygosity.values() for locus in zygosities})
+                for row in _capped(token, somatic_snv_query(tenant_db, key, genes, loci),
                                    f"seq_id={key['seq_id']} {data_type}", truncated):
                     with_url(row, occurrence_url(tenant, case_id, key["seq_id"], data_type,
                                                  task_id=key["task_id"], variant_id=str(row["locus_id"])))
+                    germline_zygosity = first_hit_zygosity[row["gene"]].get(str(row["locus_id"]), _NOT_FIRST_HIT)
+                    if germline_zygosity is not _NOT_FIRST_HIT:
+                        in_tumor[row["gene"]].append({
+                            **row, "data_type": data_type, "same_variant_as_germline_hit": True,
+                            "germline_zygosity": germline_zygosity,
+                            "possible_allelic_imbalance": _imbalance(row, germline_zygosity),
+                        })
+                        continue
                     hits[row["gene"]]["somatic_snv"].append({**row, "data_type": data_type})
         for key in _usable(keys, "somatic_cnv", warnings):
             for row in _capped(token, somatic_cnv_query(tenant_db, key, genes),
@@ -220,14 +257,18 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
                 hits[row["gene"]]["somatic_cnv"].append(row)
 
     two_hit = [
-        {"gene": g, "germline": germline[g], **hits[g]}
+        {"gene": g, "germline": germline[g], **hits[g], **({"germline_variant_in_tumor": in_tumor[g]} if in_tumor[g] else {})}
         for g in genes if hits[g]["somatic_snv"] or hits[g]["somatic_cnv"]
     ]
+    without = [g for g in genes if not (hits[g]["somatic_snv"] or hits[g]["somatic_cnv"])]
     return {
         "patient_id": patient_id,
         "germline_sequencings": [{k: v for k, v in key.items() if k != "variant_part"} for key in germline_keys],
         "genes": two_hit,
-        "germline_plp_without_somatic_event": [g for g in genes if not (hits[g]["somatic_snv"] or hits[g]["somatic_cnv"])],
+        "germline_plp_without_somatic_event": without,
+        # The first-hit variant called in the tumor, for the genes with no other event:
+        # a high allele ratio may mean loss of the normal allele (LOH), to be judged.
+        "germline_variant_in_tumor": [{"gene": g, "calls": in_tumor[g]} for g in without if in_tumor[g]],
     }
 
 
@@ -242,7 +283,13 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
         result["rules"] = (
             f"Germline first hit: P/LP variant of the patient ({_rules.PLP_DEFINITION}) "
             f"Somatic second hit in the same gene: PASS SNV of impact {' or '.join(_rules.QUALIFYING_IMPACTS)}, "
-            f"or PASS CNV of type {' or '.join(_rules.SOMATIC_SECOND_HIT_CNV_TYPES)}. {_GENE_RULE}"
+            f"or PASS CNV of type {' or '.join(_rules.SOMATIC_SECOND_HIT_CNV_TYPES)}. "
+            "Somatic SNVs come from tumor-normal analyses only (tumor-only analyses keep the germline variants); "
+            "somatic CNVs come from the tumor-only CNV calling, the only somatic CNV source. A tumor-normal call of "
+            "the germline first-hit variant itself is not a second hit: it is listed under "
+            "`germline_variant_in_tumor` with its tumor allele ratio; `possible_allelic_imbalance` (germline HET "
+            f"and tumor ratio >= {_rules.ALLELIC_IMBALANCE_MIN_RATIO}) may mean loss of the normal allele (LOH), but "
+            f"tumor purity is unknown: state it as a possibility to check, not as a second hit. {_QUALITY_RULE} {_GENE_RULE}"
         )
         result.update(_somatic(token, tenant_code, case, context["occurrence_keys"], warnings, truncated))
     else:
@@ -253,7 +300,7 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
             "(hemizygous: the only remaining allele is called homozygous). `mechanism` says which. "
             "`family_deletions` lists the other members' deletions over the gene; one that covers the SNV explains "
             "that member's WT call and an apparent uniparental disomy. "
-            f"Compound heterozygous: the pairs computed by the pipeline. {_GENE_RULE}"
+            f"Compound heterozygous: the pairs computed by the pipeline. {_QUALITY_RULE} {_GENE_RULE}"
         )
         result["sequencings"] = _germline(token, tenant_code, case, context["occurrence_keys"], warnings, truncated)
     cut = None
@@ -279,7 +326,15 @@ async def second_hit(case_id: int, tenant: str | None = None) -> ToolResult:
     P/LP variant (from their germline sequencing) and a somatic PASS SNV of
     HIGH/MODERATE impact or a PASS LOSS/CNLOH CNV (Knudson two-hit);
     ``germline_plp_without_somatic_event`` lists the germline P/LP genes with no
-    somatic event.
+    somatic event. Somatic SNVs come from tumor-normal analyses only (a
+    tumor-only analysis keeps the germline variants and is skipped);
+    somatic CNVs come from the tumor-only CNV calling. The germline first-hit
+    variant called in the tumor is never a second hit: it is listed under
+    ``germline_variant_in_tumor``, where ``possible_allelic_imbalance`` flags a
+    possible loss of the normal allele (tumor purity unknown: to check).
+
+    Germline calls outside the platform's carrier quality rule (FILTER PASS,
+    GQ >= 20, alternate depth >= 3) are kept and marked ``low_quality``.
 
     ``rules`` states the exact criteria applied: quote them when reporting.
     Each list stops at 200 rows; ``truncated.lists`` names the lists that were cut.

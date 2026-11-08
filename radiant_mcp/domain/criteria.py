@@ -42,12 +42,18 @@ class Criteria:
             out["max_gnomad_af"] = f"< {self.max_gnomad_af:g} or absent from gnomAD"
         if not self.is_snv or self.is_somatic:
             out["filter"] = _rules.PASS
+        else:
+            out["quality"] = _rules.GERMLINE_QUALITY_DEFINITION
         if self.is_snv:
             out["gene_match"] = ("a consequence on a transcript of the gene (not only the picked one), "
                                  "other than upstream, downstream or intergenic (a variant only near "
                                  "the gene does not count); vep_impact is the impact on that gene")
-        out["reruns"] = ("the latest task of each sequencing in each case "
-                         "(tumor-normal and tumor-only somatic analyses apart)")
+        out["reruns"] = "the latest imported task of each sequencing in each case"
+        if self.data_type == "somatic_snv_tn":
+            out["analyses"] = ("tumor-normal only: tumor-only analyses keep the germline variants and are "
+                               "left out")
+        elif self.data_type == "somatic_cnv":
+            out["analyses"] = "the tumor-only CNV calling (the only somatic CNV source)"
         return out
 
 
