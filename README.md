@@ -210,7 +210,7 @@ variant they return carries a `portal_url` when `RADIANT_PORTAL_URL` is set:
 | `variant_details` | One SNV's annotations (predictions, OMIM, ClinVar, external and internal frequencies, key transcripts) and, with an occurrence key, its genotype and transmission in a case |
 | `variant_carriers` | The cases of the tenant that carry a germline SNV, interpreted or not |
 | `second_hit` | Genes hit twice in a case: germline rare HET SNV + LOSS CNV, compound heterozygous pairs; somatic: germline P/LP + somatic SNV or LOSS/CNLOH CNV. States the rules applied |
-| `cohort_carriers` | Cases and patients of the tenant carrying a variant in a gene (germline or somatic, SNV or CNV), with counts by consequence and variant class |
+| `cohort_carriers` | Cases and patients of the tenant carrying a variant in a gene (germline or somatic, SNV or CNV): `cases` whose proband carries, `cases_any_member` (a relative only counts too), `patients`, with counts by consequence, variant class and family role |
 | `genotype_phenotype` | Observed HPO phenotypes of a gene's carriers, and the carriers of a given HPO term |
 | `gene_info` | A gene's OMIM, HPO, Orphanet, DDD and COSMIC associations, tenant gene panels and gnomAD pLI/LOEUF |
 | `lookup_terms` | HPO or MONDO terms and ids from a name |

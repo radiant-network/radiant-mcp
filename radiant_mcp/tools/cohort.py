@@ -65,6 +65,7 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
         "tenant": tenant_code,
         "criteria": criteria.describe(),
         "cases": totals.get("cases", 0),
+        "cases_any_member": totals.get("cases_any_member", 0),
         "patients": totals.get("patients", 0),
         "variants": totals.get("variants", 0),
         "returned": len(carriers),
@@ -125,12 +126,15 @@ async def cohort_carriers(
 ) -> ToolResult:
     """The cases and patients of the tenant that carry a variant in a gene.
 
-    Returns ``cases``, ``patients`` and ``variants`` (distinct counts over the
-    whole tenant), ``carriers`` (one row per carrier sequencing: case, patient,
-    family role, affected status, strategy, the matching variants and a
-    ``portal_url``, most variants first), ``summary`` (counts by consequence
-    and variant class for SNVs, by type for CNVs) and ``criteria`` (the filters
-    actually applied: quote them). Use this before any SQL for "which cases
+    Returns distinct counts over the whole tenant: ``cases`` (cases whose
+    proband carries), ``cases_any_member`` (cases where any sequenced member
+    carries, the proband or only a relative), ``patients`` (every carrier,
+    relatives included) and ``variants``; ``carriers`` (one row per carrier
+    sequencing: case, patient, family role, affected status, strategy, the
+    matching variants and a ``portal_url``, most variants first); ``summary``
+    (counts by consequence and variant class for SNVs, by type for CNVs, by
+    family role for germline); and ``criteria`` (the filters actually applied:
+    quote them). Use this before any SQL for "which cases
     carry a variant in GENE" questions.
 
     Args:

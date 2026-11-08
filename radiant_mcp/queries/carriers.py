@@ -76,7 +76,10 @@ def totals_query(tenant: str, criteria: Criteria) -> tuple[str, _sql.Params]:
     p = _sql.Params()
     sql = (
         carriers_cte(p, tenant, criteria)
-        + " SELECT COUNT(DISTINCT case_id) AS cases, COUNT(DISTINCT patient_id) AS patients,"
+        # A relative's sequencing carries the proband's case_id: ``cases`` counts the
+        # cases whose proband carries (as oncoprint), ``cases_any_member`` any member.
+        + f" SELECT COUNT(DISTINCT CASE WHEN family_role = {p(_rules.PROBAND)} THEN case_id END) AS cases,"
+        " COUNT(DISTINCT case_id) AS cases_any_member, COUNT(DISTINCT patient_id) AS patients,"
         " COUNT(DISTINCT variant_id) AS variants FROM car"
     )
     return sql, p
@@ -118,7 +121,15 @@ def summary_queries(tenant: str, criteria: Criteria) -> dict[str, tuple[str, _sq
             f" GROUP BY v.variant_class ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
             p,
         )
-    else:
+    if not criteria.is_somatic:
+        p = _sql.Params()
+        out["by_family_role"] = (
+            carriers_cte(p, tenant, criteria)
+            + " SELECT family_role, COUNT(DISTINCT case_id) AS cases, COUNT(DISTINCT patient_id) AS patients"
+            f" FROM car GROUP BY family_role ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
+            p,
+        )
+    if not criteria.is_snv:
         p = _sql.Params()
         out["by_cnv_type"] = (
             carriers_cte(p, tenant, criteria)

@@ -24,7 +24,9 @@ def test_carriers_validate_before_any_call(fake_api, fake_sql, run, kwargs, mess
 
 def test_carriers(fake_api, fake_sql, run):
     echo_gene_search(fake_api)
-    fake_sql.on("COUNT(DISTINCT case_id)", [{"cases": 2, "patients": 2, "variants": 3}])
+    fake_sql.on("cases_any_member", [{"cases": 2, "cases_any_member": 3, "patients": 4, "variants": 3}])
+    fake_sql.on("GROUP BY family_role", [{"family_role": "proband", "cases": 2, "patients": 2},
+                                         {"family_role": "mother", "cases": 2, "patients": 2}])
     fake_sql.on("array_agg", [{
         "case_id": 1, "patient_id": 100, "seq_id": 10, "task_id": 20, "variant_count": 2,
         "variants": '["chr2:g.1A>T", "chr2:g.2C>G"]', "first_variant_id": 1001,
@@ -33,7 +35,12 @@ def test_carriers(fake_api, fake_sql, run):
 
     result = run(cohort_carriers("scn1a", vep_impact=["high"], max_gnomad_af=0.01, tenant="demo"))
 
-    assert (result["data"]["cases"], result["data"]["patients"], result["data"]["variants"]) == (2, 2, 3)
+    data = result["data"]
+    # A case where only the mother carries counts in cases_any_member, not in cases.
+    assert (data["cases"], data["cases_any_member"], data["patients"], data["variants"]) == (2, 3, 4, 3)
+    assert [r["family_role"] for r in data["summary"]["by_family_role"]] == ["proband", "mother"]
+    totals_sql, totals_values = next(q for q in fake_sql.queries if "cases_any_member" in q[0])
+    assert bound_value(totals_sql, totals_values, "WHEN family_role = ") == "proband"
     [carrier] = result["data"]["carriers"]
     assert carrier["variants"] == ["chr2:g.1A>T", "chr2:g.2C>G"] and "first_variant_id" not in carrier
     assert carrier["portal_url"].endswith("seq_id=10&task_id=20&variant_section=snv&selectedVariant=1001")
@@ -83,6 +90,13 @@ def test_genotype_phenotype(fake_api, fake_sql, run):
 
 def test_genotype_phenotype_rejects_a_bad_hpo_id(fake_api, run):
     assert "invalid HPO id" in run(genotype_phenotype("SCN1A", hpo_term="seizure"))["error"]["message"]
+
+
+def test_somatic_carriers_have_no_family_role_summary():
+    criteria = build_criteria("somatic_snv_all", "TP53", None, None, None, None, None)
+    assert set(carrier_queries.summary_queries("demo", criteria)) == {"by_consequence", "by_variant_class"}
+    cnv = build_criteria("germline_cnv", "SCN1A", None, None, None, None, None)
+    assert set(carrier_queries.summary_queries("demo", cnv)) == {"by_family_role", "by_cnv_type"}
 
 
 def test_carriers_match_any_transcript_of_the_gene_and_the_latest_task():
