@@ -47,6 +47,20 @@ def test_second_hit_germline(fake_api, fake_sql, run, monkeypatch):
             assert bound_value(sql, values, f"{alias}.part = ") == 5
 
 
+def test_second_hit_reads_the_loaded_task_while_a_re_analysis_is_imported(fake_api, fake_sql, run, monkeypatch):
+    # Task 22 re-analyses seq 10 but is not imported yet: task 20 must be read.
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}, {"id": 22}], "germline_cnv": [{"id": 21}]})
+    fake_sql.on("staging_sequencing_experiment", [
+        {"seq_id": 10, "task_id": 20, "part": 5, "imported": 1},
+        {"seq_id": 10, "task_id": 21, "part": 5, "imported": 1},
+        {"seq_id": 10, "task_id": 22, "part": 5, "imported": 0},
+    ])
+    result = run(second_hit(1, tenant="demo"))
+    snv_sql = [(sql, v) for sql, v in fake_sql.queries if "germline__snv__occurrence" in sql]
+    assert snv_sql and all(bound_value(sql, v, "o.task_id = ") == 20 for sql, v in snv_sql)
+    assert any("task_id=22 (germline_snv): not imported yet" in w for w in result["warnings"])
+
+
 def test_second_hit_skips_keys_without_part(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({}, "part lookup failed: boom"))

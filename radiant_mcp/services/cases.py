@@ -58,7 +58,16 @@ def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int], 
         rows = _sql.run(token, *parts_query(case_id))
     except Exception as exc:  # noqa: BLE001
         return {}, f"part lookup failed: {describe(exc)}"
-    return {(int(r["seq_id"]), int(r["task_id"])): int(r["part"]) for r in rows if r["part"] is not None}, None
+    # A task the ETL has not imported yet maps to None: its occurrences are not
+    # loaded, so it must not be read (nor win over the loaded task of a re-run).
+    parts: dict[tuple[int, int], int | None] = {}
+    for r in rows:
+        key = (int(r["seq_id"]), int(r["task_id"]))
+        if not r.get("imported", True):
+            parts.setdefault(key, None)
+        elif r["part"] is not None:
+            parts[key] = int(r["part"])
+    return parts, None
 
 
 def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) -> dict:
@@ -131,7 +140,15 @@ def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) 
         if part_warning:
             warnings.append(part_warning)
         for entry in occurrence_keys:
-            part = parts.get((entry["seq_id"], entry.get("task_id")))
+            task = (entry["seq_id"], entry.get("task_id"))
+            part = parts.get(task)
+            if part is None and task in parts:
+                entry["imported"] = False
+                warnings.append(
+                    f"seq_id={entry['seq_id']} task_id={entry.get('task_id')}: not imported yet "
+                    "(its occurrences are not loaded), so it has no `part`"
+                )
+                continue
             if part is None:
                 if not part_warning:
                     warnings.append(

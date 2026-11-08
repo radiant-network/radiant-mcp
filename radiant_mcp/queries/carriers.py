@@ -198,9 +198,14 @@ def lollipop_query(tenant: str, criteria_: Criteria) -> tuple[str, _sql.Params]:
     cte = carriers_cte(p, tenant, criteria_)
     tenant_db = _sql.tenant_db(tenant)
     return (
-        cte + ", va AS (SELECT locus_id, transcript_id, aa_change, array_join(consequences, ',') AS kind"
-        f" FROM {tenant_db}.snv__variant WHERE symbol = {p(criteria_.gene)})"
-        " SELECT va.locus_id, va.transcript_id, va.aa_change, va.kind, COUNT(DISTINCT car.patient_id) AS carriers"
-        " FROM car JOIN va ON va.locus_id = car.variant_id WHERE va.aa_change IS NOT NULL"
-        f" GROUP BY va.locus_id, va.transcript_id, va.aa_change, va.kind ORDER BY carriers DESC LIMIT {p(5000)}"
+        # Every carrier variant, with its picked annotation: the tool draws those picked on
+        # the gene with a protein change and counts the others instead of dropping them.
+        cte + ", va AS (SELECT sv.locus_id, sv.symbol, sv.transcript_id, sv.aa_change,"
+        " array_join(sv.consequences, ',') AS kind"
+        f" FROM {tenant_db}.snv__variant sv JOIN (SELECT DISTINCT variant_id FROM car) cv ON cv.variant_id = sv.locus_id)"
+        " SELECT car.variant_id AS locus_id, va.symbol, va.transcript_id, va.aa_change, va.kind,"
+        " COUNT(DISTINCT car.patient_id) AS carriers"
+        " FROM car LEFT JOIN va ON va.locus_id = car.variant_id"
+        " GROUP BY car.variant_id, va.symbol, va.transcript_id, va.aa_change, va.kind"
+        f" ORDER BY carriers DESC LIMIT {p(5000)}"
     ), p

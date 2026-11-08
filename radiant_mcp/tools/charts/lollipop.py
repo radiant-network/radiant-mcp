@@ -26,14 +26,18 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | No
         raise not_found(not_found_message(criteria_.gene))
     criteria_ = replace(criteria_, gene=_sql.symbol(gene["symbol"]))
     rows = _sql.run(token, *lollipop_query(tenant_code, criteria_))
+    # A variant in the gene whose picked annotation is another (overlapping) gene has
+    # no protein position on this gene's transcript: counted, not drawn.
+    on_gene = [row for row in rows if (row.get("symbol") or "").upper() == criteria_.gene.upper()]
+    other_gene = len(rows) - len(on_gene)
     positioned = []
-    for row in rows:
+    for row in on_gene:
         match = _AA_POSITION.search(row.get("aa_change") or "")
         if match:
             positioned.append((row, int(match.group(1))))
     if not positioned:
         return ok({"tenant": tenant_code, "gene": criteria_.gene, "criteria": criteria_.describe(), "variants_drawn": 0,
-                   "variants_without_protein_change": len(rows)},
+                   "variants_without_protein_change": len(on_gene), "variants_picked_on_another_gene": other_gene},
                   warnings=["No carrier variant with a protein change: no chart drawn."])
     per_transcript: dict[str, int] = {}
     for row, _ in positioned:
@@ -47,7 +51,8 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | No
     return ok({
         "tenant": tenant_code, "gene": criteria_.gene, "transcript": transcript, "criteria": criteria_.describe(),
         "variants_drawn": len(points), "variants_on_other_transcripts": left_out,
-        "variants_without_protein_change": len(rows) - len(positioned),
+        "variants_without_protein_change": len(on_gene) - len(positioned),
+        "variants_picked_on_another_gene": other_gene,
         "top_variants": [{"aa_change": p.label, "carriers": p.carriers, "class": p.kind}
                          for p in sorted(points, key=lambda p: -p.carriers)[:15]],
     }, image=png)
@@ -67,7 +72,9 @@ async def lollipop(
     Each variant is placed at its protein position (from aa_change), its height
     is the number of carrier patients, its colour its consequence class. The
     variants are drawn on the transcript most of them are annotated on, which
-    the result names; variants on other transcripts are counted, not drawn.
+    the result names; variants on other transcripts are counted, not drawn, and
+    so are the variants without a protein change and those whose picked
+    annotation is another, overlapping gene (``variants_picked_on_another_gene``).
 
     Args:
         gene: Official HGNC symbol (case-insensitive) or Ensembl gene id; aliases

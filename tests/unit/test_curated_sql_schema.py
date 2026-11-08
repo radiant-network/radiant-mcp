@@ -40,6 +40,8 @@ def _criteria() -> list[Criteria]:
 
 def _queries():
     yield "sequencing.parts", sequencing.parts_query(1131)
+    for data_type in ("germline_snv", "somatic_snv_all"):
+        yield f"sequencing.genotyped_patients[{data_type}]", sequencing.genotyped_patients_query(TENANT, data_type)
     yield "hits.snv_cnv", hits.snv_cnv_query(TENANT_SQL_DB, SNV_KEY, CNV_KEY)
     yield "hits.family_deletions", hits.family_deletions_query(TENANT_SQL_DB, CNV_KEY, GENES)
     yield "hits.comphet", hits.comphet_query(TENANT_SQL_DB, SNV_KEY)

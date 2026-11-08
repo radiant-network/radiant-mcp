@@ -27,7 +27,9 @@ def _members(case: dict, keys: list[dict]) -> tuple[list[tuple[str, dict]], list
         if key.get("data_type") != "germline_snv" or role not in ("proband", "father", "mother"):
             continue
         if key.get("part") is None:
-            skipped.append(f"{role} (seq_id={key['seq_id']}): no `part` for its germline SNV task, left out")
+            reason = "not imported yet" if key.get("imported") is False else "no `part`"
+            skipped.append(f"{role} (seq_id={key['seq_id']} task_id={key.get('task_id')}): germline SNV task "
+                           f"{reason}, left out")
             continue
         if role not in by_role or key["task_id"] > by_role[role]["task_id"]:
             by_role[role] = key

@@ -41,7 +41,17 @@ def latest_task_join(p: _sql.Params, tenant: str, data_type: str, source: str = 
     )
 
 
-def parts_query(case_id: int) -> tuple[str, _sql.Params]:
+def genotyped_patients_query(tenant: str, data_type: str) -> tuple[str, _sql.Params]:
+    """The patients with an imported ``data_type`` analysis: the population carriers
+    of that data type are found in, so its non-carriers have a known genotype."""
     p = _sql.Params()
-    return (f"SELECT seq_id, task_id, part FROM {_sql.shared_db()}.staging_sequencing_experiment"
+    return f"SELECT DISTINCT s.patient_id FROM {latest_tasks(p, tenant, data_type)} s", p
+
+
+def parts_query(case_id: int) -> tuple[str, _sql.Params]:
+    """``seq_id, task_id, part`` of the case's live tasks, and ``imported``: false (or NULL)
+    while the ETL has not loaded the task's occurrences yet (see ``latest_tasks``)."""
+    p = _sql.Params()
+    return (f"SELECT seq_id, task_id, part, ingested_at > {p(_rules.NOT_INGESTED)} AS imported"
+            f" FROM {_sql.shared_db()}.staging_sequencing_experiment"
             f" WHERE case_id = {p(int(case_id))} AND deleted = false"), p

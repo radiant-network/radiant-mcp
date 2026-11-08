@@ -1,4 +1,4 @@
-from conftest import PORTAL
+from conftest import PORTAL, bound_value
 
 from radiant_mcp.services import cases as case_service
 from radiant_mcp.tools.cases import get_case_context, search_cases
@@ -48,6 +48,18 @@ def test_case_context_links_the_case_members_and_keys(fake_api, run, monkeypatch
     assert result["warnings"] == [] and result["portal_url"] == f"{PORTAL}/radiant/case/entity/8"
 
 
+def test_a_task_not_imported_yet_has_no_part(fake_sql):
+    # The ETL stages a re-analysis at the epoch and loads its occurrences later.
+    fake_sql.on("staging_sequencing_experiment", [
+        {"seq_id": 21, "task_id": 3, "part": 154, "imported": 1},
+        {"seq_id": 21, "task_id": 5, "part": 154, "imported": 0},
+        {"seq_id": 22, "task_id": 6, "part": 154, "imported": None},
+    ])
+    assert case_service.lookup_parts("jwt", 1131) == ({(21, 3): 154, (21, 5): None, (22, 6): None}, None)
+    ((sql, values),) = fake_sql.queries
+    assert bound_value(sql, values, "ingested_at > ") == "1970-01-01 00:00:00"
+
+
 def test_part_lookup_binds_the_case_and_skips_tasks_without_part(fake_sql):
     from radiant_mcp import sql as _sql
 
@@ -56,7 +68,7 @@ def test_part_lookup_binds_the_case_and_skips_tasks_without_part(fake_sql):
     ])
     assert case_service.lookup_parts("jwt", 1131) == ({(21, 3): 154}, None)
     ((sql, values),) = fake_sql.queries
-    assert "radiant.staging_sequencing_experiment" in sql and values == {"p0": 1131}
+    assert "radiant.staging_sequencing_experiment" in sql and 1131 in values.values()
     fake_sql.on("staging_sequencing_experiment", _sql.SqlError("Access denied"))
     fake_sql.rules.reverse()
     assert case_service.lookup_parts("jwt", 1131) == ({}, "part lookup failed: StarRocks error: Access denied")

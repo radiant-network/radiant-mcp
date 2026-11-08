@@ -70,7 +70,8 @@ def _usable(keys: list[dict], data_type: str, warnings: list[str]) -> list[dict]
         if key.get("data_type") != data_type:
             continue
         if key.get("part") is None:
-            warnings.append(f"seq_id={key['seq_id']} task_id={key.get('task_id')} ({data_type}): no `part`, skipped")
+            reason = "not imported yet" if key.get("imported") is False else "no `part`"
+            warnings.append(f"seq_id={key['seq_id']} task_id={key.get('task_id')} ({data_type}): {reason}, skipped")
             continue
         out.append(key)
     return _latest_task(out, data_type, warnings)
