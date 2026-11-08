@@ -5,7 +5,10 @@ tumor-only somatic SNVs are separate (``somatic_snv_tn`` / ``somatic_snv_to``):
 the portal tells them apart by task, not by a column of the occurrence table.
 
 Cohort and chart tools read StarRocks directly, where both sit in one
-somatic SNV occurrence table, so they read both together: ``somatic_snv_all``.
+somatic SNV occurrence table. They read the tumor-normal analyses only
+(``somatic_snv_tn``, a task with a normal sample): a tumor-only analysis cannot
+subtract the germline variants, so its calls are mostly germline background
+(ETL design SJRA-1751 §4.3) and would count polymorphisms as somatic events.
 The portal's ``somatic_snv`` (a deprecated alias of ``somatic_snv_tn``) is
 accepted nowhere, so no value means two things.
 
@@ -18,8 +21,8 @@ from typing import Literal, get_args
 CaseSnvDataType = Literal["germline_snv", "somatic_snv_tn", "somatic_snv_to"]
 CaseCnvDataType = Literal["germline_cnv", "somatic_cnv"]
 CaseDataType = Literal[CaseSnvDataType, CaseCnvDataType]
-CohortSnvDataType = Literal["germline_snv", "somatic_snv_all"]
-CohortDataType = Literal["germline_snv", "germline_cnv", "somatic_snv_all", "somatic_cnv"]
+CohortSnvDataType = Literal["germline_snv", "somatic_snv_tn"]
+CohortDataType = Literal["germline_snv", "germline_cnv", "somatic_snv_tn", "somatic_cnv"]
 
 CASE_SNV_DATA_TYPES: tuple[str, ...] = get_args(CaseSnvDataType)
 CASE_CNV_DATA_TYPES: tuple[str, ...] = get_args(CaseCnvDataType)

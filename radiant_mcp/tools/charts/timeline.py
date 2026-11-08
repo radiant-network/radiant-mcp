@@ -74,7 +74,8 @@ async def patient_timeline(patient_key: str, tenant: str | None = None) -> ToolR
         patient_key: The patient page key (a UUID, from search_patients or get_case_context).
         tenant: Tenant code (auto-resolved when the user has only one).
     """
-    if not PATIENT_KEY.match(patient_key or ""):
+    patient_key = (patient_key or "").strip()
+    if not PATIENT_KEY.fullmatch(patient_key):
         return respond(error("invalid_input",
                              f"`{patient_key}` is not a patient key (a UUID). Find it with search_patients first."))
     # Keys are stored lower-case: a key copied upper-case would not be found.

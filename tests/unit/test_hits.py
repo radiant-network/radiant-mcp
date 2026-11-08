@@ -96,26 +96,49 @@ def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
 
 
 def test_the_germline_variant_called_in_the_tumor_is_not_a_second_hit(fake_api, fake_sql, run, monkeypatch):
-    # A tumor-only analysis keeps the germline variants: the first hit itself comes back.
-    _case_api(fake_api, "somatic", {"somatic_snv_to": [{"id": 40}]})
+    _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
     fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
     fake_sql.on("germline__snv__occurrence", [
-        {"gene": "TP53", "locus_id": 3, "clinvar_interpretation": '["Pathogenic"]', "interpreted_plp": 0},
-        {"gene": "RB1", "locus_id": 7, "clinvar_interpretation": '["Pathogenic"]', "interpreted_plp": 0},
+        {"gene": "TP53", "locus_id": 3, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]'},
+        {"gene": "RB1", "locus_id": 7, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]'},
+        {"gene": "ATRX", "locus_id": 9, "zygosity": "HEM", "clinvar_interpretation": '["Pathogenic"]'},
     ])
     fake_sql.on("somatic__snv__occurrence", [
         {"gene": "TP53", "locus_id": 3, "tumor_ad_ratio": 0.48, "tumor_zygosity": "HET"},
         {"gene": "RB1", "locus_id": 7, "tumor_ad_ratio": 0.71, "tumor_zygosity": "HET"},
+        {"gene": "ATRX", "locus_id": 9, "tumor_ad_ratio": 0.99, "tumor_zygosity": "HET"},
     ])
     data = run(second_hit(1, tenant="demo"))["data"]
-    assert data["genes"] == [] and data["germline_plp_without_somatic_event"] == ["RB1", "TP53"]
+    assert data["genes"] == [] and data["germline_plp_without_somatic_event"] == ["ATRX", "RB1", "TP53"]
     seen = {e["gene"]: e["calls"][0] for e in data["germline_variant_in_tumor"]}
     assert seen["TP53"]["possible_allelic_imbalance"] is False
-    # A high tumor ratio may be loss of the normal allele: flagged, never counted (purity unknown).
+    # A high tumor ratio of a germline HET may be loss of the normal allele: flagged, never counted.
     assert seen["RB1"]["possible_allelic_imbalance"] is True and seen["RB1"]["same_variant_as_germline_hit"] is True
+    # A male X-linked (HEM) or homozygous germline variant is expected near 1: not an imbalance.
+    assert seen["ATRX"]["possible_allelic_imbalance"] is False
     assert "not a second hit" in data["rules"]
 
+
+def test_a_germline_task_shared_by_two_cases_is_not_called_older_than_itself():
+    warnings: list[str] = []
+    keys = [{"case_id": 1, "seq_id": 11, "task_id": 22}, {"case_id": 2, "seq_id": 11, "task_id": 22}]
+    assert len(hits._latest_task(keys, "germline_snv", warnings)) == 1 and warnings == []
+
+
+def test_a_tumor_only_analysis_is_not_searched_for_second_hits(fake_api, fake_sql, run, monkeypatch):
+    # A tumor-only analysis keeps the germline variants: a common germline missense would be a "second hit".
+    _case_api(fake_api, "somatic", {"somatic_snv_to": [{"id": 40}], "somatic_cnv": [{"id": 41}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7, (10, 41): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
+    fake_sql.on("germline__snv__occurrence", [
+        {"gene": "TP53", "locus_id": 3, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]'}])
+    fake_sql.on("somatic__cnv__occurrence", [{"gene": "TP53", "cnv_id": 601, "cnv_type": "LOSS"}])
+    result = run(second_hit(1, tenant="demo"))
+    assert fake_sql.matching("somatic__snv__occurrence") == []
+    [gene] = result["data"]["genes"]
+    assert gene["somatic_snv"] == [] and [c["cnv_id"] for c in gene["somatic_cnv"]] == [601]
+    assert any("tumor-only SNV analyses are not searched" in w for w in result["warnings"])
 
 def test_second_hit_somatic_without_germline_sequencing(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})

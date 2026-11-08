@@ -68,14 +68,20 @@ def test_a_shared_task_counts_once_per_case():
 
 
 @pytest.mark.parametrize("newer", ["tumor-only", "tumor-normal"])
-def test_tumor_normal_and_tumor_only_analyses_are_not_re_runs_of_each_other(newer):
-    tumor_normal = [(1, 20, 1 if newer == "tumor-only" else 3, SOMATIC, "tumoral"),
-                    (1, 21, 1 if newer == "tumor-only" else 3, SOMATIC, "normal")]
-    tumor_only = [(1, 20, 3 if newer == "tumor-only" else 1, SOMATIC, "tumoral")]
-    kept = _kept(tumor_normal + tumor_only, "somatic_snv_all")
-    assert {(1, 20, 1), (1, 20, 3)} <= kept
+def test_somatic_snvs_come_from_the_tumor_normal_task_only(newer):
+    # A tumor-only task keeps the germline variants: never read, newer or not.
+    tn_task, to_task = (1, 3) if newer == "tumor-only" else (3, 1)
+    tumor_normal = [(1, 20, tn_task, SOMATIC, "tumoral"), (1, 21, tn_task, SOMATIC, "normal")]
+    tumor_only = [(1, 20, to_task, SOMATIC, "tumoral")]
+    kept = _kept(tumor_normal + tumor_only, "somatic_snv_tn")
+    assert (1, 20, tn_task) in kept and (1, 20, to_task) not in kept
 
 
-def test_a_tumor_only_re_run_replaces_the_older_tumor_only_task():
-    rows = [(1, 20, 1, SOMATIC, "tumoral"), (1, 20, 2, SOMATIC, "tumoral")]
-    assert _kept(rows, "somatic_snv_all") == {(1, 20, 2)}
+def test_a_tumor_normal_re_run_replaces_the_older_tumor_normal_task():
+    rows = [(1, 20, 1, SOMATIC, "tumoral"), (1, 21, 1, SOMATIC, "normal"),
+            (1, 20, 2, SOMATIC, "tumoral"), (1, 21, 2, SOMATIC, "normal")]
+    assert {k for k in _kept(rows, "somatic_snv_tn") if k[1] == 20} == {(1, 20, 2)}
+
+
+def test_a_case_with_only_a_tumor_only_analysis_has_no_somatic_snv_task():
+    assert _kept([(1, 20, 1, SOMATIC, "tumoral")], "somatic_snv_tn") == set()

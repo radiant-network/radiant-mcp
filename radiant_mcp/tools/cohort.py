@@ -140,8 +140,9 @@ async def cohort_carriers(
     Args:
         gene: Official HGNC symbol (case-insensitive, e.g. ERBB2) or Ensembl gene
             id; aliases (HER2, P53) are not resolved.
-        data_type: germline_snv (default), germline_cnv, somatic_snv_all or somatic_cnv.
-            somatic_snv_all covers tumor-normal and tumor-only analyses together.
+        data_type: germline_snv (default), germline_cnv, somatic_snv_tn or somatic_cnv.
+            somatic_snv_tn reads the tumor-normal analyses only (tumor-only calls are mostly
+            germline variants); somatic_cnv comes from the tumor-only CNV calling.
         vep_impact: SNV only, e.g. ["HIGH", "MODERATE"].
         clinvar: SNV only, e.g. ["Pathogenic", "Likely_pathogenic"] (any of them).
         max_gnomad_af: SNV only; keeps variants with gnomAD v3 AF below it OR
@@ -184,8 +185,9 @@ async def genotype_phenotype(
         gene: Official HGNC symbol (case-insensitive) or Ensembl gene id; aliases
             are not resolved.
         hpo_term: Optional HPO id (HP:0000000); find it with lookup_terms.
-        data_type: germline_snv (default), germline_cnv, somatic_snv_all or somatic_cnv.
-            somatic_snv_all covers tumor-normal and tumor-only analyses together.
+        data_type: germline_snv (default), germline_cnv, somatic_snv_tn or somatic_cnv.
+            somatic_snv_tn reads the tumor-normal analyses only (tumor-only calls are mostly
+            germline variants); somatic_cnv comes from the tumor-only CNV calling.
         vep_impact: SNV only, e.g. ["HIGH", "MODERATE"].
         clinvar: SNV only, e.g. ["Pathogenic", "Likely_pathogenic"] (any of them).
         max_gnomad_af: SNV only; keeps variants with gnomAD v3 AF below it OR

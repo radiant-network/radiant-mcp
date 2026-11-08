@@ -51,8 +51,7 @@ def test_carriers(fake_api, fake_sql, run):
         "gene_match": "a consequence on a transcript of the gene (not only the picked one), "
                       "other than upstream, downstream or intergenic (a variant only near "
                       "the gene does not count); vep_impact is the impact on that gene",
-        "reruns": "the latest task of each sequencing in each case "
-                  "(tumor-normal and tumor-only somatic analyses apart)",
+        "reruns": "the latest imported task of each sequencing in each case",
     }
     for sql, values in fake_sql.queries:
         assert bound_value(sql, values, "WHERE cf.symbol = ") == "SCN1A"
@@ -94,7 +93,7 @@ def test_genotype_phenotype_rejects_a_bad_hpo_id(fake_api, run):
 
 
 def test_somatic_carriers_have_no_family_role_summary():
-    criteria = build_criteria("somatic_snv_all", "TP53", None, None, None, None, None)
+    criteria = build_criteria("somatic_snv_tn", "TP53", None, None, None, None, None)
     assert set(carrier_queries.summary_queries("demo", criteria)) == {"by_consequence", "by_variant_class"}
     cnv = build_criteria("germline_cnv", "SCN1A", None, None, None, None, None)
     assert set(carrier_queries.summary_queries("demo", cnv)) == {"by_family_role", "by_cnv_type"}

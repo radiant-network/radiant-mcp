@@ -102,8 +102,8 @@ async def oncoprint(
     Args:
         genes: 1 to 20 official HGNC symbols (or Ensembl gene ids); aliases are
             not resolved.
-        data_types: Among germline_snv (default), germline_cnv, somatic_snv_all (tumor-normal
-            and tumor-only together), somatic_cnv.
+        data_types: Among germline_snv (default), germline_cnv, somatic_snv_tn (tumor-normal
+            analyses only), somatic_cnv.
         max_gnomad_af: SNV only; keeps variants below this gnomAD AF or absent (e.g. 0.01).
         vep_impact: SNV only, e.g. ["HIGH", "MODERATE"].
         tenant: Tenant code (auto-resolved when the user has only one).

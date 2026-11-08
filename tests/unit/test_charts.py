@@ -259,7 +259,7 @@ def test_somatic_non_carriers_are_patients_with_a_tumor_analysis(fake_api, fake_
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": "1"}, {"patient_id": "2"}])
     fake_sql.on("SELECT DISTINCT s.patient_id", [{"patient_id": i} for i in (1, 2, 3, 4)])
     data, _ = _parts(run(survival_curve(groups=[{"label": "TP53", "carriers": {"gene": "TP53",
-                                                                              "data_type": "somatic_snv_all"}}],
+                                                                              "data_type": "somatic_snv_tn"}}],
                                         sequenced_only=True, others_label="Non-carriers", tenant="demo")))
     assert {g["group"]: g["patients"] for g in data["groups"]} == {"TP53": 2, "Non-carriers": 2}
     assert data["cohort"]["excluded_not_genotyped"] == 2
@@ -355,7 +355,7 @@ def test_oncoprint(fake_api, fake_sql, run):
 
 def test_oncoprint_keeps_parents_out_of_germline_cases_only(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
-    run(oncoprint(["TP53"], data_types=["somatic_snv_all", "somatic_cnv", "germline_cnv"], tenant="demo"))
+    run(oncoprint(["TP53"], data_types=["somatic_snv_tn", "somatic_cnv", "germline_cnv"], tenant="demo"))
     by_table = {re.search(r"(\w+__\w+__occurrence)", sql).group(1): sql for sql, _ in fake_sql.queries}
     assert "s.family_role = " not in by_table["somatic__snv__occurrence"]
     assert "s.family_role = " not in by_table["somatic__cnv__occurrence"]

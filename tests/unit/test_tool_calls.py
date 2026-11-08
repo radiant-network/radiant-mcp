@@ -30,7 +30,7 @@ def call(configure):
 def test_a_value_outside_a_closed_list_is_invalid_input_with_the_allowed_values(call):
     out = call("cohort_carriers", {"gene": "TP53", "data_type": "somatic_snv"})
     assert out["ok"] is False and out["error"]["code"] == "invalid_input"
-    assert out["error"]["details"]["allowed"] == ["germline_snv", "germline_cnv", "somatic_snv_all", "somatic_cnv"]
+    assert out["error"]["details"]["allowed"] == ["germline_snv", "germline_cnv", "somatic_snv_tn", "somatic_cnv"]
     assert out["error"]["details"]["errors"][0]["argument"] == "data_type"
 
 

@@ -49,7 +49,7 @@ GERMLINE_SNV_TASK_TYPE = "radiant_germline_annotation"
 TASK_TYPES = {
     "germline_snv": GERMLINE_SNV_TASK_TYPE,
     "germline_cnv": "alignment_germline_variant_calling",
-    "somatic_snv_all": "radiant_somatic_annotation",
+    "somatic_snv_tn": "radiant_somatic_annotation",
     "somatic_cnv": "tumor_only_variant_calling",
 }
 # staging_sequencing_experiment.ingested_at of a task whose occurrences are not loaded

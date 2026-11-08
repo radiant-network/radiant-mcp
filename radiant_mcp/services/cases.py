@@ -145,8 +145,8 @@ def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) 
             if part is None and task in parts:
                 entry["imported"] = False
                 warnings.append(
-                    f"seq_id={entry['seq_id']} task_id={entry.get('task_id')}: not imported yet "
-                    "(its occurrences are not loaded), so it has no `part`"
+                    f"seq_id={entry['seq_id']} task_id={entry.get('task_id')}: not imported yet, or being "
+                    "re-imported (its occurrences are not loaded), so it has no `part`"
                 )
                 continue
             if part is None:

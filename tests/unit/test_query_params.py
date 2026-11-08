@@ -32,7 +32,7 @@ def test_rules_use_stored_values():
 def _all_queries():
     criteria = [
         build_criteria("germline_snv", "SCN1A", ["HIGH"], ["Pathogenic"], 0.01, ["HET"], None),
-        build_criteria("somatic_snv_all", "TP53", None, None, None, None, None),
+        build_criteria("somatic_snv_tn", "TP53", None, None, None, None, None),
         build_criteria("germline_cnv", "DMD", None, None, None, None, ["LOSS"]),
         build_criteria("somatic_cnv", "CDKN2A", None, None, None, None, None),
     ]

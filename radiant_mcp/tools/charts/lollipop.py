@@ -79,7 +79,8 @@ async def lollipop(
     Args:
         gene: Official HGNC symbol (case-insensitive) or Ensembl gene id; aliases
             are not resolved.
-        data_type: germline_snv (default) or somatic_snv_all (tumor-normal and tumor-only together).
+        data_type: germline_snv (default) or somatic_snv_tn (tumor-normal analyses only: tumor-only
+            calls are mostly germline variants).
         vep_impact: e.g. ["HIGH", "MODERATE"].
         clinvar: e.g. ["Pathogenic", "Likely_pathogenic"] (any of them).
         max_gnomad_af: Keeps variants with gnomAD v3 AF below it OR absent from

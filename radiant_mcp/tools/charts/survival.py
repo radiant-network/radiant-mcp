@@ -371,7 +371,7 @@ async def survival_curve(
       describe_schema("clinical") query returned for a treatment protocol;
     - ``filters``: search_patients filters, e.g. {"cns_integrated_diagnosis": [...]};
     - ``carriers``: cohort_carriers criteria, e.g. {"gene": "TP53",
-      "data_type": "somatic_snv_all", "vep_impact": ["HIGH"]}.
+      "data_type": "somatic_snv_tn", "vep_impact": ["HIGH"]}.
 
     ``cohort_filters`` (search_patients filters) restricts every group to one
     cohort, and ``others_label`` adds a group of the cohort's patients that are
