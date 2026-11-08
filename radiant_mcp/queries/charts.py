@@ -59,7 +59,7 @@ def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af
     tail = f" ORDER BY s.case_id, x.gene LIMIT {p(ONCOPRINT_ROW_LIMIT + 1)}"
     if data_types.is_snv(data_type):
         # Same gene membership as the carrier tools: a consequence on a transcript of the
-        # gene other than upstream / downstream / intergenic, and the impact on that gene.
+        # gene other than upstream / downstream / intergenic.
         gene_where = [f"cf.symbol IN ({p.list(genes)})",
                       f"cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"]
         # The impact filter is on the variant's most severe impact on the gene.

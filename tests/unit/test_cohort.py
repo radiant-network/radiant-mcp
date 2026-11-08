@@ -145,8 +145,8 @@ def test_germline_carriers_pass_the_platform_quality_rule():
 
 
 def test_oncoprint_uses_the_same_gene_membership_as_the_carriers():
-    # Upstream / downstream / intergenic consequences do not put a variant in a gene,
-    # and the impact filter is the impact on that gene, as in cohort_carriers.
+    # Upstream / downstream / intergenic consequences do not put a variant in a gene, and
+    # the impact filter is on the most severe impact on that gene, as in cohort_carriers.
     sql, params = oncoprint_query("demo", "germline_snv", ["TP53"], 0.01, ["HIGH"])
     assert "snv__consequence_filter cf" in sql and "snv__variant_partitioned" not in sql
     # The impact filter is on the most severe impact per variant and gene: HIGH is rank 0.
@@ -186,3 +186,12 @@ def test_an_impact_filter_keeps_a_variant_by_its_most_severe_impact_on_the_gene(
     assert kept(["MODIFIER"]) == []      # 1 is MODERATE on the gene, not MODIFIER
     assert kept(["MODERATE"]) == [1]     # 2 is HIGH on the gene
     assert kept(["HIGH", "MODERATE"]) == [1, 2]
+
+
+def test_genotype_phenotype_names_only_the_lists_it_cut(fake_api, fake_sql, run):
+    echo_gene_search(fake_api)
+    fake_sql.on("cases_any_member", [{"patients": 3}])
+    fake_sql.on("obs.code_value", [{"hpo_term_id": f"HP:000000{i}", "patients": 1} for i in range(3)])
+    result = run(genotype_phenotype("SCN1A", limit=2, tenant="demo"))
+    assert result["truncated"]["lists"] == ["phenotypes"]
+    assert "carriers_with_term" not in result["truncated"]["reason"]

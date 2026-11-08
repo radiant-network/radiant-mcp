@@ -154,8 +154,7 @@ genotype, read depth, quality, transmission, parental origin, Exomiser.
 The cases of the tenant that carry one germline variant (the case you are
 looking at included), as on the portal's variant page: the cases where a
 geneticist interpreted it (classification, condition, zygosity, phenotypes)
-and those where it is
-present but not interpreted. Up to 100 cases per list.
+and those where it is present but not interpreted. Up to 100 cases per list.
 
 ### second_hit
 

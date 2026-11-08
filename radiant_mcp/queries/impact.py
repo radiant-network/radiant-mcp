@@ -1,8 +1,10 @@
 """VEP impacts in SQL: their severity order, and the most severe impact of a variant on a gene."""
 
 from .. import sql as _sql
+from ..enums import ENUMS
 
-IMPACTS = ("HIGH", "MODERATE", "LOW", "MODIFIER")
+# Most severe first: the stored VEP impact values, in their order of severity.
+IMPACTS: tuple[str, ...] = tuple(ENUMS["vep_impact"])
 
 
 def impact_rank(p: _sql.Params, column: str = "cf.vep_impact") -> str:
@@ -22,5 +24,5 @@ def most_severe_in(p: _sql.Params, impacts: tuple[str, ...] | list[str]) -> str:
     """HAVING condition, per (locus, gene) group of consequence rows: the variant's most
     severe impact on the gene is one of ``impacts`` (a MODERATE filter leaves out a
     variant that is HIGH on another transcript of the gene)."""
-    ranks = [IMPACTS.index(impact) for impact in impacts if impact in IMPACTS]
+    ranks = [IMPACTS.index(impact) for impact in impacts]  # callers validated them against ENUMS
     return f"MIN({impact_rank(p)}) IN ({p.list(ranks)})"

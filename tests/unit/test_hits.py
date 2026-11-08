@@ -8,9 +8,10 @@ from conftest import CNV_KEY, PORTAL, SNV_KEY, bound_value
 from radiant_mcp import sql as _sql
 from radiant_mcp.domain import rules
 from radiant_mcp.domain.criteria import build_criteria
+from radiant_mcp.enums import ENUMS
 from radiant_mcp.queries import carriers
 from radiant_mcp.queries import hits as hit_queries
-from radiant_mcp.queries.impact import impact_label, impact_rank
+from radiant_mcp.queries.impact import IMPACTS, impact_label, impact_rank
 from radiant_mcp.queries.quality import germline_qualifies
 from radiant_mcp.services import cases as case_service
 from radiant_mcp.tools import hits
@@ -336,3 +337,7 @@ def test_an_unknown_impact_stays_unknown():
     db.executemany("INSERT INTO t VALUES (?, ?)", [(1, "LOW"), (1, "HIGH"), (2, None), (3, "MODIFIER")])
     got = dict(db.execute(f"SELECT g, {expr} FROM t GROUP BY g", p.values).fetchall())
     assert got == {1: "HIGH", 2: None, 3: "MODIFIER"}
+
+
+def test_the_impact_order_is_the_stored_vep_impact_values():
+    assert IMPACTS == tuple(ENUMS["vep_impact"]) == ("HIGH", "MODERATE", "LOW", "MODIFIER")
