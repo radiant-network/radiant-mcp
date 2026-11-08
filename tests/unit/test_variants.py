@@ -26,6 +26,14 @@ def test_details_keep_key_transcripts_and_report_failed_sections(fake_api, run):
     assert "occurrence" not in result
 
 
+def test_details_accept_a_numeric_locus_id(fake_api, run):
+    # second_hit and the cohort tools return locus_id as a number.
+    _variant_api(fake_api)
+    result = run(variant_details(42, tenant="radiant"))
+    assert result["ok"] and result["portal_url"] == f"{PORTAL}/radiant/variants/entity/42"
+    assert fake_api.kwargs("get_germline_variant_header")["locus_id"] == "42"
+
+
 def test_details_keep_the_picked_transcript(fake_api, run):
     _variant_api(fake_api)
     fake_api.on("variants", "get_germline_variant_overview", {"transcript_id": "T4"})

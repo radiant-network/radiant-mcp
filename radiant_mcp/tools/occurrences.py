@@ -239,15 +239,16 @@ async def prioritize_snv(
         filters: AND-ed list of ``{"field", "op", "value"}``. ``op`` is one of
             in (default), not-in, <, >, <=, >=, between ([min, max]), all
             (array contains all). Shorthand: ``{"field": value_or_list}``.
-            Useful fields: symbol, vep_impact (HIGH/MODERATE/LOW/MODIFIER),
-            consequence, zygosity (HET/HOM/HEM), transmission_mode,
-            parental_origin, clinvar (Pathogenic, Likely_pathogenic, ...),
-            exomiser_acmg_classification (pathogenic, likely_pathogenic,
-            uncertain_significance, ...), exomiser_gene_combined_score,
-            gnomad_v3_af, germline_pf_wgs, ad_ratio, genotype_quality, filter,
+            Useful fields, any data type: symbol, vep_impact
+            (HIGH/MODERATE/LOW/MODIFIER), consequence, clinvar (Pathogenic,
+            Likely_pathogenic, ...), gnomad_v3_af, germline_pf_wgs, filter,
             hpo_gene_panel, omim_gene_panel, tenant_gene_panel, cadd_phred,
-            revel_score, spliceai_ds, has_comphet, cmc_tier, hotspot
-            (somatic). Values of enum fields are matched case-insensitively.
+            revel_score, spliceai_ds, cmc_tier, ad_ratio. Germline only (a somatic call
+            rejects them): zygosity (HET/HOM/HEM), transmission_mode,
+            parental_origin, exomiser_acmg_classification (pathogenic,
+            likely_pathogenic, uncertain_significance, ...),
+            exomiser_gene_combined_score, genotype_quality, has_comphet.
+            Somatic only: hotspot. Values of enum fields are matched case-insensitively.
             Numeric comparisons drop NULLs: ``gnomad_v3_af < 0.01`` excludes
             variants absent from gnomAD (their AF is NULL); filter on the
             internal frequency or sort instead when they matter.

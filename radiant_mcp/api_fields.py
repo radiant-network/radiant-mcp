@@ -55,7 +55,8 @@ GERMLINE_SNV_SORT_FIELDS = (
     "somatic_hom_to_wgs", "somatic_hom_to_wxs", "somatic_pc_tn_wgs", "somatic_pc_tn_wxs",
     "somatic_pc_to_wgs", "somatic_pc_to_wxs", "somatic_pf_tn_wgs", "somatic_pf_tn_wxs", "somatic_pf_to_wgs",
     "somatic_pf_to_wxs", "somatic_pn_tn_wgs", "somatic_pn_tn_wxs", "somatic_pn_to_wgs", "somatic_pn_to_wxs",
-    "start", "symbol", "thousand_genome_af", "topmed_af", "transcript_id", "variant_class", "zygosity",
+    "start", "symbol", "thousand_genome_af", "topmed_af", "transcript_id", "variant_class", "vep_impact",
+    "zygosity",
 )
 SOMATIC_SNV_SORT_FIELDS = (
     "aa_change", "ad_alt", "ad_ratio", "ad_total", "aq", "chromosome", "clinvar", "cmc_sample_mutated",
@@ -75,7 +76,8 @@ SOMATIC_SNV_SORT_FIELDS = (
     "somatic_hom_tn_wxs", "somatic_hom_to_wgs", "somatic_hom_to_wxs", "somatic_pc_tn_wgs",
     "somatic_pc_tn_wxs", "somatic_pc_to_wgs", "somatic_pc_to_wxs", "somatic_pf_tn_wgs", "somatic_pf_tn_wxs",
     "somatic_pf_to_wgs", "somatic_pf_to_wxs", "somatic_pn_tn_wgs", "somatic_pn_tn_wxs", "somatic_pn_to_wgs",
-    "somatic_pn_to_wxs", "sq", "start", "thousand_genome_af", "topmed_af", "transcript_id", "variant_class",
+    "somatic_pn_to_wxs", "sq", "start", "symbol", "thousand_genome_af", "topmed_af", "transcript_id",
+    "variant_class", "vep_impact",
 )
 GERMLINE_CNV_SORT_FIELDS = (
     "bc", "cn", "end", "germline_pc_wgs", "germline_pc_wgs_affected", "germline_pc_wgs_not_affected",
