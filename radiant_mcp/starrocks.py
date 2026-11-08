@@ -77,14 +77,16 @@ class StarRocksError(RuntimeError):
 
 def _error(exc: MySQLError) -> StarRocksError:
     message = str(exc)
-    if exc.errno in _DENIED_ERRNOS or "access denied" in message.lower():
+    # The C extension's own error class (raised by nextset) may lack errno / sqlstate.
+    errno, sqlstate = getattr(exc, "errno", None), getattr(exc, "sqlstate", None)
+    if errno in _DENIED_ERRNOS or "access denied" in message.lower():
         kind = "denied"
-    elif (exc.errno in _INVALID_ERRNOS or _INVALID_MESSAGE.search(message)
-          or str(exc.sqlstate or "").startswith("42")):
+    elif (errno in _INVALID_ERRNOS or _INVALID_MESSAGE.search(message)
+          or str(sqlstate or "").startswith("42")):
         kind = "invalid"
     else:
         kind = "failed"
-    return StarRocksError(message, kind, exc.errno)
+    return StarRocksError(message, kind, errno)
 
 
 @dataclass
@@ -220,11 +222,12 @@ def query(
             else:
                 rows = list(cursor.fetchmany(max_rows + 1))
                 result = Result(columns, rows[:max_rows], truncated=len(rows) > max_rows)
-                cursor.fetchall()  # at most one row left: sql_select_limit stops at max_rows + 1
+            # nextset() discards the unread rows without storing them (the C extension's
+            # consume_result): never fetchall() here, an explicit LIMIT overrides
+            # sql_select_limit and would load the whole result into this process.
             while cursor.nextset():
                 if cursor.description:
                     result.ignored_result_sets += 1
-                    cursor.fetchall()
             return result
         except (MySQLError, CExtensionError) as exc:
             raise _error(exc) from exc

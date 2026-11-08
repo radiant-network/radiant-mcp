@@ -315,8 +315,8 @@ def test_a_null_gq_or_alt_depth_is_low_quality():
 
 
 def test_the_shown_impact_is_the_most_severe_on_the_reported_gene():
-    # A variant MODERATE on BRCA2 but picked on an overlapping gene (LOW): one row, MODERATE.
-    rows = [{"locus_id": 1, "gene": "BRCA2", "vep_impact": "LOW", "picked_vep_impact": "LOW"},
-            {"locus_id": 1, "gene": "BRCA2", "vep_impact": "MODERATE", "picked_vep_impact": "LOW"}]
-    [row] = hits._most_severe(rows, ("locus_id", "gene"))
-    assert row["vep_impact"] == "MODERATE" and row["picked_vep_impact"] == "LOW"
+    # One row per variant and gene (the LIMIT counts variants), with the impact on that gene.
+    for sql, _ in (hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
+                   hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["TP53"])):
+        assert "OVER (PARTITION BY o.locus_id, cf.symbol)" in sql and "AS vep_impact" in sql
+        assert "v.vep_impact AS picked_vep_impact" in sql

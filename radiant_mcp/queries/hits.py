@@ -29,6 +29,18 @@ def _interpretations(p: _sql.Params, tenant_db: str, seq_id: int) -> str:
     )
 
 
+_IMPACTS = ("HIGH", "MODERATE", "LOW", "MODIFIER")
+
+
+def _impact_on_gene(p: _sql.Params) -> str:
+    """The most severe impact of the variant on the gene, over the rows the query kept: a
+    window, so DISTINCT folds the per-transcript rows before the LIMIT counts them."""
+    rank = " ".join(f"WHEN {p(impact)} THEN {i}" for i, impact in enumerate(_IMPACTS[:-1]))
+    label = " ".join(f"WHEN {i} THEN {p(impact)}" for i, impact in enumerate(_IMPACTS[:-1]))
+    return (f"CASE MIN(CASE cf.vep_impact {rank} ELSE {len(_IMPACTS) - 1} END)"
+            f" OVER (PARTITION BY o.locus_id, cf.symbol) {label} ELSE {p(_IMPACTS[-1])} END")
+
+
 def _gene_join(p: _sql.Params) -> str:
     """One row per gene of each variant: its consequences on the transcripts of every
     gene it lies in, so a variant of two overlapping genes counts for both. A gene the
@@ -41,9 +53,10 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
     p = _sql.Params()
     sql = (
         "WITH snv AS ("
-        # vep_impact = the impact on this gene (one row per impact: the tool keeps the most
-        # severe); hgvsg / aa_change / picked_vep_impact describe the picked transcript.
-        " SELECT DISTINCT o.locus_id, o.zygosity, o.transmission_mode, cf.symbol, v.hgvsg, v.aa_change, cf.vep_impact,"
+        # vep_impact = the most severe impact on this gene; hgvsg / aa_change /
+        # picked_vep_impact describe the picked transcript.
+        " SELECT DISTINCT o.locus_id, o.zygosity, o.transmission_mode, cf.symbol, v.hgvsg, v.aa_change,"
+        f"  {_impact_on_gene(p)} AS vep_impact,"
         "  v.vep_impact AS picked_vep_impact,"
         "  v.gnomad_v3_af, v.clinvar_interpretation, o.exomiser_acmg_classification, v.chromosome, v.start,"
         f"  NOT {germline_qualifies(p)} AS low_quality, o.filter, o.gq"
@@ -157,7 +170,7 @@ def somatic_snv_query(tenant_db: str, key: dict, genes: list[str],
         loci = ", ".join(p(int(locus)) for locus in first_hit_loci)
         impact = f"({impact} OR o.locus_id IN ({loci}))"
     sql = (
-        "SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, cf.vep_impact,"
+        f"SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, {_impact_on_gene(p)} AS vep_impact,"
         " v.vep_impact AS picked_vep_impact, o.tumor_ad_ratio,"
         " o.tumor_zygosity"
         f" FROM {tenant_db}.somatic__snv__occurrence o"

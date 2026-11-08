@@ -202,8 +202,9 @@ def test_max_rows_reads_one_extra_row_and_flags_truncation(starrocks_server):
     result = starrocks.query(jwt("alice"), "SELECT patient_id FROM t", max_rows=3)
     assert result.rows == [("MRN-0",), ("MRN-1",), ("MRN-2",)]
     assert result.truncated
-    # One extra row fetched to flag the cut; the rest (at most one row with sql_select_limit) drained.
-    assert starrocks_server.connections[0].cursors[0].fetched == [4, "all"]
+    # One extra row fetched to flag the cut; the rest is never fetched into memory (an
+    # explicit LIMIT overrides sql_select_limit): nextset / close discard it.
+    assert starrocks_server.connections[0].cursors[0].fetched == [4]
 
 
 def test_a_statement_error_is_raised_and_the_connection_closed(starrocks_server):

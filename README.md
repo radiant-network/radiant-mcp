@@ -196,7 +196,7 @@ cache nothing, so StarRocks applies the caller's own grants on every call.
 
 | Tool | Description |
 |------|-------------|
-| `read_query` | Run one SQL statement; returns at most `STARROCKS_MAX_ROWS` rows, with `truncated` set when more exist |
+| `read_query` | Run a SQL query (send one SELECT; with several statements all run, the first result set is returned and a warning counts the others); returns at most `STARROCKS_MAX_ROWS` rows, with `truncated` set when more exist |
 | `table_overview` | Row count, columns and up to 3 sample rows of a `db.table` |
 | `describe_schema` | Curated description of the StarRocks tables of a topic (`germline_snv`, `somatic_snv`, `cnv`, `annotations`, `frequencies`, `clinical`): tables and portal clinical views to use, keys, partitions, stored enum values, join rules, example queries |
 
