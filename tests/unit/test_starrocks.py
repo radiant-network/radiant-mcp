@@ -154,6 +154,24 @@ def test_a_connection_error_keeps_the_host_out_of_the_message(monkeypatch):
     assert "starrocks.internal" not in str(exc.value) and "2003" in str(exc.value)
 
 
+def test_an_unknown_database_at_connect_is_the_callers_input(starrocks_server, monkeypatch):
+    # StarRocks 4.0.16 rejects an unknown default database at connect.
+    def unknown(**kwargs):
+        raise DatabaseError(msg="Getting analyzing error. Detail message: Unknown database 'nope_tenant'.",
+                            errno=5501, sqlstate="3F000")
+
+    monkeypatch.setattr(starrocks.mysql.connector, "connect", unknown)
+    error = call_as(monkeypatch, "bob", query.read_query, "SELECT 1", "nope_tenant")["error"]
+    assert error["code"] == "invalid_input" and "nope_tenant" in error["message"]
+
+
+def test_table_overview_reports_an_unknown_table_as_input(starrocks_server, monkeypatch):
+    starrocks_server.error = DatabaseError(msg="Getting analyzing error. Detail message: Unknown table 't.nope'.",
+                                           errno=5502, sqlstate="42602")
+    error = call_as(monkeypatch, "bob", query.table_overview, "t1_tenant.nope")["error"]
+    assert error["code"] == "invalid_input" and "Unknown table" in error["message"]
+
+
 def test_a_denied_login_says_so(monkeypatch):
     def deny(**kwargs):
         raise DatabaseError(msg="Access denied for user 'alice'", errno=1045, sqlstate="28000")

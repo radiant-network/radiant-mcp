@@ -163,7 +163,9 @@ def connect(token: str | None, database: str | None = None, max_rows: int | None
         )
     except MySQLError as exc:
         error = _error(exc)
-        if error.kind == "denied":
+        # StarRocks reports a denied login and an unknown database (5501) at connect:
+        # both are the caller's to fix, and their message names no host.
+        if error.kind in ("denied", "invalid"):
             raise error from exc
         # A connection error names the host, the port or the TLS failure: logged, not returned.
         logger.warning("StarRocks connection failed: %s", exc)

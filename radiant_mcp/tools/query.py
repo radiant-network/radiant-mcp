@@ -84,7 +84,13 @@ def _table_overview(token: str, table: str) -> ToolOutput:
     except starrocks.StarRocksError as exc:
         raise invalid(str(exc)) from exc
     full = f"`{starrocks.database_name(db)}`.`{starrocks.database_name(name)}`"
-    count = starrocks.query(token, f"SELECT COUNT(*) FROM {full}").rows[0][0]
+    try:
+        count = starrocks.query(token, f"SELECT COUNT(*) FROM {full}").rows[0][0]
+    except starrocks.StarRocksError as exc:
+        # An unknown table or database: the agent named it, so it is its to fix.
+        if exc.kind == "invalid":
+            raise invalid(f"StarRocks rejected the table: {exc}") from exc
+        raise
     columns = starrocks.query(token, f"DESCRIBE {full}")
     out = {
         "table": f"{db}.{name}",
