@@ -25,7 +25,8 @@ SOMATIC_SECOND_HIT_CNV_TYPES = ("LOSS", "CNLOH")
 
 PASS = "PASS"
 HET = "HET"
-# Calls with an alternate allele. A family member can also have WT rows.
+# Calls with an alternate allele. The ETL loads only rows with one (has_alt), so a
+# filter on them is a safeguard, not a semantic change.
 ALT_ZYGOSITIES = ("HET", "HOM", "HEM")
 # An SNV inside a heterozygous deletion keeps one allele: the caller reports it HOM (or HEM).
 HEMIZYGOUS_CALLS = ("HOM", "HEM")

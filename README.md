@@ -77,6 +77,13 @@ Every variable is validated at startup: a missing `KEYCLOAK_REALM_URL` or a malf
 > StarRocks with each caller's JWT, never a static credential. `STARROCKS_HOST`
 > and `STARROCKS_PORT` only tell it *where* to connect.
 
+> **Client timeout.** The timeouts above apply to one SQL statement or one API
+> request, not to a whole tool call: `cohort_carriers` runs 2 API calls and up to
+> 6 statements in sequence. Give the MCP client a timeout well above
+> `STARROCKS_QUERY_TIMEOUT` (e.g. `timeout: 180000` ms for the server in LibreChat's
+> `mcpServers`), or a slow call is cut client-side before StarRocks' own error
+> (which tells the agent to narrow the query) comes back.
+
 ## Authentication (OAuth 2.1 + Keycloak)
 
 Authentication is **mandatory**: the server requires `KEYCLOAK_REALM_URL` and refuses to boot without it. It supports two kinds of clients simultaneously:
