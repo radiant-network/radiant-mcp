@@ -126,6 +126,12 @@ sequenceDiagram
   models such as survival's `GroupSpec`). The tool function then checks the
   values that reach SQL: integers, gene symbols, HPO ids, enum values
   (`enums.canonical_values` maps them to their stored spelling).
+  A value fastmcp rejects (a `Literal` outside its list, a `GroupSpec` rule)
+  never reaches the tool: `results.ArgumentErrors`, a middleware that
+  `register_tools` installs, turns it into the envelope (`invalid_input`, one
+  `details.errors` entry per argument, `details.allowed` for a closed list).
+  `tests/unit/test_tool_calls.py` calls tools through a FastMCP `Client` to
+  check what clients get.
 - **Threads.** `radiant_python` and `mysql.connector` are synchronous, so the body
   runs on a worker thread. The JWT is read before the hop and passed down
   explicitly: `get_jwt_token()` returns nothing on the worker thread.

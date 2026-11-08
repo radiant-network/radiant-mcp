@@ -7,7 +7,7 @@ still boots as a StarRocks SQL server without it.
 """
 
 from ..portal_api import api_enabled
-from ..results import OUTPUT_SCHEMA
+from ..results import OUTPUT_SCHEMA, ArgumentErrors
 from .cases import get_case_context, list_tenants, search_cases
 from .charts import bar_chart, family_venn, lollipop, oncoprint, patient_timeline, survival_curve
 from .cohort import cohort_carriers, genotype_phenotype
@@ -55,4 +55,6 @@ def register_tools(mcp) -> list[str]:
     for tool in tools:
         # One result shape for every tool (results.ToolOutput), published as its output schema.
         mcp.tool(tool, output_schema=OUTPUT_SCHEMA)
+    # Arguments FastMCP rejects before a tool runs come back in the same envelope.
+    mcp.add_middleware(ArgumentErrors())
     return [tool.__name__ for tool in tools]

@@ -20,8 +20,10 @@ chart's PNG (``ok(..., image=png)``) as an image part, and ``isError`` on failur
 
 import json
 import logging
+import re
 from typing import Any, Literal
 
+from fastmcp.server.middleware import Middleware
 from fastmcp.tools import ToolResult
 from fastmcp.utilities.types import Image
 from mcp.types import TextContent
@@ -162,6 +164,50 @@ def failure(exc: Exception) -> ToolOutput:
     # hosts and URLs: log it, and give the agent the error type only.
     logger.exception("tool failed")
     return error("internal", f"Unexpected {type(exc).__name__} in the tool; the details are in the server logs.")
+
+
+def argument_error(exc: Any) -> ToolOutput:
+    """The ``invalid_input`` result of arguments FastMCP rejected before the tool ran.
+
+    ``exc`` is the pydantic ``ValidationError`` of the call. Each rejected argument
+    becomes one ``details.errors`` entry; a value outside a closed list also gives
+    ``details.allowed``, as the tools' own checks do. The input values are not
+    echoed back.
+    """
+    errors = []
+    allowed: list[str] = []
+    for err in exc.errors(include_url=False):
+        argument = ".".join(str(part) for part in err["loc"]) or "arguments"
+        entry: dict[str, Any] = {"argument": argument, "message": str(err["msg"]).removeprefix("Value error, ")}
+        if err["type"] == "literal_error":
+            entry["allowed"] = re.findall(r"'([^']*)'", str((err.get("ctx") or {}).get("expected", "")))
+            allowed = entry["allowed"]
+        errors.append(entry)
+    message = "Invalid argument(s): " + "; ".join(f"{e['argument']}: {e['message']}" for e in errors)
+    details: dict[str, Any] = {"errors": errors}
+    if len(errors) == 1 and allowed:
+        details["allowed"] = allowed
+    return ToolOutput(ok=False, error=ToolError(code="invalid_input", message=message, details=details))
+
+
+class ArgumentErrors(Middleware):
+    """Return rejected arguments as the result envelope instead of FastMCP's raw text.
+
+    FastMCP validates the arguments against the signature (``Literal`` values,
+    pydantic models such as survival's ``GroupSpec``) before the tool function
+    runs, and its error would carry no ``ok`` and no ``error.code``.
+    """
+
+    async def on_call_tool(self, context, call_next):
+        from fastmcp.exceptions import ValidationError as ArgumentValidationError
+        from pydantic import ValidationError as PydanticValidationError
+
+        try:
+            return await call_next(context)
+        except ArgumentValidationError as exc:
+            if not isinstance(exc.__cause__, PydanticValidationError):
+                raise
+            return respond(argument_error(exc.__cause__))
 
 
 def describe(exc: Exception) -> str:
