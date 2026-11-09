@@ -16,7 +16,7 @@ from ...queries.carriers import carrier_patients_query
 from ...queries.sequencing import genotyped_patients_query
 from ...results import ToolOutput, failure, invalid, not_found, ok, respond
 from ...services.cases import merge_criteria, search_criteria
-from ...services.genes import not_found_message, resolve_gene
+from ...services.genes import not_found_message, resolve_genes
 from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, no_clinical_data, unknown_filter_fields
 from ._common import DAYS_PER_YEAR
 
@@ -246,9 +246,11 @@ def _resolve_group(token: str, tenant: str, spec: GroupSpec, cohort: dict[str, d
 def _resolve_genes(api: RadiantApi, tenant: str, specs: list[GroupSpec]) -> list[GroupSpec]:
     """Carrier groups with their gene resolved, before any patient list is read."""
     out = []
+    # One portal call for the genes of every group.
+    genes = resolve_genes(api, tenant, [s.criteria.gene for s in specs if s.criteria is not None])
     for spec in specs:
         if spec.criteria is not None:
-            gene = resolve_gene(api, tenant, spec.criteria.gene)
+            gene = genes[spec.criteria.gene]
             if gene is None:
                 # not_found, like the other gene tools.
                 raise not_found(f"group {spec.label!r}: {not_found_message(spec.criteria.gene)}")

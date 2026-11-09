@@ -15,7 +15,7 @@ from ...enums import ENUMS, canonical_values
 from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.charts import ONCOPRINT_ROW_LIMIT, oncoprint_query
 from ...results import ToolOutput, Truncation, failure, not_found, ok, respond
-from ...services.genes import resolve_gene
+from ...services.genes import resolve_genes
 
 MAX_ONCOPRINT_GENES = 20
 MAX_ONCOPRINT_CASES = 100
@@ -25,8 +25,9 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
                max_gnomad_af: float | None, vep_impact: list[str]) -> ToolOutput:
     tenant_code = resolve_tenant(api, tenant)
     resolved, unknown = [], []
+    genes_found = resolve_genes(api, tenant_code, genes)
     for gene in genes:
-        found = resolve_gene(api, tenant_code, gene)
+        found = genes_found[gene]
         if found:
             resolved.append(_sql.symbol(found["symbol"]))
         else:

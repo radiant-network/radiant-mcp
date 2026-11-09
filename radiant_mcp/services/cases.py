@@ -8,6 +8,7 @@ identifier searches of ``search_cases`` and ``search_patients``.
 """
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from .. import sql as _sql
@@ -17,6 +18,9 @@ from ..portal_api import RadiantApi, resolve_tenant
 from ..portal_links import case_url, occurrence_url, patient_url, with_url
 from ..queries.sequencing import parts_query
 from ..results import describe
+
+# The task lookups (one per sequencing and data type) are independent: side by side.
+_TASK_WORKERS = 3
 
 
 def search_criteria(filters: dict) -> list:
@@ -127,19 +131,26 @@ def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) 
     # and by the StarRocks occurrence tables.
     occurrence_keys: list[dict] = []
     warnings: list[str] = []
-    for seq in case.get("sequencing_experiments", []):
+    sequencings = case.get("sequencing_experiments", [])
+    lookups = [(seq["seq_id"], data_type) for seq in sequencings if seq.get("has_variants") for data_type in data_types]
+
+    def _tasks(lookup: tuple[int, str]) -> tuple[list | None, str | None]:
+        seq_id, data_type = lookup
+        try:
+            return api.call("cases", "case_tasks_with_occurrences",
+                            tenant=tenant_code, case_id=case_id, seq_id=seq_id, data_type=data_type), None
+        except Exception as exc:  # noqa: BLE001 — surface, don't abort
+            return None, f"seq_id={seq_id} data_type={data_type}: {describe(exc)}"
+
+    with ThreadPoolExecutor(max_workers=_TASK_WORKERS) as pool:
+        found = dict(zip(lookups, pool.map(_tasks, lookups), strict=True))
+    for seq in sequencings:
         seq_tasks: list[dict] = []
         if seq.get("has_variants"):
             for data_type in data_types:
-                try:
-                    tasks = api.call(
-                        "cases", "case_tasks_with_occurrences",
-                        tenant=tenant_code, case_id=case_id, seq_id=seq["seq_id"], data_type=data_type,
-                    )
-                except Exception as exc:  # noqa: BLE001 — surface, don't abort
-                    warnings.append(
-                        f"seq_id={seq['seq_id']} data_type={data_type}: {describe(exc)}"
-                    )
+                tasks, warning = found[(seq["seq_id"], data_type)]
+                if warning:
+                    warnings.append(warning)
                     continue
                 for task in tasks or []:
                     entry = {

@@ -64,3 +64,14 @@ def test_an_expired_token_fails_gene_info_instead_of_warning_on_every_section(fa
     fake_sql.on("omim_gene_panel", _sql.SqlError("Authentication expired", "expired"))
     result = run(gene_info("SCN1A", tenant="demo"))
     assert result["ok"] is False and result["error"]["code"] == "auth_required"
+
+
+def test_genes_resolve_in_one_search_by_symbol_or_ensembl_id(fake_api):
+    from radiant_mcp.services.genes import resolve_genes
+
+    fake_api.on("genes", "gene_search", [{"symbol": "BRCA1", "ensembl_gene_id": "ENSG00000012048"},
+                                        {"symbol": "TP53", "ensembl_gene_id": "ENSG00000141510"}])
+    found = resolve_genes(fake_api, "demo", ["tp53", "ENSG00000012048", "P53"])
+    assert {name: g and g["symbol"] for name, g in found.items()} == {
+        "tp53": "TP53", "ENSG00000012048": "BRCA1", "P53": None}  # no alias: P53 is unknown
+    assert len([c for c in fake_api.calls if c[1] == "gene_search"]) == 1

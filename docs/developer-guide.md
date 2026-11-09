@@ -139,7 +139,8 @@ sequenceDiagram
   `MCP_MAX_CONCURRENT_CALLS` bodies at once, and a call that finds no free slot
   within `MCP_QUEUE_TIMEOUT` fails with `upstream` instead of waiting behind slow
   ones. The cap counts tool calls, not connections: `gene_info`, `variant_details`,
-  `get_patient_context` and the `cohort_carriers` summaries run up to 3 statements
+  `get_patient_context`, the task lookups of `case_context` and the `cohort_carriers`
+  summaries run up to 3 statements
   or portal requests side by side inside their slot, so 20 calls can hold up to
   60 StarRocks connections or portal requests at once.
 - **Partial failures.** A section that fails does not fail the tool: case
