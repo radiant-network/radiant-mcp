@@ -57,14 +57,14 @@ def _search_cases(
 
     tenant_code = resolve_tenant(api, tenant)
 
-    def _search(extra: dict) -> dict:
+    def _search(extra: dict, page_offset: int) -> dict:
         merged_filters = merge_criteria(filters, extra)
         if merged_filters is None:
             return {"count": 0, "list": []}
         body = ListBodyWithCriteria(
             search_criteria=search_criteria(merged_filters),
             limit=limit,
-            offset=offset,
+            offset=page_offset,
             sort=[SortBody(field=sort_by, order=sort_order)],
         )
         return api.call("cases", "search_cases", tenant=tenant_code, list_body_with_criteria=body) or {}
@@ -73,7 +73,7 @@ def _search_cases(
         return [with_url(c, case_url(tenant_code, c.get("case_id"))) for c in cases]
 
     if not query:
-        resp = _search({})
+        resp = _search({}, offset)
         cases = resp.get("list", [])
         count = resp.get("count", 0)
         more = count - offset - len(cases)
@@ -110,28 +110,28 @@ def _search_cases(
         else:
             by_field.setdefault("mrn", []).append(value)
 
-    # Merged on case_id: a case matched by two identifier types counts once.
+    # Merged on case_id: a case matched by two identifier types counts once. Pages of
+    # several searches cannot be merged, so `offset` does not apply.
     merged: dict[int, dict] = {}
-    truncated = False
+    totals = []
     for field, values in by_field.items():
-        resp = _search({field: values})
+        resp = _search({field: values}, 0)
         found = resp.get("list", [])
-        truncated = truncated or resp.get("count", 0) > offset + len(found)
+        totals.append(resp.get("count", 0))
         for c in found:
             merged.setdefault(c["case_id"], c)
 
-    return ok(
-        {
-            "tenant": tenant_code,
-            "query": query,
-            "autocomplete_matches": matches,
-            "count": len(merged),
-            "returned": min(len(merged), limit),
-            "cases": _linked(list(merged.values())[:limit]),
-        },
-        truncated=("More cases match than were returned: use a longer identifier prefix or add filters."
-                   if truncated or len(merged) > limit else None),
-    )
+    data: dict[str, Any] = {"tenant": tenant_code, "query": query, "autocomplete_matches": matches}
+    truncated = None
+    # A case can match several identifier types: past one page, the exact total is unknown.
+    if any(total > limit for total in totals) or len(merged) > limit:
+        data["count_at_least"] = max([len(merged), *totals])
+        truncated = "More cases match than were returned: use a longer identifier prefix or add filters."
+    else:
+        data["count"] = len(merged)
+    data["returned"] = min(len(merged), limit)
+    data["cases"] = _linked(list(merged.values())[:limit])
+    return ok(data, truncated=truncated)
 
 
 # -- tools -------------------------------------------------------------------
@@ -202,7 +202,8 @@ async def search_cases(
     "the case for patient MRN 12345").
 
     Returns ``count`` (total matches; with ``query``, the distinct cases
-    found; ``truncated`` is set when some were not returned), ``cases`` (one summary per case:
+    found, replaced by ``count_at_least``, a lower bound, when some were not
+    returned and ``truncated`` is set), ``cases`` (one summary per case:
     case_id, case_type, status, priority, panel, primary condition, project,
     proband identifiers, has_variants, ``portal_url``, ...) and, for a
     ``query``, the raw ``autocomplete_matches``.
@@ -227,7 +228,7 @@ async def search_cases(
         tenant: Tenant code. Optional — auto-resolved when the user belongs to
             a single tenant; otherwise the response lists the choices.
         limit: Max cases to return (1–100, default 20).
-        offset: Pagination offset (default 0).
+        offset: Pagination offset (default 0, ignored with ``query``).
         sort_by: Sort field (default ``updated_on``). Allowed: case_id,
             proband_id, submitter_proband_id, proband_first_name,
             proband_last_name, proband_jhn, proband_life_status_code,

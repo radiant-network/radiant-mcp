@@ -212,6 +212,9 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
         return {"patient_id": patient_id}
 
     germline: dict[str, list[dict]] = {}
+    # (gene, locus) -> index in germline[gene]: a patient with two germline sequencings
+    # (WES and WGS) has the same variant twice; one entry, a qualifying call first.
+    seen: dict[tuple[str, str], int] = {}
     for key in germline_keys:
         for row in _capped(token, germline_plp_query(tenant_db, key), f"seq_id={key['seq_id']} germline P/LP",
                            truncated):
@@ -221,7 +224,13 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
             with_url(row, occurrence_url(tenant, key["case_id"], key["seq_id"], "germline_snv",
                                          task_id=key["task_id"], variant_id=str(row["locus_id"])))
             with_url(row, variant_url(tenant, str(row["locus_id"])), key="variant_portal_url")
-            germline.setdefault(row["gene"], []).append(row)
+            gene_rows = germline.setdefault(row["gene"], [])
+            index = seen.get((row["gene"], str(row["locus_id"])))
+            if index is None:
+                seen[(row["gene"], str(row["locus_id"]))] = len(gene_rows)
+                gene_rows.append(row)
+            elif gene_rows[index]["low_quality"] and not row["low_quality"]:
+                gene_rows[index] = row
 
     genes = sorted(g for g in germline if g)
     hits: dict[str, dict[str, list]] = {g: {"somatic_snv": [], "somatic_cnv": []} for g in genes}

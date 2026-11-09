@@ -44,7 +44,12 @@ def _serialized(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         with _RENDER_LOCK:
-            return fn(*args, **kwargs)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                # A renderer that fails before to_png leaves its figure in pyplot's registry;
+                # renders are serialized, so every figure still open is this one's.
+                plt.close("all")
     return wrapper
 
 

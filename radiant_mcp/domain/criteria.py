@@ -40,8 +40,10 @@ class Criteria:
                 out[name] = list(getattr(self, name))
         if self.max_gnomad_af is not None:
             out["max_gnomad_af"] = f"< {self.max_gnomad_af:g} or absent from gnomAD"
-        if not self.is_snv or self.is_somatic:
+        if not self.is_snv:
             out["filter"] = _rules.PASS
+        elif self.is_somatic:
+            out["quality"] = _rules.SOMATIC_QUALITY_DEFINITION
         else:
             out["quality"] = _rules.GERMLINE_QUALITY_DEFINITION
         if self.is_snv:

@@ -102,10 +102,6 @@ def default_database() -> str | None:
     return get_settings().starrocks_db
 
 
-def query_timeout() -> int:
-    return get_settings().starrocks_query_timeout
-
-
 def database_name(value: str) -> str:
     """A database or table name that is safe to write into a statement."""
     if not isinstance(value, str) or not _DB_NAME.match(value):
