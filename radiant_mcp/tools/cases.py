@@ -10,7 +10,7 @@ from ..api_fields import CASE_SORT_FIELDS as CASE_SEARCH_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import case_url, with_url
 from ..results import ToolOutput, error, invalid, ok, respond
-from ..services.cases import case_context, merge_criteria, search_criteria
+from ..services.cases import case_context, merge_criteria, merge_searches, search_criteria
 
 # Autocomplete match types that are integer ids AND directly filterable fields.
 _AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
@@ -110,27 +110,11 @@ def _search_cases(
         else:
             by_field.setdefault("mrn", []).append(value)
 
-    # Merged on case_id: a case matched by two identifier types counts once. Pages of
-    # several searches cannot be merged, so `offset` does not apply.
-    merged: dict[int, dict] = {}
-    totals = []
-    for field, values in by_field.items():
-        resp = _search({field: values}, 0)
-        found = resp.get("list", [])
-        totals.append(resp.get("count", 0))
-        for c in found:
-            merged.setdefault(c["case_id"], c)
-
-    data: dict[str, Any] = {"tenant": tenant_code, "query": query, "autocomplete_matches": matches}
-    truncated = None
-    # A case can match several identifier types: past one page, the exact total is unknown.
-    if any(total > limit for total in totals) or len(merged) > limit:
-        data["count_at_least"] = max([len(merged), *totals])
-        truncated = "More cases match than were returned: use a longer identifier prefix or add filters."
-    else:
-        data["count"] = len(merged)
-    data["returned"] = min(len(merged), limit)
-    data["cases"] = _linked(list(merged.values())[:limit])
+    # Merged on case_id: a case matched by two identifier types counts once.
+    cases, counts, cut = merge_searches(by_field, lambda extra: _search(extra, 0), "case_id", limit)
+    data: dict[str, Any] = {"tenant": tenant_code, "query": query, "autocomplete_matches": matches, **counts,
+                            "returned": len(cases), "cases": _linked(cases)}
+    truncated = "More cases match than were returned: use a longer identifier prefix or add filters." if cut else None
     return ok(data, truncated=truncated)
 
 

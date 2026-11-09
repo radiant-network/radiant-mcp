@@ -41,7 +41,7 @@ def _gene_join(p: _sql.Params) -> str:
     gene it lies in, so a variant of two overlapping genes counts for both. A gene the
     variant is only near (upstream, downstream) does not count."""
     return (f" JOIN {_sql.shared_db()}.snv__consequence_filter cf ON cf.locus_id = o.locus_id"
-            f" AND cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})")
+            f" AND cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)}) AND cf.symbol IS NOT NULL")
 
 
 def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _sql.Params]:

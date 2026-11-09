@@ -582,14 +582,16 @@ def test_survival_resolves_genes_before_reading_patients(fake_api, run):
     fake_api.on("genes", "gene_search", [])
     result = run(survival_curve(groups=[{"label": "X", "carriers": {"gene": "NOPE1"}}], others_label="Rest",
                                 tenant="demo"))
-    assert "not found" in result["error"]["message"] and _searches(fake_api) == []
+    # not_found, like cohort_carriers, lollipop and gene_info.
+    assert result["error"]["code"] == "not_found" and "not found" in result["error"]["message"]
+    assert _searches(fake_api) == []
 
 
 def test_survival_reports_gene_search_errors_as_errors(fake_api, run):
     fake_api.on("genes", "gene_search", api_exception(503))
     result = run(survival_curve(groups=[{"label": "X", "carriers": {"gene": "TP53"}}], others_label="Rest",
                                 tenant="demo"))
-    assert "clinical_data_available" not in result and "503" in result["error"]["message"]
+    assert result["ok"] is False and "503" in result["error"]["message"]
 
 
 def test_survival_combines_cohort_and_group_filters_in_one_search(fake_api, run):

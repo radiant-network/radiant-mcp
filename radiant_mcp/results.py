@@ -140,6 +140,8 @@ def failure(exc: Exception) -> ToolOutput:
         logger.debug("StarRocks error message: %s", exc)
         if exc.kind == "denied":
             return error("forbidden", f"StarRocks denied access: {exc}")
+        if exc.kind == "expired":
+            return error("auth_required", str(exc))
         return error("upstream", f"StarRocks error: {exc}")
     if isinstance(exc, ApiException):
         details: dict[str, Any] = {"status": exc.status}
@@ -213,8 +215,24 @@ class ArgumentErrors(Middleware):
 
 
 def describe(exc: Exception) -> str:
-    """One line for a warning about a lookup that failed while the rest of the tool went on."""
+    """One line for a warning about a lookup that failed while the rest of the tool went on.
+
+    An expired or refused token is not a partial failure: every later lookup fails the same
+    way, and the tool would answer ok with empty sections (second_hit: no sequencing, so "no
+    second hit"). It is raised again, so the whole call fails with ``auth_required``.
+    """
+    if _is_auth_failure(exc):
+        raise exc
     return failure(exc).error.message
+
+
+def _is_auth_failure(exc: Exception) -> bool:
+    from radiant_python.exceptions import ApiException
+
+    from .sql import SqlError
+
+    return ((isinstance(exc, SqlError) and exc.kind == "expired")
+            or (isinstance(exc, ApiException) and exc.status == 401))
 
 
 def respond(output: ToolOutput) -> ToolResult:

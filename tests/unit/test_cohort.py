@@ -75,9 +75,13 @@ def test_carriers_unknown_gene(fake_api, fake_sql, run):
 
 def test_carriers_report_starrocks_errors(fake_api, fake_sql, run):
     echo_gene_search(fake_api)
-    fake_sql.on("COUNT(DISTINCT case_id)", _sql.SqlError("Access denied"))
+    fake_sql.on("COUNT(DISTINCT case_id)", _sql.SqlError("Access denied", "denied", 1227))
     assert run(cohort_carriers("SCN1A", tenant="demo"))["error"] == {
-        "code": "upstream", "message": "StarRocks error: Access denied"}
+        "code": "forbidden", "message": "StarRocks denied access: Access denied"}
+    fake_sql.on("COUNT(DISTINCT case_id)", _sql.SqlError("Query exceeded time limit"))
+    fake_sql.rules.reverse()
+    assert run(cohort_carriers("SCN1A", tenant="demo"))["error"] == {
+        "code": "upstream", "message": "StarRocks error: Query exceeded time limit"}
 
 
 def test_genotype_phenotype(fake_api, fake_sql, run):
@@ -230,3 +234,11 @@ def test_somatic_carriers_follow_the_platform_somatic_rule():
     germline_sql, _ = carrier_queries.totals_query(
         "demo", build_criteria("germline_snv", "TP53", None, None, None, None, None))
     assert "tumor_ad_alt" not in germline_sql
+
+
+def test_the_oncoprint_counts_the_same_cnv_types_as_the_carriers():
+    # The ETL can write UNKNOWN for a germline CNV: neither tool counts it.
+    sql, params = oncoprint_query("demo", "germline_cnv", ["TP53"], None, [])
+    match = re.search(r"c\.type IN \(((?:%\(p\d+\)s(?:, )?)+)\)", sql)
+    assert match and [params.values[n] for n in re.findall(r"%\((p\d+)\)s", match.group(1))] == ["GAIN", "LOSS",
+                                                                                                 "CNLOH", "GAINLOH"]

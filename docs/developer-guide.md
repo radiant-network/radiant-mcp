@@ -145,6 +145,9 @@ sequenceDiagram
 - **Partial failures.** A section that fails does not fail the tool: case
   context data types, patient page sections, variant sections and gene
   annotations are each caught and reported in `warnings` (`results.describe`).
+  An expired token or a portal 401 is the exception: `describe` raises it again,
+  so the call fails with `auth_required` instead of answering `ok` with empty
+  sections.
 - **Charts.** The body draws with `charts`, which renders one figure at a time
   (`_RENDER_LOCK`), and returns `ok(data, image=png)`.
 
@@ -179,8 +182,9 @@ flowchart LR
 
 - `ToolFailure`: the code it carries, such as `not_found`, `ambiguous_tenant`
   (with `details.tenants`) or `unavailable` (a tenant without clinical data).
-- `starrocks.StarRocksError`: `forbidden` when StarRocks denies access, otherwise
-  `upstream`, with the StarRocks message. `read_query` turns a statement StarRocks
+- `starrocks.StarRocksError`: `forbidden` when StarRocks denies access,
+  `auth_required` when the caller's token expired during the call (`starrocks.connect`
+  checks `exp` before each connection), otherwise `upstream`, with the StarRocks message. `read_query` turns a statement StarRocks
   cannot parse or analyse (`kind == "invalid"`) into `invalid_input`, and so does
   `table_overview` for an unknown table: the agent wrote it and must fix it, not
   retry it. An unknown database is reported at connect and is `invalid` too.

@@ -16,7 +16,7 @@ from ..api_fields import PATIENT_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import patient_url, with_url
 from ..results import ToolOutput, describe, error, invalid, ok, respond
-from ..services.cases import merge_criteria, search_criteria
+from ..services.cases import merge_criteria, merge_searches, search_criteria
 from ..services.patients import (
     PATIENT_KEY,
     PATIENT_SEARCH_FILTER_FIELDS,
@@ -88,22 +88,10 @@ def _search_patients(
             for m in matches:
                 if m.get("type") in _AUTOCOMPLETE_FIELDS:
                     by_field.setdefault(m["type"], []).append(m.get("value"))
-            merged: dict[str, dict] = {}
-            totals = []
-            for field, values in by_field.items():
-                resp = _search({field: values}, 0)
-                found = resp.get("list", [])
-                totals.append(resp.get("count", 0))
-                for p in found:
-                    merged.setdefault(p["patient_key"], p)
-            patients = list(merged.values())[:limit]
-            result: dict[str, Any] = {"tenant": tenant_code, "query": query}
-            # A patient can match several identifier types: past one page, the exact total is unknown.
-            if any(total > limit for total in totals) or len(merged) > limit:
-                result["count_at_least"] = max([len(merged), *totals])
+            patients, counts, more = merge_searches(by_field, lambda extra: _search(extra, 0), "patient_key", limit)
+            result: dict[str, Any] = {"tenant": tenant_code, "query": query, **counts}
+            if more:
                 cut = "More patients match than were returned: use a longer identifier prefix or add filters."
-            else:
-                result["count"] = len(merged)
         else:
             resp = _search({}, offset)
             patients = resp.get("list", [])

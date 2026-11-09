@@ -1,4 +1,3 @@
-import re
 from decimal import Decimal
 
 import pytest
@@ -63,10 +62,6 @@ def test_run_binds_params_and_returns_rows_as_dicts(monkeypatch):
     p = _sql.Params()
     assert _sql.run("jwt", f"SELECT {p('a')}", p) == [{"gene": "SCN1A", "n": 2.0}]
     assert calls == [("jwt", "SELECT %(p0)s", {"p0": "a"})]
-
-
-def placeholders_match(sql: str, values: dict) -> bool:
-    return set(re.findall(r"%\((p\d+)\)s", sql)) == set(values)
 
 
 def test_cut_tells_a_cut_list_from_a_complete_one():

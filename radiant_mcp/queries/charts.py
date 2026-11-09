@@ -5,6 +5,7 @@ from .. import sql as _sql
 from ..domain import data_types
 from ..domain import rules as _rules
 from ..domain.rules import ALT_ZYGOSITIES
+from ..enums import ENUMS
 from .impact import most_severe_in
 from .quality import germline_qualifies, somatic_qualifies
 from .sequencing import latest_task_join
@@ -85,6 +86,9 @@ def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af
     return (
         f"WITH x AS (SELECT c.seq_id, c.task_id, g.symbol AS gene, c.type AS kind"
         f" FROM {tenant_db}.{table} c, unnest(c.symbol) AS g(symbol)"
-        f" WHERE g.symbol IN ({p.list(genes)}) AND c.filter = {p(_rules.PASS)})"
+        # The documented types only, as the carrier tools: the ETL can write UNKNOWN for a
+        # germline call that is neither <DEL> nor <DUP>, which no chart colour stands for.
+        f" WHERE g.symbol IN ({p.list(genes)}) AND c.filter = {p(_rules.PASS)}"
+        f" AND c.type IN ({p.list(ENUMS['cnv_type'])}))"
         f" SELECT DISTINCT s.case_id, x.gene, x.kind FROM x {sequencing}{tail}"
     ), p
