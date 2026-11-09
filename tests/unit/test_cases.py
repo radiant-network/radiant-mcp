@@ -1,4 +1,4 @@
-from conftest import PORTAL, bound_value
+from conftest import PORTAL, api_exception, bound_value
 
 from radiant_mcp.services import cases as case_service
 from radiant_mcp.tools.cases import get_case_context, search_cases
@@ -143,3 +143,31 @@ def test_a_family_case_asks_for_the_germline_data_types_only(fake_api, run, monk
     run(get_case_context(8, tenant="radiant"))
     asked = sorted(kw["data_type"] for _, op, kw in fake_api.calls if op == "case_tasks_with_occurrences")
     assert asked == ["germline_cnv", "germline_snv"]
+
+
+def test_the_task_lookups_run_side_by_side_and_keep_their_order(fake_api, run, monkeypatch):
+    import threading
+    import time
+
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({}, None))
+    fake_api.on("cases", "case_entity", {"case_id": 8, "case_type": "germline", "members": [],
+                                         "sequencing_experiments": [{"seq_id": s, "has_variants": True}
+                                                                    for s in (21, 22, 23)]})
+    threads = set()
+
+    def tasks(seq_id, data_type, **_):
+        threads.add(threading.get_ident())
+        time.sleep(0.05)
+        if (seq_id, data_type) == (22, "germline_cnv"):
+            raise api_exception(500)
+        return [{"id": seq_id * 10 + (data_type == "germline_cnv")}]
+
+    fake_api.on("cases", "case_tasks_with_occurrences", tasks)
+    result = run(get_case_context(8, tenant="radiant"))
+    keys = [(k["seq_id"], k["data_type"], k["task_id"]) for k in result["data"]["occurrence_keys"]]
+    # Sequencing order, then data type order, whatever order the lookups finished in.
+    assert keys == [(21, "germline_snv", 210), (21, "germline_cnv", 211), (22, "germline_snv", 220),
+                    (23, "germline_snv", 230), (23, "germline_cnv", 231)]
+    assert [w for w in result["warnings"] if "data_type=" in w] == [
+        "seq_id=22 data_type=germline_cnv: Radiant API error 500: error"]
+    assert len(threads) > 1

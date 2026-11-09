@@ -351,6 +351,9 @@ def test_oncoprint(fake_api, fake_sql, run):
         assert bound_value(sql, values, "s.tenant_code = ") == "demo"
         assert bound_value(sql, values, "s.family_role = ") == "proband"
     assert any("polymorphisms" in w for w in result["warnings"]) and "proband" in data["germline"]
+    # Every gene in one portal search, not one call per gene.
+    [(_, _, kwargs)] = [c for c in fake_api.calls if c[1] == "gene_search"]
+    assert kwargs["gene_search_body"].inputs == ["scn1a", "brca1"]
 
 
 def test_oncoprint_keeps_parents_out_of_germline_cases_only(fake_api, fake_sql, run):
@@ -368,11 +371,12 @@ def test_oncoprint_counts_every_altered_case_and_flags_a_cut(fake_api, fake_sql,
     # The package re-exports the oncoprint tool under the module's name.
     oncoprint_module = importlib.import_module("radiant_mcp.tools.charts.oncoprint")
     monkeypatch.setattr(oncoprint_module, "ONCOPRINT_ROW_LIMIT", 150)
-    fake_api.on("genes", "gene_search", lambda gene_search_body, **_: [{"symbol": "TP53"}])
+    # The symbol and its Ensembl id resolve to one gene: one row.
+    fake_api.on("genes", "gene_search", [{"symbol": "TP53", "ensembl_gene_id": "ENSG00000141510"}])
     fake_sql.on("germline__snv__occurrence", [
         {"case_id": i, "gene": "TP53", "kind": "missense_variant"} for i in range(1, 152)
     ])
-    result = run(oncoprint(["TP53", "P53"], max_gnomad_af=0.01, tenant="demo"))
+    result = run(oncoprint(["TP53", "ENSG00000141510"], max_gnomad_af=0.01, tenant="demo"))
     data, _ = _parts(result)
     assert data["genes"] == ["TP53"]
     # Case 150, the last one read before the cut, may be partial: it is dropped too.
