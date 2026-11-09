@@ -257,8 +257,11 @@ def test_a_token_about_to_expire_counts_as_expired(starrocks_server):
     import time
 
     with pytest.raises(starrocks.StarRocksError) as exc:
-        starrocks.query(jwt("bob", exp=int(time.time()) + 5), "SELECT 1")
+        starrocks.query(jwt("bob", exp=int(time.time()) + 2), "SELECT 1")
     assert exc.value.kind == "expired" and starrocks_server.connections == []
+    # A token with a minute left still works: the margin only covers the connect.
+    starrocks.query(jwt("bob", exp=int(time.time()) + 60), "SELECT 1")
+    assert len(starrocks_server.connections) == 1
 
 
 @pytest.mark.parametrize("errno, sqlstate, msg, code", [

@@ -45,8 +45,10 @@ logger = logging.getLogger(__name__)
 # timeout error normally arrives first.
 _READ_TIMEOUT_MARGIN = 5
 # A token this close to its exp counts as expired: StarRocks validates it again with its own
-# clock, and would deny a login that lands just after exp as a missing grant.
-_EXPIRY_MARGIN = 30
+# clock, and would deny a login that lands just after exp as a missing grant. exp is checked
+# right before each connection, so the margin only covers the connect and a little clock
+# skew; a larger one would turn away tokens that still work (10% of a 300 s token at 30 s).
+_EXPIRY_MARGIN = 5
 
 _DB_NAME = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 

@@ -49,6 +49,8 @@ def _queries():
     yield "hits.germline_keys", hits.germline_keys_query(SHARED_DB, TENANT, 42)
     yield "hits.germline_plp", hits.germline_plp_query(TENANT_SQL_DB, SNV_KEY)
     yield "hits.somatic_snv", hits.somatic_snv_query(TENANT_SQL_DB, SNV_KEY, GENES)
+    # The branch that also keeps the germline first-hit loci, whatever their impact.
+    yield "hits.somatic_snv[first hits]", hits.somatic_snv_query(TENANT_SQL_DB, SNV_KEY, GENES, ["3", "7"])
     yield "hits.somatic_cnv", hits.somatic_cnv_query(TENANT_SQL_DB, CNV_KEY, GENES)
     for name, query in genes.gene_queries("TP53", "ENSG00000141510", TENANT).items():
         yield f"genes.{name}", query

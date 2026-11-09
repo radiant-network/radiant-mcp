@@ -195,7 +195,9 @@ flowchart LR
   `auth_required`, 403 `forbidden` and 404 `not_found`; any other status gives
   `upstream`. `details` keeps the `status`, the `correlation_id` and, for a 4xx,
   the response `body`. A 5xx body is logged, not returned: it can carry the
-  portal's internals.
+  portal's internals. Status 0 is the generated client's own error: an
+  `SSLError` reason (a TLS failure) gives `upstream`, logged without its text;
+  any other (the client could not build the request) gives `internal`.
 - Anything else: `internal`. The exception is logged with its traceback, and the
   agent gets only its type, since the message can name internal hosts.
 

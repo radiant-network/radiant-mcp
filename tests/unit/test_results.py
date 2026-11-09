@@ -110,3 +110,10 @@ def test_a_tls_error_to_the_portal_is_logged_not_returned(caplog):
     error = failure(ApiException(status=0, reason="SSLError\nHTTPSConnectionPool(host='portal.internal')")).error
     assert error.code == "upstream" and "portal.internal" not in error.message
     assert "portal.internal" in caplog.text
+
+
+def test_a_client_side_status_0_error_is_internal_not_a_tls_retry(caplog):
+    from radiant_python.exceptions import ApiException
+
+    error = failure(ApiException(status=0, reason="Cannot prepare a request message for provided arguments.")).error
+    assert error.code == "internal" and "TLS" not in error.message

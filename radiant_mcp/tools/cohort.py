@@ -54,9 +54,9 @@ def _link(tenant: str, criteria: Criteria, row: dict) -> str | None:
         # Tumor-normal analyses only (latest_tasks), so the variants section is known.
         return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "somatic_snv_tn",
                               task_id=row.get("task_id"), variant_id=str(row.get("first_variant_id")))
-    # Somatic CNV: the portal's somatic variants tab has no CNV view yet (only the SNV
-    # sub-tabs), so a deep link would land on the SNV list: open the variants tab.
-    return case_url(tenant, row.get("case_id"), tab="variants")
+    # Somatic CNV: the same cnv-to sub-tab as every other tool (portal_links); the portal
+    # does not offer it yet and opens its first SNV sub-tab meanwhile.
+    return occurrence_url(tenant, row.get("case_id"), row.get("seq_id"), "somatic_cnv", task_id=row.get("task_id"))
 
 
 def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: str | None, limit: int) -> ToolOutput:
