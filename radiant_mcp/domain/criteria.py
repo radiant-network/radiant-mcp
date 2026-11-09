@@ -51,6 +51,10 @@ class Criteria:
                                  "other than upstream, downstream or intergenic (a variant only near "
                                  "the gene does not count); a vep_impact filter keeps a variant by "
                                  "its most severe impact on that gene")
+            if self.clinvar:
+                out["gene_match"] += ("; a clinvar filter counts a variant for the gene only when the gene is its "
+                                      "picked gene or its impact there is at least LOW (a classification "
+                                      "belongs to the variant, not to an overlapping gene)")
         out["reruns"] = "the latest imported task of each sequencing in each case"
         if self.data_type == "somatic_snv_tn":
             out["analyses"] = ("tumor-normal only: tumor-only analyses keep the germline variants and are "

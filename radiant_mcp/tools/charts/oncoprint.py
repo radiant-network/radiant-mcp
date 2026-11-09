@@ -46,6 +46,10 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
             ONCOPRINT_ROW_LIMIT)
         if cut:
             truncated.append(data_type)
+            # Rows come by case: the cut can fall inside the last case read, which would show
+            # with only some of its genes. Drop it, so every case shown is complete.
+            last = rows[-1]["case_id"] if rows else None
+            rows = [row for row in rows if row["case_id"] != last]
         for row in rows:
             kind = consequence_class(row["kind"].split(",")) if _data_types.is_snv(data_type) else row["kind"]
             cells.setdefault((row["gene"], f"case {row['case_id']}"), set()).add(kind)

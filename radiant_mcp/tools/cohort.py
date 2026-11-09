@@ -66,7 +66,8 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
     # One row past `limit` tells a cut list from a complete one of exactly `limit` rows.
     rows, cut = _sql.cut(_sql.run(token, *carriers_query(tenant_code, criteria, limit + 1)), limit)
     for row in rows:
-        row["variants"] = _sql.as_list(row.get("variants"))
+        if "cnv_types" in row:
+            row["cnv_types"] = _sql.as_list(row["cnv_types"])
         with_url(row, _link(tenant_code, criteria, row))
         row.pop("first_variant_id", None)
         carriers.append(row)
@@ -146,8 +147,9 @@ async def cohort_carriers(
     proband carries), ``cases_any_member`` (cases where any sequenced member
     carries, the proband or only a relative), ``patients`` (every carrier,
     relatives included) and ``variants``; ``carriers`` (one row per carrier
-    sequencing: case, patient, family role, affected status, strategy, the
-    matching variants and a ``portal_url``, most variants first); ``summary``
+    sequencing: case, patient, family role, affected status, strategy,
+    ``variant_count``, ``cnv_types`` for CNVs, and a ``portal_url`` that opens
+    the carrier's first variant; most variants first); ``summary``
     (counts by consequence and variant class for SNVs, by type for CNVs, by
     family role for germline; a variant counts under the consequences of its
     most severe impact on the gene); and ``criteria`` (the filters actually applied:

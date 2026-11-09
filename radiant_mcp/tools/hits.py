@@ -45,7 +45,9 @@ _SOMATIC_QUALITY_RULE = (f"In the tumor lists, `low_quality` marks a call outsid
 # How an SNV is assigned to a gene (queries/hits.py), stated in every result.
 _GENE_RULE = ("An SNV is in a gene when it has a consequence on one of its transcripts other than upstream, "
               "downstream or intergenic; `vep_impact` is its most severe impact on that gene, while `aa_change` "
-              "and `picked_vep_impact` describe the picked transcript, which can be another gene's.")
+              "and `picked_vep_impact` describe the picked transcript, which can be another gene's. A P/LP "
+              "classification counts for a gene only when it is the picked gene or the variant's impact there is "
+              "at least LOW.")
 
 
 _NOT_FIRST_HIT = object()

@@ -33,9 +33,8 @@ def test_carriers(fake_api, fake_sql, run):
     fake_sql.on("cases_any_member", [{"cases": 2, "cases_any_member": 3, "patients": 4, "variants": 3}])
     fake_sql.on("GROUP BY family_role", [{"family_role": "proband", "cases": 2, "patients": 2},
                                          {"family_role": "mother", "cases": 2, "patients": 2}])
-    fake_sql.on("array_agg", [{
-        "case_id": 1, "patient_id": 100, "seq_id": 10, "task_id": 20, "variant_count": 2,
-        "variants": '["chr2:g.1A>T", "chr2:g.2C>G"]', "first_variant_id": 1001,
+    fake_sql.on("variant_count", [{
+        "case_id": 1, "patient_id": 100, "seq_id": 10, "task_id": 20, "variant_count": 2, "first_variant_id": 1001,
     }])
     fake_sql.on("SELECT cf.consequence", [{"consequence": "stop_gained", "variants": 1, "patients": 1}])
 
@@ -48,7 +47,7 @@ def test_carriers(fake_api, fake_sql, run):
     totals_sql, totals_values = next(q for q in fake_sql.queries if "cases_any_member" in q[0])
     assert bound_value(totals_sql, totals_values, "WHEN family_role = ") == "proband"
     [carrier] = result["data"]["carriers"]
-    assert carrier["variants"] == ["chr2:g.1A>T", "chr2:g.2C>G"] and "first_variant_id" not in carrier
+    assert carrier["variant_count"] == 2 and "variants" not in carrier and "first_variant_id" not in carrier
     assert carrier["portal_url"].endswith("seq_id=10&task_id=20&variant_section=snv&selectedVariant=1001")
     assert result["data"]["summary"]["by_consequence"][0]["consequence"] == "stop_gained"
     assert result["data"]["criteria"] == {
@@ -164,10 +163,10 @@ def test_oncoprint_uses_the_same_gene_membership_as_the_carriers():
 def test_a_complete_list_of_exactly_limit_rows_is_not_cut(fake_api, fake_sql, run):
     echo_gene_search(fake_api)
     fake_sql.on("cases_any_member", [{"cases": 2, "cases_any_member": 2, "patients": 2, "variants": 2}])
-    fake_sql.on("array_agg", [{"case_id": i, "patient_id": i, "seq_id": i, "task_id": 1, "variants": "[]",
+    fake_sql.on("variant_count", [{"case_id": i, "patient_id": i, "seq_id": i, "task_id": 1,
                                "first_variant_id": 1} for i in range(2)])
     assert run(cohort_carriers("SCN1A", limit=2, tenant="demo")).get("truncated") is None
-    fake_sql.on("array_agg", [{"case_id": i, "patient_id": i, "seq_id": i, "task_id": 1, "variants": "[]",
+    fake_sql.on("variant_count", [{"case_id": i, "patient_id": i, "seq_id": i, "task_id": 1,
                                "first_variant_id": 1} for i in range(3)])
     fake_sql.rules.reverse()
     result = run(cohort_carriers("SCN1A", limit=2, tenant="demo"))
@@ -242,3 +241,26 @@ def test_the_oncoprint_counts_the_same_cnv_types_as_the_carriers():
     match = re.search(r"c\.type IN \(((?:%\(p\d+\)s(?:, )?)+)\)", sql)
     assert match and [params.values[n] for n in re.findall(r"%\((p\d+)\)s", match.group(1))] == ["GAIN", "LOSS",
                                                                                                  "CNLOH", "GAINLOH"]
+
+
+def test_a_clinvar_filter_counts_for_the_picked_gene_or_where_the_variant_has_an_effect():
+    # A variant pathogenic for gene A and only intronic in B is not a pathogenic carrier of B.
+    criteria = build_criteria("germline_snv", "B", None, ["Pathogenic"], None, None, None)
+    sql, params = carrier_queries.totals_query("demo", criteria)
+    assert bound_value(sql, params.values, "sv.symbol = ") == "B"
+    match = re.search(r"g\.impact_rank IN \(((?:%\(p\d+\)s(?:, )?)+)\)", sql)
+    assert match and [params.values[n] for n in re.findall(r"%\((p\d+)\)s", match.group(1))] == [0, 1, 2]
+    assert "picked gene or its impact there is at least LOW" in criteria.describe()["gene_match"]
+    no_clinvar, _ = carrier_queries.totals_query(
+        "demo", build_criteria("germline_snv", "B", None, None, None, None, None))
+    assert "sv.symbol" not in no_clinvar
+
+
+def test_a_carrier_row_lists_cnv_types_but_not_snvs():
+    # Without filters a WGS genome has thousands of calls in a large gene: never listed per carrier.
+    snv_sql, _ = carrier_queries.carriers_query(
+        "demo", build_criteria("germline_snv", "DMD", None, None, None, None, None), 51)
+    assert "array_agg" not in snv_sql and "hgvsg" not in snv_sql and "variant_count" in snv_sql
+    cnv_sql, _ = carrier_queries.carriers_query(
+        "demo", build_criteria("germline_cnv", "DMD", None, None, None, None, None), 51)
+    assert "array_agg(DISTINCT car.type) AS cnv_types" in cnv_sql

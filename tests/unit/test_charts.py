@@ -375,9 +375,23 @@ def test_oncoprint_counts_every_altered_case_and_flags_a_cut(fake_api, fake_sql,
     result = run(oncoprint(["TP53", "P53"], max_gnomad_af=0.01, tenant="demo"))
     data, _ = _parts(result)
     assert data["genes"] == ["TP53"]
-    assert data["altered_cases"] == 150 and data["cases_shown"] == 100
-    assert data["altered_cases_per_gene"] == {"TP53": 150}
+    # Case 150, the last one read before the cut, may be partial: it is dropped too.
+    assert data["altered_cases"] == 149 and data["cases_shown"] == 100
+    assert data["altered_cases_per_gene"] == {"TP53": 149}
     assert result["truncated"]["lists"] == ["germline_snv"] and result["warnings"] == []
+
+
+def test_a_cut_oncoprint_shows_no_case_with_only_some_of_its_genes(fake_api, fake_sql, run, monkeypatch):
+    oncoprint_module = importlib.import_module("radiant_mcp.tools.charts.oncoprint")
+    monkeypatch.setattr(oncoprint_module, "ONCOPRINT_ROW_LIMIT", 3)
+    fake_api.on("genes", "gene_search", lambda gene_search_body, **_: [
+        {"symbol": i.upper()} for i in gene_search_body.inputs])
+    # The cut falls after case 2's TP53 row: its ZEB2 row is not read.
+    fake_sql.on("germline__snv__occurrence", [
+        {"case_id": c, "gene": g, "kind": "missense_variant"} for c in (1, 2) for g in ("TP53", "ZEB2")
+    ])
+    data, _ = _parts(run(oncoprint(["TP53", "ZEB2"], max_gnomad_af=0.01, tenant="demo")))
+    assert data["altered_cases"] == 1 and data["altered_cases_per_gene"] == {"TP53": 1, "ZEB2": 1}
 
 
 @pytest.mark.parametrize("kwargs, message", [
