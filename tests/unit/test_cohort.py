@@ -11,7 +11,7 @@ from radiant_mcp.domain import rules
 from radiant_mcp.domain.criteria import build_criteria
 from radiant_mcp.queries import carriers as carrier_queries
 from radiant_mcp.queries.charts import oncoprint_query
-from radiant_mcp.queries.impact import most_severe_in
+from radiant_mcp.queries.impact import impact_rank, most_severe_in
 from radiant_mcp.tools.cohort import cohort_carriers, genotype_phenotype
 
 
@@ -195,3 +195,25 @@ def test_genotype_phenotype_names_only_the_lists_it_cut(fake_api, fake_sql, run)
     result = run(genotype_phenotype("SCN1A", limit=2, tenant="demo"))
     assert result["truncated"]["lists"] == ["phenotypes"]
     assert "carriers_with_term" not in result["truncated"]["reason"]
+
+
+def test_the_consequence_summary_counts_the_consequences_of_the_most_severe_impact():
+    criteria = build_criteria("germline_snv", "SCN1A", ["HIGH", "MODERATE"], None, None, None, None)
+    sql, _ = carrier_queries.summary_queries("demo", criteria)["by_consequence"]
+    assert "JOIN g ON g.locus_id = car.variant_id" in sql and "END <=> g.impact_rank" in sql
+
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE cf (locus_id, consequence, vep_impact)")
+    # 1: stop on one transcript, intronic on another; 2: missense + NMD; 3: impact unknown.
+    db.executemany("INSERT INTO cf VALUES (?, ?, ?)", [
+        (1, "stop_gained", "HIGH"), (1, "intron_variant", "MODIFIER"),
+        (2, "missense_variant", "MODERATE"), (2, "NMD_transcript_variant", "MODIFIER"),
+        (3, "coding_sequence_variant", None), (3, "intron_variant", None)])
+    p = _sql.Params()
+    rank = re.sub(r"%\((p\d+)\)s", r":\1", impact_rank(p))
+    # sqlite's null-safe equality is IS, StarRocks' is <=>.
+    rows = db.execute(f"WITH g AS (SELECT locus_id, MIN({rank}) AS impact_rank FROM cf GROUP BY locus_id)"
+                      f" SELECT cf.locus_id, cf.consequence FROM cf JOIN g ON g.locus_id = cf.locus_id"
+                      f" AND {rank} IS g.impact_rank ORDER BY 1, 2", p.values).fetchall()
+    assert rows == [(1, "stop_gained"), (2, "missense_variant"), (3, "coding_sequence_variant"),
+                    (3, "intron_variant")]

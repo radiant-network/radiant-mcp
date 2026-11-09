@@ -139,6 +139,12 @@ def run(token: str, sql: str, params: Params | None = None) -> list[dict]:
     return [{c: plain(v) for c, v in zip(result.columns, row, strict=True)} for row in result.rows]
 
 
+def cut(rows: list, limit: int) -> tuple[list, bool]:
+    """``rows`` cut at ``limit``, and whether some were left out. A query reads ``limit`` + 1
+    rows so that a complete list of exactly ``limit`` rows is not reported as cut."""
+    return rows[:limit], len(rows) > limit
+
+
 def plain(value: Any) -> Any:
     from datetime import date, datetime
     from decimal import Decimal

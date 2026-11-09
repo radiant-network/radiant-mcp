@@ -70,6 +70,12 @@ def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int | 
     return parts, None
 
 
+def case_type(case: dict) -> str:
+    """``germline``, ``somatic`` or what the portal sent, lowercased. The portal's case entity
+    says ``germline_family`` for a germline case with more than one member (calculateCaseType)."""
+    return (case.get("case_type") or "").lower().removesuffix("_family")
+
+
 def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) -> dict:
     """``tenant``, ``case``, ``occurrence_keys`` and ``warnings`` (a list, maybe empty).
 
@@ -83,12 +89,10 @@ def case_context(api: RadiantApi, token: str, case_id: int, tenant: str | None) 
     for member in case.get("members", []):
         with_url(member, patient_url(tenant_code, member.get("patient_key")))
 
-    # The portal's case entity says `germline_family` for a germline case with more than
-    # one member (calculateCaseType): still the two germline data types.
-    case_type = (case.get("case_type") or "").lower().removesuffix("_family")
-    if case_type == "germline":
+    kind = case_type(case)
+    if kind == "germline":
         data_types = GERMLINE_CASE_DATA_TYPES
-    elif case_type == "somatic":
+    elif kind == "somatic":
         data_types = SOMATIC_CASE_DATA_TYPES
     else:
         data_types = CASE_DATA_TYPES

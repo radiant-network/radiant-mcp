@@ -55,6 +55,14 @@ def test_second_hit_germline(fake_api, fake_sql, run, monkeypatch):
             assert bound_value(sql, values, f"{alias}.part = ") == 5
 
 
+def test_second_hit_reports_a_family_case_as_germline(fake_api, fake_sql, run, monkeypatch):
+    # The portal says germline_family for a germline case with more than one member.
+    _case_api(fake_api, "germline_family", {"germline_snv": [{"id": 20}], "germline_cnv": [{"id": 21}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5, (10, 21): 5}, None))
+    data = run(second_hit(1, tenant="demo"))["data"]
+    assert data["case_type"] == "germline" and data["rules"].startswith("SNV + CNV")
+
+
 def test_second_hit_reads_the_loaded_task_while_a_re_analysis_is_imported(fake_api, fake_sql, run, monkeypatch):
     # Task 22 re-analyses seq 10 but is not imported yet: task 20 must be read.
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}, {"id": 22}], "germline_cnv": [{"id": 21}]})

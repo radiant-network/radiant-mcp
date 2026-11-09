@@ -41,10 +41,11 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
     cells: dict[tuple[str, str], set[str]] = {}
     truncated = []
     for data_type in data_types:
-        rows = _sql.run(token, *oncoprint_query(tenant_code, data_type, resolved, max_gnomad_af, vep_impact))
-        if len(rows) > ONCOPRINT_ROW_LIMIT:
+        rows, cut = _sql.cut(
+            _sql.run(token, *oncoprint_query(tenant_code, data_type, resolved, max_gnomad_af, vep_impact)),
+            ONCOPRINT_ROW_LIMIT)
+        if cut:
             truncated.append(data_type)
-            rows = rows[:ONCOPRINT_ROW_LIMIT]
         for row in rows:
             kind = consequence_class(row["kind"].split(",")) if _data_types.is_snv(data_type) else row["kind"]
             cells.setdefault((row["gene"], f"case {row['case_id']}"), set()).add(kind)

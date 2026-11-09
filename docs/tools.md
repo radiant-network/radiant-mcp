@@ -240,8 +240,10 @@ Returns:
   carrier **patients** (relatives included) and the number of variants;
 - the list of carriers, most variants first, with their case, family role
   and affected status (up to 200);
-- counts by consequence (on the gene itself), by variant class, by CNV type
-  and by family role, each limited to its 30 largest entries.
+- counts by consequence (on the gene itself, and only the consequences of
+  the variant's most severe impact there: a stop gained that is intronic on
+  another transcript counts as stop gained only), by variant class, by CNV
+  type and by family role, each limited to its 30 largest entries.
 
 The answer lists the filters and rules actually applied.
 

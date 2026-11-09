@@ -54,8 +54,10 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> To
     # OMIM, Orphanet and constraint are read one row past their limit to tell a cut.
     for name, field, what in (("omim", "omim_conditions", "conditions"), ("orphanet", "orphanet_disorders", "disorders"),
                               ("constraint", "gnomad_constraint", "transcripts, highest pLI first")):
-        if name in rows and len(rows[name]) > LIST_LIMITS[name]:
-            rows[name] = rows[name][:LIST_LIMITS[name]]
+        if name not in rows:
+            continue
+        rows[name], cut = _sql.cut(rows[name], LIST_LIMITS[name])
+        if cut:
             cut_lists[field] = f"`{field}` lists the first {LIST_LIMITS[name]} {what}"
     if "omim" in rows:
         result["omim_conditions"] = [
@@ -63,8 +65,8 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> To
         ]
     if "hpo" in rows:
         result["hpo_terms_count"] = len(rows["hpo"])
-        result["hpo_terms"] = rows["hpo"][:_HPO_TERMS_SHOWN]
-        if len(rows["hpo"]) > _HPO_TERMS_SHOWN:
+        result["hpo_terms"], cut = _sql.cut(rows["hpo"], _HPO_TERMS_SHOWN)
+        if cut:
             cut_lists["hpo_terms"] = (f"`hpo_terms` lists the first {_HPO_TERMS_SHOWN} of {len(rows['hpo'])} terms; "
                                       "`hpo_terms_count` counts them all")
     if "orphanet" in rows:
