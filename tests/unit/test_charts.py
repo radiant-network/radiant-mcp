@@ -9,6 +9,7 @@ from conftest import api_exception, bound_value
 from fastmcp import Client, FastMCP
 
 from radiant_mcp import charts
+from radiant_mcp import sql as _sql
 from radiant_mcp.domain.consequences import consequence_class
 from radiant_mcp.services import cases as case_service
 from radiant_mcp.tools.charts import bar_chart, family_venn, lollipop, oncoprint, patient_timeline, survival_curve
@@ -193,21 +194,19 @@ def _key(i: int) -> str:
     return f"00000000-0000-4000-8000-{i:012d}"
 
 
-def _patients(fake_api, rows):
-    def search(list_body_with_criteria, **_):
-        offset = list_body_with_criteria.offset or 0
-        return {"count": len(rows), "list": rows[offset:offset + list_body_with_criteria.limit]}
-    fake_api.on("patients", "search_patients", search)
+def _patients(fake_sql, rows):
+    """The clinical patient list read by survival_curve, one statement per list."""
+    fake_sql.on("v_pcx_30_patient_list", rows)
 
 
-def _searches(fake_api) -> list:
-    return [c for c in fake_api.calls if c[1] == "search_patients"]
+def _searches(fake_sql) -> list:
+    return fake_sql.matching("v_pcx_30_patient_list")
 
 
-def test_survival_of_a_key_group_against_the_rest_of_a_cohort(fake_api, run):
+def test_survival_of_a_key_group_against_the_rest_of_a_cohort(fake_api, fake_sql, run):
     rows = [{"patient_key": _key(i), "survival_days": 365 * (i + 1), "vital_status": "deceased" if i % 2 else "alive"}
             for i in range(10)]
-    _patients(fake_api, rows)
+    _patients(fake_sql, rows)
 
     data, png = _parts(run(survival_curve(
         groups=[{"label": "ACNS0334 Regimen B", "patient_keys": [_key(i) for i in range(4)] + [_key(99)]}],
@@ -218,9 +217,8 @@ def test_survival_of_a_key_group_against_the_rest_of_a_cohort(fake_api, run):
     assert {g["group"]: g["patients"] for g in data["groups"]} == {"ACNS0334 Regimen B": 4, "Other protocols": 6}
     assert data["definition"]["ACNS0334 Regimen B"] == {"patient_keys": 5, "not_found_or_not_in_cohort": 1}
     assert data["cohort"]["patients"] == 10 and data["logrank_df"] == 1
-    [call] = _searches(fake_api)
-    body = call[2]["list_body_with_criteria"]
-    assert [c.to_dict() for c in body.search_criteria] == [{"field": "cns_integrated_diagnosis", "value": ["Medulloblastoma"]}]
+    [(sql, values)] = _searches(fake_sql)
+    assert bound_value(sql, values, "pl.cns_integrated_diagnosis IN (") == "Medulloblastoma"
 
 
 def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fake_sql, run):
@@ -232,7 +230,7 @@ def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fak
               "vital_status": "alive"},
              {"patient_key": _key(999), "radiant_patient_id": 999, "case_count": 1, "survival_days": None,
               "vital_status": "alive"}]
-    _patients(fake_api, rows)
+    _patients(fake_sql, rows)
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": str(i)} for i in range(1, 21)])
     # Genotyped = an imported germline SNV analysis: patient 500 has none.
     fake_sql.on("SELECT DISTINCT s.patient_id", [{"patient_id": i} for i in [*range(1, 151), 999]])
@@ -246,14 +244,14 @@ def test_survival_of_carriers_against_the_other_sequenced_patients(fake_api, fak
     assert data["cohort"] == {"filters": "all patients", "sequenced_only": True, "patients": 151,
                               "excluded_not_genotyped": 1,
                               "genotyped_means": "an imported analysis of every carrier group's data type (all of them): germline_snv"}
-    assert len(_searches(fake_api)) == 2  # the cohort, paged by 100
+    assert len(_searches(fake_sql)) == 1  # the cohort, in one statement (it took 2 pages of 100)
 
 
 def test_somatic_non_carriers_are_patients_with_a_tumor_analysis(fake_api, fake_sql, run):
     # A patient with only a germline case (or a case not analysed yet) has a Radiant
     # case but no known somatic genotype: not a "non-carrier".
     fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
-    _patients(fake_api, [{"patient_key": _key(i), "radiant_patient_id": i, "case_count": 1,
+    _patients(fake_sql, [{"patient_key": _key(i), "radiant_patient_id": i, "case_count": 1,
                           "survival_days": 300 * i, "vital_status": "deceased" if i % 2 else "alive"}
                          for i in range(1, 7)])
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": "1"}, {"patient_id": "2"}])
@@ -267,17 +265,17 @@ def test_somatic_non_carriers_are_patients_with_a_tumor_analysis(fake_api, fake_
     assert "radiant_somatic_annotation" in values.values()
 
 
-def test_survival_of_filter_groups_needs_no_cohort(fake_api, run):
-    _patients(fake_api, [{"patient_key": _key(1), "survival_days": 400, "vital_status": "deceased"},
+def test_survival_of_filter_groups_needs_no_cohort(fake_api, fake_sql, run):
+    _patients(fake_sql, [{"patient_key": _key(1), "survival_days": 400, "vital_status": "deceased"},
                          {"patient_key": _key(2), "survival_days": 800, "vital_status": "alive"}])
     data, _ = _parts(run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "alive"}},
                                                 {"label": "B", "filters": {"organization_code": "X"}}], tenant="demo")))
     assert [g["group"] for g in data["groups"]] == ["A", "B"] and data["cohort"] is None
-    assert len(_searches(fake_api)) == 2
+    assert len(_searches(fake_sql)) == 2
 
 
-def test_survival_skips_the_test_when_groups_overlap(fake_api, run):
-    _patients(fake_api, [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 7)])
+def test_survival_skips_the_test_when_groups_overlap(fake_api, fake_sql, run):
+    _patients(fake_sql, [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 7)])
     data, _ = _parts(run(survival_curve(groups=[
         {"label": "A", "patient_keys": [_key(1), _key(2), _key(3)]},
         {"label": "B", "patient_keys": [_key(3), _key(4)]},
@@ -287,8 +285,8 @@ def test_survival_skips_the_test_when_groups_overlap(fake_api, run):
     assert data["logrank_p"] is None and data["logrank_skipped"] == "groups overlap"
 
 
-def test_survival_of_three_groups(fake_api, run):
-    _patients(fake_api, [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased" if i % 3 else "alive"}
+def test_survival_of_three_groups(fake_api, fake_sql, run):
+    _patients(fake_sql, [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased" if i % 3 else "alive"}
                          for i in range(1, 10)])
     data, _ = _parts(run(survival_curve(groups=[{"label": n, "patient_keys": [_key(i) for i in r]}
                                                 for n, r in (("A", range(1, 4)), ("B", range(4, 7)), ("C", range(7, 10)))],
@@ -319,15 +317,15 @@ def test_survival_validates(fake_api, run, kwargs, message):
     assert fake_api.calls == []
 
 
-def test_survival_reports_an_unknown_gene(fake_api, run):
+def test_survival_reports_an_unknown_gene(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [])
-    _patients(fake_api, [{"patient_key": _key(1), "radiant_patient_id": 1, "survival_days": 10, "vital_status": "alive"}])
+    _patients(fake_sql, [{"patient_key": _key(1), "radiant_patient_id": 1, "survival_days": 10, "vital_status": "alive"}])
     result = run(survival_curve(groups=[{"label": "A", "carriers": {"gene": "NOPE1"}}], others_label="B", tenant="demo"))
     assert "not found" in result["error"]["message"]
 
 
-def test_survival_without_clinical_data(fake_api, run):
-    fake_api.on("patients", "search_patients", api_exception(404, "404 page not found"))
+def test_survival_without_clinical_data(fake_api, fake_sql, run):
+    fake_sql.on("v_pcx_30_patient_list", _sql.SqlError("Unknown table 'x_tenant.v_pcx_30_patient_list'", "invalid", 1146))
     result = run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "alive"}},
                                         {"label": "B", "filters": {"vital_status": "deceased"}}], tenant="x"))
     assert result["error"]["code"] == "unavailable" and result.png is None
@@ -555,12 +553,12 @@ def test_logrank_ignores_a_group_with_nobody_at_risk_at_the_death_times():
     assert charts.logrank([early, charts.SurvivalGroup("x", [3], [False])]) is None
 
 
-def test_survival_explains_a_missing_logrank_and_a_cut_cohort(fake_api, run, monkeypatch):
+def test_survival_explains_a_missing_logrank_and_a_cut_cohort(fake_api, fake_sql, run, monkeypatch):
     survival_module = importlib.import_module("radiant_mcp.tools.charts.survival")
-    monkeypatch.setattr(survival_module, "MAX_SURVIVAL_PATIENTS", 3)
+    monkeypatch.setattr(survival_module, "PATIENT_LIST_ROW_LIMIT", 3)
     rows = [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "alive"} for i in range(1, 5)]
     rows.append({"patient_key": None, "survival_days": 50, "vital_status": "alive"})
-    _patients(fake_api, rows)
+    _patients(fake_sql, rows)
     result = run(survival_curve(groups=[{"label": "A", "patient_keys": [_key(1).upper() + "\n"]}],
                                 others_label="B", tenant="demo"))
     data, _ = _parts(result)
@@ -570,10 +568,10 @@ def test_survival_explains_a_missing_logrank_and_a_cut_cohort(fake_api, run, mon
     assert "not representative" in result["truncated"]["reason"]
 
 
-def test_survival_overlap_counts_only_drawn_patients(fake_api, run):
+def test_survival_overlap_counts_only_drawn_patients(fake_api, fake_sql, run):
     rows = [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 7)]
     rows.append({"patient_key": _key(9), "survival_days": None, "vital_status": "alive"})
-    _patients(fake_api, rows)
+    _patients(fake_sql, rows)
     data, _ = _parts(run(survival_curve(groups=[
         {"label": "A", "patient_keys": [_key(1), _key(2), _key(3), _key(9)]},
         {"label": "B", "patient_keys": [_key(4), _key(5), _key(6), _key(9)]},
@@ -585,7 +583,7 @@ def test_survival_warns_when_non_carriers_include_patients_not_genotyped(fake_ap
     fake_api.on("genes", "gene_search", [{"symbol": "TP53"}])
     rows = [{"patient_key": _key(i), "radiant_patient_id": i, "case_count": 1 if i < 5 else 0,
              "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 9)]
-    _patients(fake_api, rows)
+    _patients(fake_sql, rows)
     fake_sql.on("SELECT DISTINCT patient_id FROM car", [{"patient_id": "1"}, {"patient_id": "2"}])
     # Patients 1-3 have an imported germline SNV analysis; 4 has a case but no analysis yet.
     fake_sql.on("SELECT DISTINCT s.patient_id", [{"patient_id": i} for i in (1, 2, 3)])
@@ -596,13 +594,13 @@ def test_survival_warns_when_non_carriers_include_patients_not_genotyped(fake_ap
     assert any("sequenced_only=True" in w for w in result["warnings"])
 
 
-def test_survival_resolves_genes_before_reading_patients(fake_api, run):
+def test_survival_resolves_genes_before_reading_patients(fake_api, fake_sql, run):
     fake_api.on("genes", "gene_search", [])
     result = run(survival_curve(groups=[{"label": "X", "carriers": {"gene": "NOPE1"}}], others_label="Rest",
                                 tenant="demo"))
     # not_found, like cohort_carriers, lollipop and gene_info.
     assert result["error"]["code"] == "not_found" and "not found" in result["error"]["message"]
-    assert _searches(fake_api) == []
+    assert _searches(fake_sql) == []
 
 
 def test_survival_reports_gene_search_errors_as_errors(fake_api, run):
@@ -612,16 +610,15 @@ def test_survival_reports_gene_search_errors_as_errors(fake_api, run):
     assert result["ok"] is False and "503" in result["error"]["message"]
 
 
-def test_survival_combines_cohort_and_group_filters_in_one_search(fake_api, run):
+def test_survival_combines_cohort_and_group_filters_in_one_search(fake_api, fake_sql, run):
     rows = [{"patient_key": _key(i), "survival_days": 100 * i, "vital_status": "deceased"} for i in range(1, 5)]
-    _patients(fake_api, rows)
+    _patients(fake_sql, rows)
     run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "deceased"}},
                                {"label": "B", "filters": {"organization_code": "X"}}],
                        cohort_filters={"diagnosis_type_cohort": "MB"}, tenant="demo"))
-    criteria = [{c.to_dict()["field"] for c in call[2]["list_body_with_criteria"].search_criteria}
-                for call in _searches(fake_api)]
-    assert {"diagnosis_type_cohort", "vital_status"} in criteria
-    assert {"diagnosis_type_cohort", "organization_code"} in criteria
+    fields = [set(re.findall(r"pl\.(\w+) IN \(", sql)) for sql, _ in _searches(fake_sql)]
+    assert {"diagnosis_type_cohort", "vital_status"} in fields
+    assert {"diagnosis_type_cohort", "organization_code"} in fields
 
 
 def test_survival_names_an_empty_group(fake_api, run):
