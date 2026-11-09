@@ -10,7 +10,7 @@ from .. import sql as _sql
 from ..domain import rules as _rules
 from ..domain.criteria import Criteria
 from ..enums import ENUMS
-from .impact import impact_rank, most_severe_in
+from .impact import IMPACTS, impact_rank, most_severe_in
 from .quality import germline_qualifies, somatic_qualifies
 from .sequencing import latest_task_join
 
@@ -44,7 +44,11 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
         gene_having = f" HAVING {most_severe_in(p, criteria.vep_impact)}" if criteria.vep_impact else ""
         where = []
         if criteria.clinvar:
-            where.append(f"arrays_overlap(sv.clinvar_interpretation, [{p.list(criteria.clinvar)}])")
+            # A ClinVar classification is the variant's: it counts for this gene only when the gene
+            # is the picked one or the variant has an effect here (rules.PLP_GENE_IMPACTS).
+            ranks = [IMPACTS.index(impact) for impact in _rules.PLP_GENE_IMPACTS]
+            where.append(f"arrays_overlap(sv.clinvar_interpretation, [{p.list(criteria.clinvar)}])"
+                         f" AND (sv.symbol = {p(criteria.gene)} OR g.impact_rank IN ({p.list(ranks)}))")
         if criteria.max_gnomad_af is not None:
             where.append(f"(sv.gnomad_v3_af IS NULL OR sv.gnomad_v3_af < {p(criteria.max_gnomad_af)})")
         variant_filter = (" WHERE " + " AND ".join(where)) if where else ""
@@ -66,7 +70,7 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
             f" FROM {shared_db}.snv__consequence_filter cf WHERE {' AND '.join(gene_where)}"
             f" GROUP BY cf.locus_id{gene_having}"
             "), v AS ("
-            " SELECT sv.locus_id, sv.hgvsg, sv.variant_class"
+            " SELECT sv.locus_id, sv.variant_class"
             f" FROM {tenant_db}.snv__variant sv JOIN g ON g.locus_id = sv.locus_id{variant_filter}"
             "), x AS ("
             f" SELECT o.{seq_column} AS seq_id, o.task_id, o.locus_id AS variant_id"
@@ -99,14 +103,15 @@ def totals_query(tenant: str, criteria: Criteria) -> tuple[str, _sql.Params]:
 
 def carriers_query(tenant: str, criteria: Criteria, limit: int) -> tuple[str, _sql.Params]:
     p = _sql.Params()
-    label = "v.hgvsg" if criteria.is_snv else "car.type"
-    join = " JOIN v ON v.locus_id = car.variant_id" if criteria.is_snv else ""
+    # No list of the carrier's SNVs: without filters, a WGS genome has thousands of calls in a
+    # large gene (introns count), all sent to the model. CNVs list their types (at most four).
+    cnv_types = "" if criteria.is_snv else " array_agg(DISTINCT car.type) AS cnv_types,"
     sql = (
         carriers_cte(p, tenant, criteria)
         + " SELECT car.case_id, car.patient_id, car.family_role, car.affected_status, car.experimental_strategy,"
-        " car.seq_id, car.task_id, COUNT(DISTINCT car.variant_id) AS variant_count,"
-        f" array_agg(DISTINCT {label}) AS variants, MIN(car.variant_id) AS first_variant_id"
-        f" FROM car{join}"
+        f" car.seq_id, car.task_id, COUNT(DISTINCT car.variant_id) AS variant_count,{cnv_types}"
+        " MIN(car.variant_id) AS first_variant_id"
+        " FROM car"
         " GROUP BY car.case_id, car.patient_id, car.family_role, car.affected_status, car.experimental_strategy,"
         " car.seq_id, car.task_id"
         f" ORDER BY variant_count DESC, car.case_id LIMIT {p(limit)}"

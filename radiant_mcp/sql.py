@@ -24,7 +24,6 @@ _TENANT = re.compile(r"^[a-z0-9_]{1,64}$")
 # HGNC symbols: letters, digits, '-', '.', '@' (e.g. C9orf72, HLA-A, IGH@).
 _SYMBOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.@-]{0,39}$")
 _HPO_ID = re.compile(r"^HP:\d{7}$")
-_LOCUS_ID = re.compile(r"^-?\d{1,20}$")
 
 
 class InvalidInput(ValueError):
@@ -83,13 +82,6 @@ def number(value: Any) -> float:
     if not math.isfinite(out):
         raise InvalidInput(f"invalid number: {value!r}")
     return out
-
-
-def locus_id(value: Any) -> str:
-    text = str(value)
-    if not _LOCUS_ID.match(text):
-        raise InvalidInput(f"invalid locus_id: {value!r}")
-    return text
 
 
 def one_of(value: Any, allowed: Iterable[str], what: str) -> str:

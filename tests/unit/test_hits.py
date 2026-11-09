@@ -301,10 +301,35 @@ def test_second_hit_matches_every_gene_of_a_variant():
                         hit_queries.germline_plp_query("demo_tenant", SNV_KEY),
                         hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])):
         assert "JOIN radiant.snv__consequence_filter cf ON cf.locus_id = o.locus_id" in sql
-        assert not re.search(r"\bv\.symbol", sql)
+        # The picked gene only decides whether a P/LP classification counts for a gene, never membership.
+        assert not re.search(r"\bv\.symbol", sql.replace("cf.symbol = v.symbol", ""))
     sql, params = hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1"])
     assert bound_value(sql, params.values, "cf.symbol IN (") == "BRCA1"
     assert bound_value(sql, params.values, "cf.vep_impact IN (") == "HIGH"
+
+
+def test_a_plp_classification_counts_for_the_picked_gene_or_where_the_variant_has_an_effect():
+    import sqlite3
+
+    for sql, _ in (hit_queries.snv_cnv_query("demo_tenant", SNV_KEY, CNV_KEY),
+                   hit_queries.germline_plp_query("demo_tenant", SNV_KEY)):
+        assert "cf.symbol = v.symbol OR cf.vep_impact IN (" in sql
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE cf (gene, consequence, vep_impact)")
+    db.execute("CREATE TABLE v (symbol)")
+    db.execute("INSERT INTO v VALUES ('A')")  # pathogenic for A, its picked gene
+    db.executemany("INSERT INTO cf VALUES (?, ?, ?)", [
+        ("A", "stop_gained", "HIGH"),
+        ("B", "intron_variant", "MODIFIER"),     # only intronic in the nested gene B
+        ("C", "missense_variant", "MODERATE"),   # a real effect on the overlapping gene C
+    ])
+    p = _sql.Params()
+    condition = re.sub(r"%\((p\d+)\)s", r":\1", hit_queries._plp_on_gene(p)).replace("cf.symbol", "cf.gene")
+    genes = [r[0] for r in db.execute(f"SELECT cf.gene FROM cf, v WHERE {condition} ORDER BY 1", p.values)]
+    assert genes == ["A", "C"]
+    # A deep intronic pathogenic variant still counts for its own (picked) gene.
+    db.execute("UPDATE cf SET consequence = 'intron_variant', vep_impact = 'MODIFIER' WHERE gene = 'A'")
+    assert [r[0] for r in db.execute(f"SELECT cf.gene FROM cf, v WHERE {condition} ORDER BY 1", p.values)] == ["A", "C"]
 
 
 def _excluded_consequences(sql: str, values: dict) -> list[str]:

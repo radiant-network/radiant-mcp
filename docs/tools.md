@@ -73,6 +73,13 @@ compute their own answers, and follow these rules:
   overlapping genes. Its impact is its most severe impact on that gene; the
   protein change shown is the one of the picked transcript, which can belong
   to the overlapping gene.
+- **A classification belongs to the variant, not to every gene it is in.** A
+  P/LP classification (ClinVar, Exomiser, a portal interpretation) and the
+  ClinVar filter count for a gene only when it is the gene the annotation
+  picked, or the variant has an effect there (impact at least LOW). A variant
+  pathogenic for one gene and only intronic in a gene nested in it is not
+  pathogenic for the nested gene; a deep intronic pathogenic variant still
+  counts for its own gene.
 - **Families.** In a germline case, the parents' and siblings' sequencings
   belong to the proband's case. When a tool counts cases, it says whether it
   counts the cases where the proband carries the variant, or those where any
@@ -242,8 +249,9 @@ Returns:
 - the number of **cases** where the proband carries, the number of cases
   where **any member** carries (a parent alone included), the number of
   carrier **patients** (relatives included) and the number of variants;
-- the list of carriers, most variants first, with their case, family role
-  and affected status (up to 200);
+- the list of carriers, most variants first, with their case, family role,
+  affected status, number of matching variants (and CNV types) and a link to
+  the first one (up to 200);
 - counts by consequence (on the gene itself, and only the consequences of
   the variant's most severe impact there: a stop gained that is intronic on
   another transcript counts as stop gained only), by variant class, by CNV

@@ -12,6 +12,11 @@ RARE_MAX_AF = 0.01
 
 # Impacts that make a rare SNV a candidate on their own.
 QUALIFYING_IMPACTS = ("HIGH", "MODERATE")
+# A P/LP classification (and a ClinVar filter) belongs to the variant, not to a gene: it counts
+# for a gene the variant is in only when that gene is its picked gene, or the variant has an
+# effect there (impact at least LOW). A variant pathogenic for gene A and only intronic in a
+# nested gene B is not P/LP for B; a deep intronic pathogenic variant still counts for A.
+PLP_GENE_IMPACTS = ("HIGH", "MODERATE", "LOW")
 
 # Pathogenic or likely pathogenic, from three sources.
 CLINVAR_PLP = ("Pathogenic", "Likely_pathogenic")
@@ -88,6 +93,8 @@ POSITIVE_INTERPRETATION_CODE = "positive"
 
 PLP_DEFINITION = (
     "P/LP = ClinVar Pathogenic or Likely_pathogenic, or Exomiser pathogenic or likely_pathogenic, "
-    "or a portal interpretation classified Pathogenic (LA6668-3) or Likely pathogenic (LA26332-9)."
+    "or a portal interpretation classified Pathogenic (LA6668-3) or Likely pathogenic (LA26332-9). "
+    "It counts for a gene when that gene is the variant's picked gene, or the variant's impact there is at "
+    "least LOW: a variant pathogenic for one gene and only intronic in an overlapping one is not P/LP for it."
 )
 RARE_DEFINITION = f"rare = gnomAD v3 AF < {RARE_MAX_AF:g} or absent from gnomAD."

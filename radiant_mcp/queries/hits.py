@@ -22,6 +22,11 @@ def _plp_condition(p: _sql.Params, interpretation_alias: str = "ig") -> str:
     )
 
 
+def _plp_on_gene(p: _sql.Params) -> str:
+    """The P/LP classification counts for this ``cf`` row's gene (``rules.PLP_GENE_IMPACTS``)."""
+    return f"(cf.symbol = v.symbol OR cf.vep_impact IN ({p.list(_rules.PLP_GENE_IMPACTS)}))"
+
+
 def _interpretations(p: _sql.Params, tenant_db: str, seq_id: int) -> str:
     """Loci of a sequencing that a geneticist classified P/LP in the portal."""
     return (
@@ -62,7 +67,7 @@ def snv_cnv_query(tenant_db: str, snv_key: dict, cnv_key: dict) -> tuple[str, _s
         f" WHERE o.seq_id = {p(snv_key['seq_id'])} AND o.task_id = {p(snv_key['task_id'])} AND o.part = {p(snv_key['part'])}"
         f"  AND o.zygosity IN ({p.list(_rules.ALT_ZYGOSITIES)})"
         f"  AND (v.gnomad_v3_af IS NULL OR v.gnomad_v3_af < {p(_rules.RARE_MAX_AF)})"
-        f"  AND (cf.vep_impact IN ({p.list(_rules.QUALIFYING_IMPACTS)}) OR {_plp_condition(p)})"
+        f"  AND (cf.vep_impact IN ({p.list(_rules.QUALIFYING_IMPACTS)}) OR ({_plp_condition(p)} AND {_plp_on_gene(p)}))"
         "), cnv AS ("
         " SELECT c.cnv_id, c.chromosome, c.start, c.end, c.type, c.cn, c.length, g.symbol"
         f" FROM {tenant_db}.germline__cnv__occurrence c, unnest(c.symbol) AS g(symbol)"
@@ -162,7 +167,7 @@ def germline_plp_query(tenant_db: str, key: dict) -> tuple[str, _sql.Params]:
         f"{_gene_join(p)}"
         f" LEFT JOIN {_interpretations(p, tenant_db, key['seq_id'])} ig ON ig.locus_id = CAST(o.locus_id AS VARCHAR)"
         f" WHERE o.seq_id = {p(key['seq_id'])} AND o.task_id = {p(key['task_id'])} AND o.part = {p(key['part'])}"
-        f"  AND {_plp_condition(p)}"
+        f"  AND {_plp_condition(p)} AND {_plp_on_gene(p)}"
         f" ORDER BY gene LIMIT {p(ROW_LIMIT + 1)}"
     )
     return sql, p

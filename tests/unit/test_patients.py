@@ -51,7 +51,7 @@ def test_failing_filter_values_keep_the_search_results(fake_api, run):
     fake_api.on("patients", "search_patients", {"count": 1, "list": [_patient(KEY)]})
     fake_api.on("patients", "patients_filters", api_exception(500))
     result = run(search_patients(filters={"vital_status": "Alive"}, tenant="radiant", include_filter_values=True))
-    assert result["data"]["returned"] == 1 and "filter_values" not in result
+    assert result["data"]["returned"] == 1 and "filter_values" not in result["data"]
     assert result["warnings"] == ["filter_values: Radiant API error 500: error"]
 
 
@@ -86,7 +86,7 @@ def test_context_loads_the_sections_and_links_them(fake_api, run):
 
     assert result["data"]["patient"]["portal_url"] == f"{PORTAL}/radiant/patient/entity/{KEY}"
     assert result["data"]["treatments"]["portal_url"].endswith("?tab=treatments")
-    assert "laboratory" not in result and result["warnings"] == ["laboratory: Radiant API error 500: error"]
+    assert "laboratory" not in result["data"] and result["warnings"] == ["laboratory: Radiant API error 500: error"]
     genomics = result["data"]["genomics"]
     assert genomics["portal_url"].endswith("?tab=genomics")
     assert genomics["cases"][0]["portal_url"] == f"{PORTAL}/radiant/case/entity/8"

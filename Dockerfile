@@ -2,7 +2,8 @@
 FROM python:3.11-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-RUN pip install uv
+# Pinned like the dependencies: the build tool must not float either.
+RUN pip install uv==0.11.13
 
 WORKDIR /app
 # All dependencies (including version-pin rationale and the radiant-portal git
