@@ -85,7 +85,9 @@ class RadiantApi:
         finally:
             response.release_conn()
         body = raw.decode("utf-8") if isinstance(raw, bytes) else (raw or "")
-        if response.status >= 400:
+        # Not only >= 400: without retries urllib3 does not follow a redirect, and a 3xx
+        # (http -> https, a trailing slash) would read as an empty success, "no data".
+        if not 200 <= response.status < 300:
             exc = ApiException(status=response.status, reason=response.reason, body=body)
             # Keep the headers (case-insensitive): a 500 carries X-Correlation-ID.
             exc.headers = response.headers

@@ -7,6 +7,7 @@ until the Radiant API returns it with each task. ``merge_searches`` merges the
 identifier searches of ``search_cases`` and ``search_patients``.
 """
 
+import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -21,6 +22,16 @@ from ..results import describe
 
 # The task lookups (one per sequencing and data type) are independent: side by side.
 _TASK_WORKERS = 3
+
+
+def empty_filter_fields(filters: dict) -> list[str]:
+    """The filter fields without a value: an empty list or a null. The portal would build
+    ``field IN ()``, which StarRocks rejects with a 500."""
+    def empty(value) -> bool:
+        values = value if isinstance(value, (list, tuple)) else [value]
+        return not values or any(v is None for v in values)
+
+    return sorted(field for field, value in filters.items() if empty(value))
 
 
 def search_criteria(filters: dict) -> list:
@@ -54,7 +65,7 @@ def merge_criteria(filters: dict, extra: dict) -> dict | None:
 
 
 def merge_searches(by_field: dict[str, list], search: Callable[[dict], dict], key: str,
-                   limit: int) -> tuple[list[dict], dict[str, int], bool, int]:
+                   limit: int, more_matches: bool = False) -> tuple[list[dict], dict[str, int], bool, int]:
     """One search per matched identifier type (the API AND-s criteria), merged on ``key``.
 
     Returns the first ``limit`` rows, ``{"count": n}`` or, when rows were left out,
@@ -62,22 +73,24 @@ def merge_searches(by_field: dict[str, list], search: Callable[[dict], dict], ke
     total is unknown), whether rows were left out, and the number of rows without
     ``key`` (a patient not in the portal's key table yet has no patient_key), which
     cannot be merged nor linked and are left out. Pages of several searches cannot be
-    merged, so there is no offset.
+    merged, so there is no offset. ``more_matches``: the autocomplete itself was cut, so
+    some identifiers were never searched and the count is a lower bound too.
     """
     merged: dict[Any, dict] = {}
     totals = []
-    keyless = 0
+    keyless: set[str] = set()
     for field, values in by_field.items():
         resp = search({field: values})
         totals.append(resp.get("count", 0))
         for row in resp.get("list", []):
             if row.get(key) is None:
-                keyless += 1
+                # The same record can match several identifier types: count it once.
+                keyless.add(json.dumps(row, sort_keys=True, default=str))
                 continue
             merged.setdefault(row[key], row)
-    if any(total > limit for total in totals) or len(merged) > limit:
-        return list(merged.values())[:limit], {"count_at_least": max([len(merged), *totals])}, True, keyless
-    return list(merged.values()), {"count": len(merged)}, False, keyless
+    if more_matches or any(total > limit for total in totals) or len(merged) > limit:
+        return list(merged.values())[:limit], {"count_at_least": max([len(merged), *totals])}, True, len(keyless)
+    return list(merged.values()), {"count": len(merged)}, False, len(keyless)
 
 
 def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int | None], str | None]:

@@ -20,6 +20,7 @@ from ..domain.data_types import CohortDataType
 from ..portal_api import RadiantApi, clamp, resolve_tenant
 from ..portal_links import case_url, occurrence_url, with_url
 from ..queries.carriers import (
+    SUMMARY_LIMIT,
     carriers_query,
     carriers_with_term_query,
     phenotyped_patients_query,
@@ -74,6 +75,11 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
     queries = summary_queries(tenant_code, criteria)
     with ThreadPoolExecutor(max_workers=_SUMMARY_WORKERS) as pool:
         summary = dict(zip(queries, pool.map(lambda query: _sql.run(token, *query), queries.values()), strict=True))
+    cut_summaries = []
+    for name, entries in summary.items():
+        summary[name], summary_cut = _sql.cut(entries, SUMMARY_LIMIT)
+        if summary_cut:
+            cut_summaries.append(f"summary.{name}")
     data = {
         "tenant": tenant_code,
         "criteria": criteria.describe(),
@@ -85,11 +91,15 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
         "carriers": carriers,
         "summary": summary,
     }
-    truncated = None
+    reasons, lists = [], []
     if cut:
-        truncated = Truncation(reason=f"`carriers` stops at {limit} rows (most variants first): raise `limit` (up to "
-                                      f"{CARRIERS_MAX_LIMIT}) or add filters; the counts cover every carrier.",
-                               lists=["carriers"])
+        reasons.append(f"`carriers` stops at {limit} rows (most variants first): raise `limit` (up to "
+                       f"{CARRIERS_MAX_LIMIT}) or add filters; the counts cover every carrier")
+        lists.append("carriers")
+    if cut_summaries:
+        reasons.append(f"each summary lists its {SUMMARY_LIMIT} largest entries")
+        lists.extend(cut_summaries)
+    truncated = Truncation(reason="; ".join(reasons) + ".", lists=lists) if lists else None
     return ok(data, truncated=truncated)
 
 
@@ -151,8 +161,9 @@ async def cohort_carriers(
     ``variant_count``, ``cnv_types`` for CNVs, and a ``portal_url`` that opens
     the carrier's first variant; most variants first); ``summary``
     (counts by consequence and variant class for SNVs, by type for CNVs, by
-    family role for germline; a variant counts under the consequences of its
-    most severe impact on the gene); and ``criteria`` (the filters actually applied:
+    family role for germline, each its 30 largest entries; a variant counts under
+    the consequences of its most severe impact on the gene); and ``criteria``
+    (the filters actually applied:
     quote them). Use this before any SQL for "which cases
     carry a variant in GENE" questions.
 

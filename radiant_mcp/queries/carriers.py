@@ -14,7 +14,8 @@ from .impact import IMPACTS, impact_rank, most_severe_in
 from .quality import germline_qualifies, somatic_qualifies
 from .sequencing import latest_task_join
 
-_SUMMARY_LIMIT = 30
+# Entries per summary list; one more is read to tell a cut list.
+SUMMARY_LIMIT = 30
 # Carrier variants read for a lollipop; one more is read to tell a cut.
 LOLLIPOP_ROW_LIMIT = 5000
 
@@ -134,7 +135,7 @@ def summary_queries(tenant: str, criteria: Criteria) -> dict[str, tuple[str, _sq
             f" JOIN {_sql.shared_db()}.snv__consequence_filter cf ON cf.locus_id = car.variant_id"
             f" AND cf.symbol = {p(criteria.gene)} AND cf.consequence NOT IN ({p.list(_rules.NEARBY_CONSEQUENCES)})"
             f" AND {impact_rank(p)} <=> g.impact_rank"
-            f" GROUP BY cf.consequence ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
+            f" GROUP BY cf.consequence ORDER BY patients DESC LIMIT {p(SUMMARY_LIMIT + 1)}",
             p,
         )
         p = _sql.Params()
@@ -142,7 +143,7 @@ def summary_queries(tenant: str, criteria: Criteria) -> dict[str, tuple[str, _sq
             carriers_cte(p, tenant, criteria)
             + " SELECT v.variant_class, COUNT(DISTINCT car.variant_id) AS variants, COUNT(DISTINCT car.patient_id) AS patients"
             " FROM car JOIN v ON v.locus_id = car.variant_id"
-            f" GROUP BY v.variant_class ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
+            f" GROUP BY v.variant_class ORDER BY patients DESC LIMIT {p(SUMMARY_LIMIT + 1)}",
             p,
         )
     if not criteria.is_somatic:
@@ -150,7 +151,7 @@ def summary_queries(tenant: str, criteria: Criteria) -> dict[str, tuple[str, _sq
         out["by_family_role"] = (
             carriers_cte(p, tenant, criteria)
             + " SELECT family_role, COUNT(DISTINCT case_id) AS cases, COUNT(DISTINCT patient_id) AS patients"
-            f" FROM car GROUP BY family_role ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
+            f" FROM car GROUP BY family_role ORDER BY patients DESC LIMIT {p(SUMMARY_LIMIT + 1)}",
             p,
         )
     if not criteria.is_snv:
@@ -158,7 +159,7 @@ def summary_queries(tenant: str, criteria: Criteria) -> dict[str, tuple[str, _sq
         out["by_cnv_type"] = (
             carriers_cte(p, tenant, criteria)
             + " SELECT car.type AS cnv_type, COUNT(DISTINCT car.variant_id) AS cnvs, COUNT(DISTINCT car.patient_id) AS patients"
-            f" FROM car GROUP BY car.type ORDER BY patients DESC LIMIT {p(_SUMMARY_LIMIT)}",
+            f" FROM car GROUP BY car.type ORDER BY patients DESC LIMIT {p(SUMMARY_LIMIT + 1)}",
             p,
         )
     return out

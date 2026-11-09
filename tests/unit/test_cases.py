@@ -171,3 +171,20 @@ def test_the_task_lookups_run_side_by_side_and_keep_their_order(fake_api, run, m
     assert [w for w in result["warnings"] if "data_type=" in w] == [
         "seq_id=22 data_type=germline_cnv: Radiant API error 500: error"]
     assert len(threads) > 1
+
+
+def test_an_autocomplete_at_its_cap_makes_the_count_a_lower_bound(fake_api, run):
+    # 101 matches asked: past the cap of 100, some identifiers were never searched.
+    fake_api.on("cases", "autocomplete_cases", [{"type": "case_id", "value": str(i)} for i in range(101)])
+    fake_api.on("cases", "search_cases", {"count": 100, "list": [{"case_id": i} for i in range(100)]})
+    result = run(search_cases(query="1", tenant="t", limit=100))
+    assert fake_api.kwargs("autocomplete_cases")["limit"] == "101"
+    assert "count" not in result["data"] and result["data"]["count_at_least"] == 100
+    assert result["truncated"] is not None
+    search = fake_api.kwargs("search_cases")["list_body_with_criteria"]
+    assert len(search.search_criteria[0].value) == 100
+
+
+def test_a_case_filter_without_a_value_is_rejected_before_any_call(fake_api, run):
+    result = run(search_cases(filters={"status_code": []}, tenant="t"))
+    assert result["error"]["code"] == "invalid_input" and fake_api.calls == []

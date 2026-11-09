@@ -76,3 +76,13 @@ def test_every_operation_called_exists_in_the_pinned_client():
                if not hasattr(getattr(radiant_python, portal_api._API_CLASSES[api]),
                               f"{operation}_without_preload_content")]
     assert missing == []
+
+
+def test_a_redirect_is_an_error_not_an_empty_success(configure):
+    # Without retries urllib3 does not follow it: a 3xx used to read as "no data".
+    from radiant_mcp.results import failure
+
+    response = _Response(308, b"")
+    with pytest.raises(ApiException) as exc:
+        _api(response, []).call("cases", "case_entity", tenant="t", case_id=8)
+    assert exc.value.status == 308 and failure(exc.value).error.code == "upstream"

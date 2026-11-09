@@ -104,7 +104,8 @@ Finds cases, either from an identifier you give (case number, medical record
 number, sample id of the proband, sequencing id) or from criteria ("active
 prenatal cases", "cases on panel RGDI"). Returns a short summary of each case:
 type, status, priority, panel, main condition, project, proband. Up to 100
-cases per answer; the total is given.
+cases per answer; the total is given, or a lower bound when a search by
+identifier was cut.
 
 *Example:* "Find the case of patient MRN 12345."
 
@@ -114,7 +115,9 @@ Finds patients of the portal's patient list, by identifier or name, or by
 clinical criteria (diagnosis, vital status, age group at diagnosis,
 radiation, chemotherapy agents). Returns identifiers, demographics, vital
 status, initial diagnosis and survival. Names are hidden when you are not
-allowed to see them. A tenant with no clinical data says so.
+allowed to see them. Patients not yet in the portal's key table have no
+patient key: they are left out, with a warning, and paging uses the returned
+next offset. A tenant with no clinical data says so.
 
 *Example:* "Deceased patients with a medulloblastoma."
 

@@ -47,7 +47,8 @@ def _family_venn(api: RadiantApi, token: str, case_id: int, tenant: str | None, 
         raise invalid(f"Case {case_id} has no germline SNV analysis of the proband with a known `part`.",
                       warnings=warnings)
     if len(members) == 1:
-        raise invalid(f"Case {case_id} has no sequenced parent: a Venn diagram needs a trio or a duo.")
+        raise invalid(f"Case {case_id} has no parent with a loaded germline SNV analysis: a Venn diagram needs "
+                      "a trio or a duo.", warnings=warnings)
     for _, key in members:
         key["variant_part"] = key.get("variant_part", variant_part(key["part"]))
     rows = _sql.run(token, *venn_query(_sql.tenant_db(tenant_code), members, rare_only, vep_impact))

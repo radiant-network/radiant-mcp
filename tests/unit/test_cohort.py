@@ -273,3 +273,12 @@ def test_somatic_cnv_carriers_link_to_the_cnv_sub_tab_like_every_tool(fake_api, 
                                    "cnv_types": '["LOSS"]', "first_variant_id": 9}])
     [carrier] = run(cohort_carriers("CDKN2A", data_type="somatic_cnv", tenant="demo"))["data"]["carriers"]
     assert carrier["portal_url"].endswith("seq_id=71&task_id=72&variant_section=cnv-to")
+
+
+def test_a_summary_cut_at_its_cap_is_flagged(fake_api, fake_sql, run):
+    echo_gene_search(fake_api)
+    fake_sql.on("cases_any_member", [{"cases": 1, "cases_any_member": 1, "patients": 1, "variants": 40}])
+    fake_sql.on("SELECT cf.consequence", [{"consequence": f"c{i}", "variants": 1, "patients": 1} for i in range(31)])
+    result = run(cohort_carriers("SCN1A", tenant="demo"))
+    assert len(result["data"]["summary"]["by_consequence"]) == 30
+    assert result["truncated"]["lists"] == ["summary.by_consequence"]

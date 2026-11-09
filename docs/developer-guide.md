@@ -56,9 +56,11 @@ flowchart TB
     services["<b>services/</b><br/>what several tools share: case context, patient context, gene resolution"]
     queries["<b>queries/</b><br/>SQL builders: (sql, Params), no I/O"]
     domain["<b>domain/</b><br/>no I/O: data_type vocabulary, clinical rules,<br/>consequence classes, carrier criteria, partitions"]
-    plumbing["<b>plumbing</b><br/>portal_api · sql · starrocks · results · settings<br/>portal_links · enums · api_fields · schema_catalog · charts"]
+    plumbing["<b>plumbing</b><br/>portal_api · sql · starrocks · results · settings<br/>portal_links · enums · api_fields · charts"]
+    catalog["<b>schema_catalog</b><br/>describe_schema's tables and rules<br/>(reads domain.rules)"]
 
     tools --> services --> queries --> domain --> plumbing
+    tools --> catalog --> domain
     tools --> queries
     tools --> domain
     tools --> plumbing
@@ -196,8 +198,8 @@ flowchart LR
   `upstream`. `details` keeps the `status`, the `correlation_id` and, for a 4xx,
   the response `body`. A 5xx body is logged, not returned: it can carry the
   portal's internals. Status 0 is the generated client's own error: an
-  `SSLError` reason (a TLS failure) gives `upstream`, logged without its text;
-  any other (the client could not build the request) gives `internal`.
+  `SSLError` reason (a TLS failure) gives `upstream`: its text is logged, not
+  returned; any other (the client could not build the request) gives `internal`.
 - Anything else: `internal`. The exception is logged with its traceback, and the
   agent gets only its type, since the message can name internal hosts.
 
@@ -273,7 +275,11 @@ flowchart LR
 - **Patient list** (`test_patient_list.py`). `survival_curve` reads
   `v_pcx_30_patient_list` itself (`queries/patients.py`), mirroring the portal's
   `search_patients`: the array filter fields must be the portal's `IsArray`
-  ones, and the schema check resolves every filter field in the query.
+  ones, and the schema check resolves every filter field in the query. It reads
+  the view directly, so the portal's gates on its patient routes
+  (`can_search_case`, `PATIENT_VIEW_ENABLED`) do not apply: the view masks the PHI
+  columns by the caller's rights but filters no row, as for `read_query`. A Ranger
+  policy on the `v_pcx_*` views is the place to restrict it.
 - **Portal links** (`portal_links.py`). They mirror the frontend routes and the
   case variants tab parameters. No checkout checks them: update the module and
   its tests when the portal renames a route.

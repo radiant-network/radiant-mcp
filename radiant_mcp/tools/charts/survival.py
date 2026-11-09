@@ -1,5 +1,6 @@
 """``survival_curve``: Kaplan-Meier curves of patient groups, with a log-rank test."""
 
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -162,9 +163,10 @@ class _PatientReader:
         try:
             rows = _sql.run(self.token, *patient_list_query(self.tenant, [f for f in filter_sets if f], PATIENT_LIST_ROW_LIMIT + 1))
         except _sql.SqlError as exc:
-            # A tenant without the clinical views: unknown database (StarRocks 5501) or table
-            # (5502), the MySQL numbers too. Any other error is a real one.
-            if exc.errno not in (5501, 5502, 1049, 1146) and "unknown table" not in str(exc).lower():
+            # A tenant without the clinical views: unknown database or table. Told by the message,
+            # not by 5502: StarRocks sends it (SQLSTATE 42602) for any analysis error, an
+            # unresolved column too, which is a bug to see, not "no clinical data".
+            if not re.search(r"unknown (database|table)", str(exc), re.IGNORECASE):
                 raise
             raise ToolFailure("unavailable", f"No clinical data for tenant {self.tenant}: its patient views "
                                              "could not be read.", tenant=self.tenant) from exc

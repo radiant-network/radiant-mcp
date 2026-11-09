@@ -90,13 +90,17 @@ def _lookup_terms(
 ) -> ToolOutput:
     tenant_code = resolve_tenant(api, tenant)
     api_name, operation = ONTOLOGIES[ontology]
-    matches = api.call(api_name, operation, tenant=tenant_code, prefix=query, limit=str(limit)) or []
+    # One past the limit tells a cut list from a complete one of exactly `limit` terms.
+    matches, cut = _sql.cut(api.call(api_name, operation, tenant=tenant_code, prefix=query,
+                                     limit=str(limit + 1)) or [], limit)
     terms = []
     for match in matches:
         source = match.get("source") or {}
         if source.get("id"):
             terms.append({"id": source["id"], "name": source.get("name")})
-    return ok({"tenant": tenant_code, "ontology": ontology, "query": query, "terms": terms})
+    truncated = (f"`terms` lists the first {limit} matches: raise `limit` (up to {TERMS_MAX_LIMIT}) or use a "
+                 "longer query." if cut else None)
+    return ok({"tenant": tenant_code, "ontology": ontology, "query": query, "terms": terms}, truncated=truncated)
 
 
 # -- tools -------------------------------------------------------------------
