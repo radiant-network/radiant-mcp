@@ -64,7 +64,7 @@ compute their own answers, and follow these rules:
 - **Somatic call quality.** A somatic variant call counts as a carrier only
   when it passes the portal's somatic frequency rule: the variant passes the
   caller's filters and at least 2 tumor reads show it. The second-hit search
-  only requires the caller's filters.
+  keeps the passing calls with fewer reads, marked as low quality.
 - **Which variants are "in" a gene.** A variant belongs to a gene when it has
   a consequence on one of that gene's transcripts, not only on the transcript
   the annotation picked. A variant inside an intron counts. A variant only
