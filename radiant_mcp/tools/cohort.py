@@ -7,6 +7,7 @@ patients through ``staging_sequencing_experiment``. Everything runs under the
 caller's JWT, so a user only counts the cases they may see.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Any
 
@@ -31,6 +32,8 @@ from ..services.genes import not_found_message, resolve_gene
 
 CARRIERS_MAX_LIMIT = 200
 PHENOTYPES_MAX_LIMIT = 100
+# The summary queries are independent: run side by side, they cost one query's time.
+_SUMMARY_WORKERS = 3
 
 
 def _resolve(api: RadiantApi, tenant: str | None, criteria: Criteria) -> tuple[str, Criteria]:
@@ -61,13 +64,15 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
     totals = _sql.first(_sql.run(token, *totals_query(tenant_code, criteria))) or {}
     carriers = []
     # One row past `limit` tells a cut list from a complete one of exactly `limit` rows.
-    rows = _sql.run(token, *carriers_query(tenant_code, criteria, limit + 1))
-    for row in rows[:limit]:
+    rows, cut = _sql.cut(_sql.run(token, *carriers_query(tenant_code, criteria, limit + 1)), limit)
+    for row in rows:
         row["variants"] = _sql.as_list(row.get("variants"))
         with_url(row, _link(tenant_code, criteria, row))
         row.pop("first_variant_id", None)
         carriers.append(row)
-    summary = {name: _sql.run(token, sql, params) for name, (sql, params) in summary_queries(tenant_code, criteria).items()}
+    queries = summary_queries(tenant_code, criteria)
+    with ThreadPoolExecutor(max_workers=_SUMMARY_WORKERS) as pool:
+        summary = dict(zip(queries, pool.map(lambda query: _sql.run(token, *query), queries.values()), strict=True))
     data = {
         "tenant": tenant_code,
         "criteria": criteria.describe(),
@@ -80,7 +85,7 @@ def _cohort_carriers(api: RadiantApi, token: str, criteria: Criteria, tenant: st
         "summary": summary,
     }
     truncated = None
-    if len(rows) > limit:
+    if cut:
         truncated = Truncation(reason=f"`carriers` stops at {limit} rows (most variants first): raise `limit` (up to "
                                       f"{CARRIERS_MAX_LIMIT}) or add filters; the counts cover every carrier.",
                                lists=["carriers"])
@@ -93,25 +98,26 @@ def _genotype_phenotype(
     tenant_code, criteria = _resolve(api, tenant, criteria)
     totals = _sql.first(_sql.run(token, *totals_query(tenant_code, criteria))) or {}
     phenotyped = _sql.first(_sql.run(token, *phenotyped_patients_query(tenant_code, criteria))) or {}
+    phenotypes, phenotypes_cut = _sql.cut(_sql.run(token, *phenotypes_query(tenant_code, criteria, limit + 1)), limit)
     result: dict[str, Any] = {
         "tenant": tenant_code,
         "criteria": criteria.describe(),
         "carrier_patients": totals.get("patients", 0),
         "carrier_patients_with_phenotypes": phenotyped.get("patients", 0),
-        "phenotypes": _sql.run(token, *phenotypes_query(tenant_code, criteria, limit + 1)),
+        "phenotypes": phenotypes,
         "phenotype_source": ("positive HPO observations of the carrier patients; observations recorded for a "
                              "fetus are left out, since a fetal sample carries its mother's patient_id"),
     }
     cut: list[str] = []
     if hpo_term:
-        rows = _sql.run(token, *carriers_with_term_query(tenant_code, criteria, hpo_term, CARRIERS_MAX_LIMIT + 1))
+        rows, carriers_cut = _sql.cut(
+            _sql.run(token, *carriers_with_term_query(tenant_code, criteria, hpo_term, CARRIERS_MAX_LIMIT + 1)),
+            CARRIERS_MAX_LIMIT)
         result["hpo_term"] = hpo_term
-        result["carriers_with_term"] = [with_url(r, case_url(tenant_code, r.get("case_id")))
-                                        for r in rows[:CARRIERS_MAX_LIMIT]]
-        if len(rows) > CARRIERS_MAX_LIMIT:
+        result["carriers_with_term"] = [with_url(r, case_url(tenant_code, r.get("case_id"))) for r in rows]
+        if carriers_cut:
             cut.append("carriers_with_term")
-    if len(result["phenotypes"]) > limit:
-        result["phenotypes"] = result["phenotypes"][:limit]
+    if phenotypes_cut:
         cut.append("phenotypes")
     truncated = None
     if cut:
@@ -143,7 +149,8 @@ async def cohort_carriers(
     sequencing: case, patient, family role, affected status, strategy, the
     matching variants and a ``portal_url``, most variants first); ``summary``
     (counts by consequence and variant class for SNVs, by type for CNVs, by
-    family role for germline); and ``criteria`` (the filters actually applied:
+    family role for germline; a variant counts under the consequences of its
+    most severe impact on the gene); and ``criteria`` (the filters actually applied:
     quote them). Use this before any SQL for "which cases
     carry a variant in GENE" questions.
 

@@ -33,7 +33,7 @@ from ..queries.hits import (
     somatic_snv_query,
 )
 from ..results import ToolOutput, Truncation, failure, ok, respond
-from ..services.cases import case_context
+from ..services.cases import case_context, case_type
 
 # The germline call quality, stated in every result: flagged, never filtered, so a real
 # but poorly covered hit stays visible to the geneticist.
@@ -97,10 +97,9 @@ def _usable(keys: list[dict], data_type: str, warnings: list[str]) -> list[dict]
 
 def _capped(token: str, query: tuple, what: str, truncated: list[str]) -> list[dict]:
     """The rows of ``query``, cut at ROW_LIMIT; ``what`` is recorded when rows were left out."""
-    rows = _sql.run(token, *query)
-    if len(rows) > ROW_LIMIT:
+    rows, cut = _sql.cut(_sql.run(token, *query), ROW_LIMIT)
+    if cut:
         truncated.append(what)
-        return rows[:ROW_LIMIT]
     return rows
 
 
@@ -279,9 +278,9 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
     tenant_code, case = context["tenant"], context["case"]
     warnings = list(context["warnings"])
     truncated: list[str] = []
-    case_type = (case.get("case_type") or "").lower()
-    result: dict[str, Any] = {"tenant": tenant_code, "case_id": case_id, "case_type": case_type}
-    if case_type == "somatic":
+    kind = case_type(case)
+    result: dict[str, Any] = {"tenant": tenant_code, "case_id": case_id, "case_type": kind}
+    if kind == "somatic":
         result["rules"] = (
             f"Germline first hit: P/LP variant of the patient ({_rules.PLP_DEFINITION}) "
             f"Somatic second hit in the same gene: PASS SNV of impact {' or '.join(_rules.QUALIFYING_IMPACTS)}, "

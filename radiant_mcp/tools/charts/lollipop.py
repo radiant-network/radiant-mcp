@@ -25,10 +25,9 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | No
     if gene is None:
         raise not_found(not_found_message(criteria_.gene))
     criteria_ = replace(criteria_, gene=_sql.symbol(gene["symbol"]))
-    rows = _sql.run(token, *lollipop_query(tenant_code, criteria_))
+    rows, cut_rows = _sql.cut(_sql.run(token, *lollipop_query(tenant_code, criteria_)), LOLLIPOP_ROW_LIMIT)
     cut = None
-    if len(rows) > LOLLIPOP_ROW_LIMIT:
-        rows = rows[:LOLLIPOP_ROW_LIMIT]
+    if cut_rows:
         cut = (f"Only the {LOLLIPOP_ROW_LIMIT} variants with the most carriers are counted and drawn: "
                "add filters (impact, ClinVar, rarity) for a complete picture.")
     # A variant in the gene whose picked annotation is another (overlapping) gene has

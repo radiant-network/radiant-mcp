@@ -67,3 +67,8 @@ def test_run_binds_params_and_returns_rows_as_dicts(monkeypatch):
 
 def placeholders_match(sql: str, values: dict) -> bool:
     return set(re.findall(r"%\((p\d+)\)s", sql)) == set(values)
+
+
+def test_cut_tells_a_cut_list_from_a_complete_one():
+    assert _sql.cut([1, 2], 2) == ([1, 2], False)
+    assert _sql.cut([1, 2, 3], 2) == ([1, 2], True)
