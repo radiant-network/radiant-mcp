@@ -12,6 +12,7 @@ from typing import Any
 from fastmcp.tools import ToolResult
 
 from .. import portal_api as _api
+from .. import sql as _sql
 from ..api_fields import PATIENT_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import patient_url, with_url
@@ -81,24 +82,29 @@ def _search_patients(
         if query:
             # One search per matched identifier type (criteria are AND-ed by
             # the API), merged on patient_key. `offset` does not apply.
-            matches = api.call(
+            # One match past the cap tells a cut autocomplete from a complete one of exactly the cap.
+            matches, more_matches = _sql.cut(api.call(
                 "patients", "autocomplete_patients",
-                tenant=tenant_code, prefix=query, limit=str(SEARCH_MAX_LIMIT),
-            ) or []
+                tenant=tenant_code, prefix=query, limit=str(SEARCH_MAX_LIMIT + 1),
+            ) or [], SEARCH_MAX_LIMIT)
             by_field: dict[str, list] = {}
             for m in matches:
                 if m.get("type") in _AUTOCOMPLETE_FIELDS:
                     by_field.setdefault(m["type"], []).append(m.get("value"))
-            patients, counts, more, keyless = merge_searches(by_field, lambda extra: _search(extra, 0), "patient_key", limit)
+            patients, counts, more, keyless = merge_searches(by_field, lambda extra: _search(extra, 0), "patient_key",
+                                                             limit, more_matches)
             result: dict[str, Any] = {"tenant": tenant_code, "query": query, **counts}
             if more:
                 cut = "More patients match than were returned: use a longer identifier prefix or add filters."
         else:
             resp = _search({}, offset)
-            patients = resp.get("list", [])
+            # Patients not in the portal's key table yet have no patient_key: no link, no context.
+            listed = resp.get("list", [])
+            patients = [p for p in listed if p.get("patient_key")]
+            keyless = len(listed) - len(patients)
             count = resp.get("count", 0)
             result = {"tenant": tenant_code, "count": count, "offset": offset}
-            more = count - offset - len(patients)
+            more = count - offset - len(listed)
             if more > 0:
                 cut = f"{more} more patients: page with `offset` or narrow the filters."
     except Exception as exc:  # noqa: BLE001
@@ -174,7 +180,9 @@ async def search_patients(
         sort_by: Optional sort field: birth_year, can_read_phi,
             cns_integrated_diagnosis, diagnosis_type_cohort, gender,
             organization_code, patient_id, survival_days, vital_status.
-            Default: the portal's list order.
+            Default: the portal's list order. With ``query``, each identifier
+            type is searched and sorted on its own and the lists are joined, so
+            the order holds within each type only.
         sort_order: ``asc`` (default) or ``desc``.
         include_filter_values: Also return ``filter_values``, the values each
             filter accepts.

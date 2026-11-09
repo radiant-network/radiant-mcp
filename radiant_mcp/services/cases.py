@@ -54,7 +54,7 @@ def merge_criteria(filters: dict, extra: dict) -> dict | None:
 
 
 def merge_searches(by_field: dict[str, list], search: Callable[[dict], dict], key: str,
-                   limit: int) -> tuple[list[dict], dict[str, int], bool, int]:
+                   limit: int, more_matches: bool = False) -> tuple[list[dict], dict[str, int], bool, int]:
     """One search per matched identifier type (the API AND-s criteria), merged on ``key``.
 
     Returns the first ``limit`` rows, ``{"count": n}`` or, when rows were left out,
@@ -62,7 +62,8 @@ def merge_searches(by_field: dict[str, list], search: Callable[[dict], dict], ke
     total is unknown), whether rows were left out, and the number of rows without
     ``key`` (a patient not in the portal's key table yet has no patient_key), which
     cannot be merged nor linked and are left out. Pages of several searches cannot be
-    merged, so there is no offset.
+    merged, so there is no offset. ``more_matches``: the autocomplete itself was cut, so
+    some identifiers were never searched and the count is a lower bound too.
     """
     merged: dict[Any, dict] = {}
     totals = []
@@ -75,7 +76,7 @@ def merge_searches(by_field: dict[str, list], search: Callable[[dict], dict], ke
                 keyless += 1
                 continue
             merged.setdefault(row[key], row)
-    if any(total > limit for total in totals) or len(merged) > limit:
+    if more_matches or any(total > limit for total in totals) or len(merged) > limit:
         return list(merged.values())[:limit], {"count_at_least": max([len(merged), *totals])}, True, keyless
     return list(merged.values()), {"count": len(merged)}, False, keyless
 

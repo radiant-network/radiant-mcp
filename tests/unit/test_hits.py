@@ -132,6 +132,9 @@ def test_a_somatic_call_with_too_few_tumor_reads_is_kept_and_marked(fake_api, fa
     assert "tumor alternate depth >= 2" in data["rules"]
     [(sql, values)] = fake_sql.matching("somatic__snv__occurrence")
     assert bound_value(sql, values, "o.tumor_ad_alt >= ") == 2 and bound_value(sql, values, "o.filter = ") == "PASS"
+    # Kept and marked, not filtered: the depth rule is only in the selected low_quality flag.
+    assert sql.count("o.tumor_ad_alt >=") == 1
+    assert re.search(r"NOT COALESCE\(o\.filter = %\(p\d+\)s AND o\.tumor_ad_alt >= %\(p\d+\)s, FALSE\) AS low_quality", sql)
 
 
 def test_a_variant_of_two_germline_sequencings_is_listed_once(fake_api, fake_sql, run, monkeypatch):
@@ -387,6 +390,8 @@ def test_second_hit_marks_germline_calls_outside_the_quality_rule(fake_api, fake
     assert "low_quality" in result["data"]["rules"]
     [(sql, values)] = [(q, v) for q, v in fake_sql.queries if "germline__cnv__occurrence" in q]
     assert bound_value(sql, values, "o.gq >= ") == 20
+    # Kept and marked, not filtered: the quality rule is only in the selected low_quality flag.
+    assert sql.count("o.gq >=") == 1 and re.search(r"NOT COALESCE\([^;]*?o\.gq >= [^;]*?, FALSE\) AS low_quality", sql)
 
 
 def test_a_null_gq_or_alt_depth_is_low_quality():

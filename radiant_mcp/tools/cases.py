@@ -5,6 +5,7 @@ from typing import Any
 from fastmcp.tools import ToolResult
 
 from .. import portal_api as _api
+from .. import sql as _sql
 from ..api_fields import CASE_FILTER_FIELDS as CASE_SEARCH_FILTER_FIELDS
 from ..api_fields import CASE_SORT_FIELDS as CASE_SEARCH_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
@@ -94,9 +95,10 @@ def _search_cases(
     #   the patient's submitter_patient_id_type (e.g. "mrn") for submitter
     #   patient ids. Anything else is still a submitter patient id, so it
     #   goes through the `mrn` filter (alias of patient.submitter_patient_id).
-    matches = api.call(
-        "cases", "autocomplete_cases", tenant=tenant_code, prefix=query, limit=str(SEARCH_MAX_LIMIT),
-    ) or []
+    # One match past the cap tells a cut autocomplete from a complete one of exactly the cap.
+    matches, more_matches = _sql.cut(api.call(
+        "cases", "autocomplete_cases", tenant=tenant_code, prefix=query, limit=str(SEARCH_MAX_LIMIT + 1),
+    ) or [], SEARCH_MAX_LIMIT)
     by_field: dict[str, list] = {}
     for m in matches:
         match_type, value = m.get("type"), m.get("value")
@@ -111,7 +113,8 @@ def _search_cases(
             by_field.setdefault("mrn", []).append(value)
 
     # Merged on case_id: a case matched by two identifier types counts once.
-    cases, counts, cut, _ = merge_searches(by_field, lambda extra: _search(extra, 0), "case_id", limit)
+    cases, counts, cut, _ = merge_searches(by_field, lambda extra: _search(extra, 0), "case_id", limit,
+                                           more_matches)
     data: dict[str, Any] = {"tenant": tenant_code, "query": query, "autocomplete_matches": matches, **counts,
                             "returned": len(cases), "cases": _linked(cases)}
     truncated = "More cases match than were returned: use a longer identifier prefix or add filters." if cut else None
@@ -220,7 +223,9 @@ async def search_cases(
             analysis_catalog_code, panel_code, panel_name, project_code,
             project_name, primary_condition_id, primary_condition_name,
             prescriber, ordering_organization_code, organization_code,
-            diagnosis_lab_code, created_on, updated_on.
+            diagnosis_lab_code, created_on, updated_on. With ``query``, each
+            identifier type is searched and sorted on its own and the lists are
+            joined, so the order holds within each type only.
         sort_order: ``asc`` or ``desc`` (default ``desc``).
     """
     if not filters and not query:

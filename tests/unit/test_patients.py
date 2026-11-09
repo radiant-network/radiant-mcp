@@ -158,3 +158,10 @@ def test_a_matching_patient_without_a_key_is_left_out_with_a_warning(fake_api, r
     result = run(search_patients(query="MRN", tenant="radiant"))
     assert result["ok"] is True and [p["patient_key"] for p in result["data"]["patients"]] == [KEY]
     assert any("no patient key yet" in w for w in result["warnings"])
+
+
+def test_a_patient_without_a_key_is_left_out_of_a_filter_search_too(fake_api, run):
+    fake_api.on("patients", "search_patients", {"count": 2, "list": [_patient(KEY), {"patient_id": "MRN2"}]})
+    result = run(search_patients(filters={"vital_status": "alive"}, tenant="radiant"))
+    assert [p["patient_key"] for p in result["data"]["patients"]] == [KEY] and result["data"]["returned"] == 1
+    assert any("no patient key yet" in w for w in result["warnings"])

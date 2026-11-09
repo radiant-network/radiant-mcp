@@ -52,7 +52,8 @@ def test_a_failure_sets_is_error_and_keeps_warnings_a_list():
 
 @pytest.mark.parametrize("exc, code", [
     (InvalidInput("invalid gene symbol"), "invalid_input"),
-    (SqlError("Access denied"), "upstream"),
+    (SqlError("Lost connection to StarRocks"), "upstream"),
+    (SqlError("Access denied for user bob", "denied", 1227), "forbidden"),
     (api_exception(400), "invalid_input"),
     (api_exception(401), "auth_required"),
     (api_exception(403), "forbidden"),
