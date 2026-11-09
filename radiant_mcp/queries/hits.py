@@ -8,7 +8,7 @@ not count, or a variant of one gene would be a hit in its neighbours too."""
 from .. import sql as _sql
 from ..domain import rules as _rules
 from .impact import impact_label, impact_rank
-from .quality import germline_qualifies
+from .quality import germline_qualifies, somatic_qualifies
 
 # Rows a list returns; one more is fetched to tell a truncated list.
 ROW_LIMIT = 200
@@ -171,7 +171,9 @@ def germline_plp_query(tenant_db: str, key: dict) -> tuple[str, _sql.Params]:
 def somatic_snv_query(tenant_db: str, key: dict, genes: list[str],
                       first_hit_loci: list[str] | None = None) -> tuple[str, _sql.Params]:
     """PASS tumor calls of the genes: a qualifying impact (second-hit candidates), or one of
-    ``first_hit_loci`` whatever its impact (the germline first hit seen in the tumor)."""
+    ``first_hit_loci`` whatever its impact (the germline first hit seen in the tumor). A call
+    outside the platform's somatic carrier rule (too few tumor reads) is kept, marked
+    ``low_quality``, as the germline calls are."""
     p = _sql.Params()
     impact = f"cf.vep_impact IN ({p.list(_rules.QUALIFYING_IMPACTS)})"
     if first_hit_loci:
@@ -180,7 +182,7 @@ def somatic_snv_query(tenant_db: str, key: dict, genes: list[str],
     sql = (
         f"SELECT DISTINCT cf.symbol AS gene, o.locus_id, v.hgvsg, v.aa_change, {_impact_on_gene(p)} AS vep_impact,"
         " v.vep_impact AS picked_vep_impact, o.tumor_ad_ratio,"
-        " o.tumor_zygosity"
+        f" o.tumor_zygosity, NOT {somatic_qualifies(p)} AS low_quality, o.tumor_ad_alt"
         f" FROM {tenant_db}.somatic__snv__occurrence o"
         f" JOIN {tenant_db}.snv__variant_partitioned v ON v.locus_id = o.locus_id AND v.part = {p(key['variant_part'])}"
         f"{_gene_join(p)}"

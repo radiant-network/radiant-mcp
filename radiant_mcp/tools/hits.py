@@ -40,6 +40,8 @@ from ..services.cases import case_context, case_type
 _QUALITY_RULE = (f"`low_quality` marks a germline call outside the platform's carrier rule "
                  f"({_rules.GERMLINE_QUALITY_DEFINITION}): report it as uncertain, with its filter and GQ (`filter` / `gq`, `snv_filter` / "
                  "`snv_gq` in snv_cnv).")
+_SOMATIC_QUALITY_RULE = (f"In the tumor lists, `low_quality` marks a call outside the platform's somatic carrier rule "
+                         f"({_rules.SOMATIC_QUALITY_DEFINITION}): report it as uncertain, with its `tumor_ad_alt`.")
 # How an SNV is assigned to a gene (queries/hits.py), stated in every result.
 _GENE_RULE = ("An SNV is in a gene when it has a consequence on one of its transcripts other than upstream, "
               "downstream or intergenic; `vep_impact` is its most severe impact on that gene, while `aa_change` "
@@ -249,6 +251,7 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
                 loci = sorted({locus for zygosities in first_hit_zygosity.values() for locus in zygosities})
                 for row in _capped(token, somatic_snv_query(tenant_db, key, genes, loci),
                                    f"seq_id={key['seq_id']} {data_type}", truncated):
+                    row["low_quality"] = bool(row.get("low_quality"))
                     with_url(row, occurrence_url(tenant, case_id, key["seq_id"], data_type,
                                                  task_id=key["task_id"], variant_id=str(row["locus_id"])))
                     germline_zygosity = first_hit_zygosity[row["gene"]].get(str(row["locus_id"]), _NOT_FIRST_HIT)
@@ -299,7 +302,8 @@ def _second_hit(api: _api.RadiantApi, token: str, case_id: int, tenant: str | No
             "the germline first-hit variant itself is not a second hit: it is listed under "
             "`germline_variant_in_tumor` with its tumor allele ratio; `possible_allelic_imbalance` (germline HET "
             f"and tumor ratio >= {_rules.ALLELIC_IMBALANCE_MIN_RATIO}) may mean loss of the normal allele (LOH), but "
-            f"tumor purity is unknown: state it as a possibility to check, not as a second hit. {_QUALITY_RULE} {_GENE_RULE}"
+            f"tumor purity is unknown: state it as a possibility to check, not as a second hit. {_QUALITY_RULE} "
+            f"{_SOMATIC_QUALITY_RULE} {_GENE_RULE}"
         )
         result.update(_somatic(token, tenant_code, case, context["occurrence_keys"], warnings, truncated))
     else:
@@ -344,7 +348,8 @@ async def second_hit(case_id: int, tenant: str | None = None) -> ToolResult:
     possible loss of the normal allele (tumor purity unknown: to check).
 
     Germline calls outside the platform's carrier quality rule (FILTER PASS,
-    GQ >= 20, alternate depth >= 3) are kept and marked ``low_quality``.
+    GQ >= 20, alternate depth >= 3) are kept and marked ``low_quality``; so
+    are somatic PASS calls with fewer than 2 tumor alternate reads.
 
     ``rules`` states the exact criteria applied: quote them when reporting.
     Each list stops at 200 rows; ``truncated.lists`` names the lists that were cut.
