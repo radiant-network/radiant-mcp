@@ -9,18 +9,6 @@ from radiant_mcp import sql as _sql
 from radiant_mcp.queries import patients
 
 
-def _normalized(text: str) -> str:
-    return " ".join(text.split())
-
-
-def test_age_groups_match_the_portal(portal):
-    # The portal computes age_at_initial_dx_group itself: a change there must change ours.
-    source = (portal / "backend/internal/repository/starrocks/pcx_patients.go").read_text()
-    match = re.search(r"ageAtInitialDxGroupSQL = `([^`]*)`", source)
-    assert match, "ageAtInitialDxGroupSQL not found in the portal"
-    assert _normalized(patients.age_at_initial_dx_group_sql(None)) == _normalized(match.group(1))
-
-
 def test_array_filter_fields_match_the_portal(portal):
     # An array field filters with arrays_overlap, a scalar one with IN, as the portal's filter.go.
     source = (portal / "backend/internal/types/pcx_patient_query.go").read_text()

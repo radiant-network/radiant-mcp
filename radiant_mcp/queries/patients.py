@@ -6,8 +6,8 @@ as the caller, through a subquery that adds two virtual columns
 ``field IN (...)``, or ``arrays_overlap`` for an array field
 (``PcxPatientsRepository.SearchPatients``, ``types.filter.go``). This is the same
 read, in one statement instead of pages of 100 through the API. The age groups
-mirror ``ageAtInitialDxGroupSQL`` of the portal's ``pcx_patients.go``: a test
-compares them, so a change on either side fails.
+mirror ``ageAtInitialDxGroupSQL`` of the portal's ``pcx_patients.go``: keep them
+equal (CI does not check out that file, so no test compares them).
 """
 
 from typing import Any
@@ -40,14 +40,10 @@ AGE_AT_INITIAL_DX_GROUPS = (
 AGE_AT_INITIAL_DX_ELSE = "senior"
 
 
-def age_at_initial_dx_group_sql(p: _sql.Params | None) -> str:
-    """The CASE expression, its groups bound through ``p``, or written as literals
-    when ``p`` is None (to compare with the portal's text)."""
-    def value(group: str) -> str:
-        return f"'{group}'" if p is None else p(group)
-
-    whens = " ".join(f"WHEN {condition} THEN {value(group)}" for condition, group in AGE_AT_INITIAL_DX_GROUPS)
-    return f"CASE {whens} ELSE {value(AGE_AT_INITIAL_DX_ELSE)} END"
+def age_at_initial_dx_group_sql(p: _sql.Params) -> str:
+    """The CASE expression, its groups bound through ``p``."""
+    whens = " ".join(f"WHEN {condition} THEN {p(group)}" for condition, group in AGE_AT_INITIAL_DX_GROUPS)
+    return f"CASE {whens} ELSE {p(AGE_AT_INITIAL_DX_ELSE)} END"
 
 
 def patient_list_query(tenant: str, filters: dict[str, Any], limit: int) -> tuple[str, _sql.Params]:
