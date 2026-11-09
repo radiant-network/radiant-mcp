@@ -148,8 +148,10 @@ def failure(exc: Exception) -> ToolOutput:
         if correlation_id:
             details["correlation_id"] = correlation_id
         if exc.status >= 500:
-            # A server error body can carry the portal's internals (SQL, stack): logged, not returned.
-            logger.warning("Radiant API error %s (correlation id %s): %s", exc.status, correlation_id, body[:2000])
+            # A server error body can carry the portal's internals (SQL, stack) and patient
+            # identifiers: never returned, and logged at DEBUG only, as StarRocks messages.
+            logger.warning("Radiant API error %s (correlation id %s)", exc.status, correlation_id)
+            logger.debug("Radiant API error body: %s", body[:2000])
         elif body:
             # A 4xx body says what was wrong with the request: the agent can fix it.
             details["body"] = body[:2000]

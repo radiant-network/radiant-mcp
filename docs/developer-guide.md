@@ -138,7 +138,10 @@ sequenceDiagram
 - **Capacity.** The worker threads are shared by every user: `workers.run` admits at most
   `MCP_MAX_CONCURRENT_CALLS` bodies at once, and a call that finds no free slot
   within `MCP_QUEUE_TIMEOUT` fails with `upstream` instead of waiting behind slow
-  ones.
+  ones. The cap counts tool calls, not connections: `gene_info`, `variant_details`,
+  `get_patient_context` and the `cohort_carriers` summaries run up to 3 statements
+  or portal requests side by side inside their slot, so 20 calls can hold up to
+  60 StarRocks connections or portal requests at once.
 - **Partial failures.** A section that fails does not fail the tool: case
   context data types, patient page sections, variant sections and gene
   annotations are each caught and reported in `warnings` (`results.describe`).

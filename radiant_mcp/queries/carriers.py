@@ -11,7 +11,7 @@ from ..domain import rules as _rules
 from ..domain.criteria import Criteria
 from ..enums import ENUMS
 from .impact import impact_rank, most_severe_in
-from .quality import germline_qualifies
+from .quality import germline_qualifies, somatic_qualifies
 from .sequencing import latest_task_join
 
 _SUMMARY_LIMIT = 30
@@ -56,7 +56,7 @@ def carriers_cte(p: _sql.Params, tenant: str, criteria: Criteria) -> str:
         if criteria.zygosity:
             occ_where.append(f"o.{zygosity_column} IN ({p.list(criteria.zygosity)})")
         if criteria.is_somatic:
-            occ_where.append(f"o.filter = {p(_rules.PASS)}")
+            occ_where.append(somatic_qualifies(p))
         else:
             occ_where.append(germline_qualifies(p))
         occ_filter = (" WHERE " + " AND ".join(occ_where)) if occ_where else ""

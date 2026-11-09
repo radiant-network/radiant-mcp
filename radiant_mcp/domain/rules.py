@@ -34,6 +34,14 @@ GERMLINE_QUALITY_DEFINITION = (
     f"germline SNV calls with FILTER PASS, GQ >= {GERMLINE_MIN_GQ} and alternate depth >= {GERMLINE_MIN_AD_ALT} "
     "(the platform's carrier rule, as in the variant frequencies)"
 )
+# A somatic SNV call counts as a carrier under the ETL's somatic rule (`qualifies` in
+# somatic_snv_staging_variant_freq_insert.sql): FILTER PASS and tumor alternate depth at
+# least this (queries/quality.py). Keep it equal to the ETL's.
+SOMATIC_MIN_TUMOR_AD_ALT = 2
+SOMATIC_QUALITY_DEFINITION = (
+    f"somatic SNV calls with FILTER PASS and tumor alternate depth >= {SOMATIC_MIN_TUMOR_AD_ALT} "
+    "(the platform's carrier rule, as in the variant frequencies)"
+)
 # Calls with an alternate allele. The ETL loads only rows with one (has_alt), so a
 # filter on them is a safeguard, not a semantic change.
 ALT_ZYGOSITIES = ("HET", "HOM", "HEM")

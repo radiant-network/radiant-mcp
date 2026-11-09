@@ -217,3 +217,16 @@ def test_the_consequence_summary_counts_the_consequences_of_the_most_severe_impa
                       f" AND {rank} IS g.impact_rank ORDER BY 1, 2", p.values).fetchall()
     assert rows == [(1, "stop_gained"), (2, "missense_variant"), (3, "coding_sequence_variant"),
                     (3, "intron_variant")]
+
+
+def test_somatic_carriers_follow_the_platform_somatic_rule():
+    # The ETL's somatic `qualifies`: FILTER PASS and tumor alternate depth >= 2.
+    criteria = build_criteria("somatic_snv_tn", "TP53", None, None, None, None, None)
+    for sql, params in (carrier_queries.totals_query("demo", criteria),
+                        oncoprint_query("demo", "somatic_snv_tn", ["TP53"], None, [])):
+        assert bound_value(sql, params.values, "o.filter = ") == "PASS"
+        assert bound_value(sql, params.values, "o.tumor_ad_alt >= ") == rules.SOMATIC_MIN_TUMOR_AD_ALT == 2
+    assert criteria.describe()["quality"] == rules.SOMATIC_QUALITY_DEFINITION
+    germline_sql, _ = carrier_queries.totals_query(
+        "demo", build_criteria("germline_snv", "TP53", None, None, None, None, None))
+    assert "tumor_ad_alt" not in germline_sql

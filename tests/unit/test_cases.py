@@ -12,12 +12,28 @@ def test_search_cases_links_each_case(fake_api, run):
 
 def test_search_cases_by_identifier_caps_the_merged_list(fake_api, run):
     fake_api.on("cases", "autocomplete_cases", [{"type": "mrn", "value": "GM1"}, {"type": "case_id", "value": "7"}])
-    fake_api.on("cases", "search_cases", lambda list_body_with_criteria, **_: {
-        "count": 2, "list": [{"case_id": 7}, {"case_id": 8}],
-    })
-    result = run(search_cases(query="GM1", tenant="t", limit=1))
-    assert result["data"]["returned"] == 1 and [c["case_id"] for c in result["data"]["cases"]] == [7]
-    assert result["data"]["count"] == 2 and "longer identifier" in result["truncated"]["reason"]
+    offsets = []
+
+    def search(list_body_with_criteria, **_):
+        offsets.append(list_body_with_criteria.offset)
+        return {"count": 150, "list": [{"case_id": 7}, {"case_id": 8}]}
+
+    fake_api.on("cases", "search_cases", search)
+    result = run(search_cases(query="GM1", tenant="t", limit=1, offset=40))
+    data = result["data"]
+    assert data["returned"] == 1 and [c["case_id"] for c in data["cases"]] == [7]
+    # Past one page the exact total of several merged searches is unknown: a lower bound.
+    assert "count" not in data and data["count_at_least"] == 150
+    assert "longer identifier" in result["truncated"]["reason"]
+    # Pages of several searches cannot be merged: offset does not apply to a query.
+    assert offsets == [0, 0]
+
+
+def test_search_cases_by_identifier_counts_a_complete_merge(fake_api, run):
+    fake_api.on("cases", "autocomplete_cases", [{"type": "mrn", "value": "GM1"}, {"type": "case_id", "value": "7"}])
+    fake_api.on("cases", "search_cases", {"count": 1, "list": [{"case_id": 7}]})
+    result = run(search_cases(query="GM1", tenant="t"))
+    assert result["data"]["count"] == 1 and "count_at_least" not in result["data"] and result.get("truncated") is None
 
 
 def test_search_cases_validates_before_calling(fake_api, run):

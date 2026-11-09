@@ -89,17 +89,21 @@ def _search_patients(
                 if m.get("type") in _AUTOCOMPLETE_FIELDS:
                     by_field.setdefault(m["type"], []).append(m.get("value"))
             merged: dict[str, dict] = {}
-            truncated = False
+            totals = []
             for field, values in by_field.items():
                 resp = _search({field: values}, 0)
                 found = resp.get("list", [])
-                truncated = truncated or resp.get("count", 0) > len(found)
+                totals.append(resp.get("count", 0))
                 for p in found:
                     merged.setdefault(p["patient_key"], p)
             patients = list(merged.values())[:limit]
-            result: dict[str, Any] = {"tenant": tenant_code, "query": query, "count": len(merged)}
-            if truncated or len(merged) > limit:
+            result: dict[str, Any] = {"tenant": tenant_code, "query": query}
+            # A patient can match several identifier types: past one page, the exact total is unknown.
+            if any(total > limit for total in totals) or len(merged) > limit:
+                result["count_at_least"] = max([len(merged), *totals])
                 cut = "More patients match than were returned: use a longer identifier prefix or add filters."
+            else:
+                result["count"] = len(merged)
         else:
             resp = _search({}, offset)
             patients = resp.get("list", [])
@@ -172,8 +176,9 @@ async def search_patients(
             a single tenant; otherwise the response lists the choices.
         limit: Max patients to return (1–100, default 20).
         offset: Pagination offset (default 0, ignored with ``query``).
-            With ``query``, ``count`` is the number of distinct patients found
-            and ``truncated`` is set when some were not returned.
+            With ``query``, ``count`` is the number of distinct patients found;
+            when some were not returned, ``truncated`` is set and
+            ``count_at_least`` (a lower bound) replaces ``count``.
         sort_by: Optional sort field: birth_year, can_read_phi,
             cns_integrated_diagnosis, diagnosis_type_cohort, gender,
             organization_code, patient_id, survival_days, vital_status.

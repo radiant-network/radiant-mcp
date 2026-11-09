@@ -31,7 +31,9 @@ def create_app(mcp_app):
         Middleware(
             CORSMiddleware,
             allow_origins=["*"],
-            allow_credentials=True,
+            # Bearer tokens only: no cookie may ride a cross-origin request (with "*",
+            # Starlette would echo any origin back as allowed with credentials).
+            allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
         )

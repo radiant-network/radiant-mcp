@@ -6,7 +6,7 @@ from ..domain import data_types
 from ..domain import rules as _rules
 from ..domain.rules import ALT_ZYGOSITIES
 from .impact import most_severe_in
-from .quality import germline_qualifies
+from .quality import germline_qualifies, somatic_qualifies
 from .sequencing import latest_task_join
 
 
@@ -71,7 +71,7 @@ def oncoprint_query(tenant: str, data_type: str, genes: list[str], max_gnomad_af
         somatic = data_types.is_somatic(data_type)
         table = "somatic__snv__occurrence" if somatic else "germline__snv__occurrence"
         seq = "tumor_seq_id" if somatic else "seq_id"
-        occ_filter = (f"o.filter = {p(_rules.PASS)}" if somatic
+        occ_filter = (somatic_qualifies(p) if somatic
                       else f"o.zygosity IN ({p.list(ALT_ZYGOSITIES)}) AND {germline_qualifies(p)}")
         return (
             "WITH g AS (SELECT cf.locus_id, cf.symbol AS gene, array_join(array_agg(DISTINCT cf.consequence), ',') AS kind"

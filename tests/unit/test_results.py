@@ -79,10 +79,16 @@ def test_an_invalid_value_lists_the_allowed_ones():
     assert error.code == "invalid_input" and error.details == {"allowed": ["HIGH", "MODERATE"]}
 
 
-def test_a_server_error_body_is_logged_not_returned(caplog):
+def test_a_server_error_body_is_logged_at_debug_only_not_returned(caplog):
+    caplog.set_level("WARNING")
     error = failure(api_exception(500, "pq: column x does not exist", {"X-Correlation-ID": "abc"})).error
     assert error.code == "upstream" and error.details == {"status": 500, "correlation_id": "abc"}
-    assert "column x does not exist" in caplog.text and "abc" in caplog.text
+    # The body can quote SQL holding patient identifiers: kept out of the WARNING line.
+    assert "abc" in caplog.text and "column x does not exist" not in caplog.text
+    caplog.clear()
+    caplog.set_level("DEBUG")
+    failure(api_exception(500, "pq: column x does not exist", {"X-Correlation-ID": "abc"}))
+    assert "column x does not exist" in caplog.text
 
 
 def test_a_starrocks_error_is_logged_without_its_message(caplog):

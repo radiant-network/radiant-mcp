@@ -384,6 +384,9 @@ def test_oncoprint_counts_every_altered_case_and_flags_a_cut(fake_api, fake_sql,
     ({"genes": []}, "1 to 20 genes"),
     ({"genes": ["A'--"]}, "invalid gene symbol"),
     ({"genes": ["TP53"], "data_types": ["rna"]}, "invalid data_type"),
+    # The SNV filters would be dropped silently on CNVs only.
+    ({"genes": ["TP53"], "data_types": ["somatic_cnv"], "vep_impact": ["HIGH"]}, "only apply to SNV"),
+    ({"genes": ["TP53"], "data_types": ["germline_cnv"], "max_gnomad_af": 0.01}, "only apply to SNV"),
 ])
 def test_oncoprint_validates(fake_api, run, kwargs, message):
     assert message in run(oncoprint(**kwargs))["error"]["message"]
@@ -409,6 +412,29 @@ def test_lollipop_draws_the_main_transcript(fake_api, fake_sql, run):
     assert data["variants_on_other_transcripts"] == 1 and data["variants_without_protein_change"] == 1
     assert data["variants_picked_on_another_gene"] == 1
     assert data["top_variants"][0] == {"aa_change": "p.Arg201Ter", "carriers": 4, "class": "truncating"}
+
+
+def test_lollipop_draws_a_variant_without_consequences(fake_api, fake_sql, run):
+    fake_api.on("genes", "gene_search", [{"symbol": "SMARCB1"}])
+    fake_sql.on("COUNT(DISTINCT car.patient_id)", [
+        {"locus_id": 1, "symbol": "SMARCB1", "transcript_id": "T1", "aa_change": "p.Arg201Ter", "kind": None,
+         "carriers": 2},
+    ])
+    data, _ = _parts(run(lollipop("smarcb1", tenant="demo")))
+    assert data["variants_drawn"] == 1 and data["top_variants"][0]["class"] == "other"
+
+
+def test_a_failed_render_leaves_no_figure_open():
+    import matplotlib.pyplot as plt
+
+    @charts._serialized
+    def broken():
+        plt.subplots()
+        raise ValueError("bad data")
+
+    with pytest.raises(ValueError):
+        broken()
+    assert plt.get_fignums() == []
 
 
 # -- patient_timeline / bar_chart ----------------------------------------------------
