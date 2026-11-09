@@ -141,3 +141,11 @@ def test_tenant_is_resolved_from_memberships(fake_api, run):
     result = run(get_patient_context(KEY))
     assert result["error"]["code"] == "ambiguous_tenant" and "several tenants" in result["error"]["message"]
     assert [t["code"] for t in result["error"]["details"]["tenants"]] == ["a", "b"]
+
+
+def test_a_refused_token_fails_the_patient_context_instead_of_one_section(fake_api, run):
+    # A 401 on a section is not a partial failure: every section would fail the same way.
+    fake_api.on("patients", "patient_entity", _patient(KEY))
+    fake_api.on("patients", "patient_treatments", api_exception(401))
+    result = run(get_patient_context(KEY, tenant="radiant", sections=["treatments"]))
+    assert result["ok"] is False and result["error"]["code"] == "auth_required"

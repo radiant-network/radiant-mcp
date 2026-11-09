@@ -57,3 +57,10 @@ def test_gene_info_says_which_lists_it_cut(fake_api, fake_sql, run):
     result = run(gene_info("SCN1A", tenant="demo"))
     assert len(result["data"]["omim_conditions"]) == 50 and len(result["data"]["gnomad_constraint"]) == 10
     assert sorted(result["truncated"]["lists"]) == ["gnomad_constraint", "omim_conditions"]
+
+
+def test_an_expired_token_fails_gene_info_instead_of_warning_on_every_section(fake_api, fake_sql, run):
+    echo_gene_search(fake_api)
+    fake_sql.on("omim_gene_panel", _sql.SqlError("Authentication expired", "expired"))
+    result = run(gene_info("SCN1A", tenant="demo"))
+    assert result["ok"] is False and result["error"]["code"] == "auth_required"

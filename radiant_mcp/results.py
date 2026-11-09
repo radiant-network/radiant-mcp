@@ -215,8 +215,24 @@ class ArgumentErrors(Middleware):
 
 
 def describe(exc: Exception) -> str:
-    """One line for a warning about a lookup that failed while the rest of the tool went on."""
+    """One line for a warning about a lookup that failed while the rest of the tool went on.
+
+    An expired or refused token is not a partial failure: every later lookup fails the same
+    way, and the tool would answer ok with empty sections (second_hit: no sequencing, so "no
+    second hit"). It is raised again, so the whole call fails with ``auth_required``.
+    """
+    if _is_auth_failure(exc):
+        raise exc
     return failure(exc).error.message
+
+
+def _is_auth_failure(exc: Exception) -> bool:
+    from radiant_python.exceptions import ApiException
+
+    from .sql import SqlError
+
+    return ((isinstance(exc, SqlError) and exc.kind == "expired")
+            or (isinstance(exc, ApiException) and exc.status == 401))
 
 
 def respond(output: ToolOutput) -> ToolResult:

@@ -77,6 +77,14 @@ def test_second_hit_reads_the_loaded_task_while_a_re_analysis_is_imported(fake_a
     assert any("task_id=22 (germline_snv): not imported yet" in w for w in result["warnings"])
 
 
+def test_a_token_that_expires_mid_call_fails_second_hit_instead_of_finding_nothing(fake_api, fake_sql, run):
+    # The part lookup used to swallow it: every key skipped, ok, "no second hit".
+    _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
+    fake_sql.on("staging_sequencing_experiment", _sql.SqlError("Authentication expired", "expired"))
+    result = run(second_hit(1, tenant="demo"))
+    assert result["ok"] is False and result["error"]["code"] == "auth_required"
+
+
 def test_second_hit_skips_keys_without_part(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "germline", {"germline_snv": [{"id": 20}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({}, "part lookup failed: boom"))
