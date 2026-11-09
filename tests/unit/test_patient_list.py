@@ -39,3 +39,12 @@ def test_filters_become_the_portal_conditions():
 def test_only_filter_fields_and_plain_values_reach_the_sql(filters, message):
     with pytest.raises(_sql.InvalidInput, match=message):
         patients.patient_list_query("demo", filters, 11)
+
+
+def test_filter_sets_are_anded_not_merged():
+    # Cohort "vincristine or cisplatin" AND group "carboplatin": both conditions, not their
+    # (empty) intersection, which would leave the group with nobody.
+    sql, params = patients.patient_list_query("demo", [{"chemotherapy_agents": ["vincristine", "cisplatin"]},
+                                                       {"chemotherapy_agents": ["carboplatin"]}], 11)
+    assert sql.count("arrays_overlap(pl.chemotherapy_agents") == 2
+    assert {"vincristine", "cisplatin", "carboplatin"} <= set(params.values.values())

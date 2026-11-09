@@ -324,11 +324,27 @@ def test_survival_reports_an_unknown_gene(fake_api, fake_sql, run):
     assert "not found" in result["error"]["message"]
 
 
-def test_survival_without_clinical_data(fake_api, fake_sql, run):
-    fake_sql.on("v_pcx_30_patient_list", _sql.SqlError("Unknown table 'x_tenant.v_pcx_30_patient_list'", "invalid", 1146))
+@pytest.mark.parametrize("error", [
+    # What StarRocks really answers (test_starrocks): an unknown database, an unknown table.
+    _sql.SqlError("5501 (3F000): Getting analyzing error. Detail message: Unknown database 'x_tenant'.",
+                  "invalid", 5501),
+    _sql.SqlError("5502 (42602): Getting analyzing error. Detail message: Unknown table "
+                  "'x_tenant.v_pcx_30_patient_list'.", "invalid", 5502),
+])
+def test_survival_without_clinical_data(fake_api, fake_sql, run, error):
+    fake_sql.on("v_pcx_30_patient_list", error)
     result = run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "alive"}},
                                         {"label": "B", "filters": {"vital_status": "deceased"}}], tenant="x"))
     assert result["error"]["code"] == "unavailable" and result.png is None
+
+
+def test_survival_reports_another_starrocks_error_as_an_error(fake_api, fake_sql, run):
+    # A column the view lost is a bug to see, not "no clinical data".
+    fake_sql.on("v_pcx_30_patient_list", _sql.SqlError("5502 (42602): Column 'vital_status' cannot be resolved.",
+                                                       "invalid", 5503))
+    result = run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "alive"}},
+                                        {"label": "B", "filters": {"vital_status": "deceased"}}], tenant="x"))
+    assert result["error"]["code"] != "unavailable"
 
 
 # -- oncoprint / lollipop ------------------------------------------------------------
@@ -619,6 +635,16 @@ def test_survival_combines_cohort_and_group_filters_in_one_search(fake_api, fake
     fields = [set(re.findall(r"pl\.(\w+) IN \(", sql)) for sql, _ in _searches(fake_sql)]
     assert {"diagnosis_type_cohort", "vital_status"} in fields
     assert {"diagnosis_type_cohort", "organization_code"} in fields
+
+
+def test_survival_keeps_both_conditions_on_an_array_field(fake_api, fake_sql, run):
+    # Cohort and group on chemotherapy_agents: both overlaps, never an empty intersection.
+    _patients(fake_sql, [{"patient_key": _key(1), "survival_days": 100, "vital_status": "deceased"}])
+    data, _ = _parts(run(survival_curve(groups=[{"label": "Carboplatin", "filters": {"chemotherapy_agents": ["carboplatin"]}}],
+                                        cohort_filters={"chemotherapy_agents": ["vincristine", "cisplatin"]},
+                                        others_label="Others", tenant="demo")))
+    group_sql = [sql for sql, _ in _searches(fake_sql) if sql.count("arrays_overlap") == 2]
+    assert group_sql and data["groups"][0]["patients"] == 1
 
 
 def test_survival_names_an_empty_group(fake_api, run):

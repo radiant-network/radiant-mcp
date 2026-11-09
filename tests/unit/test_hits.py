@@ -102,7 +102,7 @@ def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
         {"gene": "BRCA1", "locus_id": 1003, "clinvar_interpretation": "[]", "interpreted_plp": 1},
         {"gene": "SCN1A", "locus_id": 1001, "clinvar_interpretation": '["Pathogenic"]', "interpreted_plp": 0},
     ])
-    fake_sql.on("somatic__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1005}])
+    fake_sql.on("somatic__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1005, "vep_impact": "HIGH"}])
     fake_sql.on("somatic__cnv__occurrence", [{"gene": "BRCA1", "cnv_id": 601, "cnv_type": "CNLOH"}])
 
     result = run(second_hit(1, tenant="demo"))
@@ -124,8 +124,8 @@ def test_a_somatic_call_with_too_few_tumor_reads_is_kept_and_marked(fake_api, fa
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
     fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
     fake_sql.on("germline__snv__occurrence", [{"gene": "TP53", "locus_id": 3, "clinvar_interpretation": "[]"}])
-    fake_sql.on("somatic__snv__occurrence", [{"gene": "TP53", "locus_id": 5, "low_quality": 1, "tumor_ad_alt": 1},
-                                             {"gene": "TP53", "locus_id": 6, "low_quality": 0, "tumor_ad_alt": 9}])
+    fake_sql.on("somatic__snv__occurrence", [{"gene": "TP53", "locus_id": 5, "vep_impact": "HIGH", "low_quality": 1, "tumor_ad_alt": 1},
+                                             {"gene": "TP53", "locus_id": 6, "vep_impact": "HIGH", "low_quality": 0, "tumor_ad_alt": 9}])
     data = run(second_hit(1, tenant="demo"))["data"]
     [gene] = data["genes"]
     assert [(r["locus_id"], r["low_quality"]) for r in gene["somatic_snv"]] == [(5, True), (6, False)]
@@ -143,10 +143,29 @@ def test_a_variant_of_two_germline_sequencings_is_listed_once(fake_api, fake_sql
     fake_sql.on("germline__snv__occurrence", lambda values: [{
         "gene": "TP53", "locus_id": 3, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]',
         "low_quality": 0 if 916 in values.values() else 1}])
-    fake_sql.on("somatic__snv__occurrence", [{"gene": "TP53", "locus_id": 5}])
+    fake_sql.on("somatic__snv__occurrence", [{"gene": "TP53", "locus_id": 5, "vep_impact": "HIGH"}])
     [gene] = run(second_hit(1, tenant="demo"))["data"]["genes"]
     assert len(gene["germline"]) == 1 and gene["germline"][0]["low_quality"] is False
     assert "seq_id=12" in gene["germline"][0]["portal_url"]
+
+
+def test_a_first_hit_locus_is_no_second_hit_of_an_overlapping_gene_without_a_qualifying_impact(
+        fake_api, fake_sql, run, monkeypatch):
+    # Locus 3 is P/LP for TP53 and only intronic (MODIFIER) in the overlapping WRAP53, which has
+    # its own germline P/LP variant. The tumor calls locus 3: it comes back for both genes.
+    _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 15}])
+    fake_sql.on("germline__snv__occurrence", [
+        {"gene": "TP53", "locus_id": 3, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]'},
+        {"gene": "WRAP53", "locus_id": 7, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]'},
+    ])
+    fake_sql.on("somatic__snv__occurrence", [
+        {"gene": "TP53", "locus_id": 3, "vep_impact": "HIGH", "tumor_ad_ratio": 0.5},
+        {"gene": "WRAP53", "locus_id": 3, "vep_impact": "MODIFIER", "tumor_ad_ratio": 0.5},
+    ])
+    data = run(second_hit(1, tenant="demo"))["data"]
+    assert data["genes"] == [] and data["germline_plp_without_somatic_event"] == ["TP53", "WRAP53"]
 
 
 def test_the_germline_variant_called_in_the_tumor_is_not_a_second_hit(fake_api, fake_sql, run, monkeypatch):
@@ -286,7 +305,7 @@ def test_second_hit_reads_the_latest_task_of_a_rerun(fake_api, fake_sql, run, mo
         {"case_id": 9, "seq_id": 11, "task_id": 23, "part": 15},
     ])
     fake_sql.on("germline__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1003, "clinvar_interpretation": "[]"}])
-    fake_sql.on("somatic__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1005}])
+    fake_sql.on("somatic__snv__occurrence", [{"gene": "BRCA1", "locus_id": 1005, "vep_impact": "HIGH"}])
     result = run(second_hit(1, tenant="demo"))
     assert [k["task_id"] for k in result["data"]["germline_sequencings"]] == [23]
     [gene] = result["data"]["genes"]

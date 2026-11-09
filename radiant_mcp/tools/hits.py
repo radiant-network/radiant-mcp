@@ -264,6 +264,11 @@ def _somatic(token: str, tenant: str, case: dict, keys: list[dict], warnings: li
                             "possible_allelic_imbalance": _imbalance(row, germline_zygosity),
                         })
                         continue
+                    # The query also keeps every first-hit locus whatever its impact (to list it
+                    # in the tumor), so a locus that is a first hit of gene A comes back for an
+                    # overlapping gene B: a second hit of B only with a qualifying impact on B.
+                    if row.get("vep_impact") not in _rules.QUALIFYING_IMPACTS:
+                        continue
                     hits[row["gene"]]["somatic_snv"].append({**row, "data_type": data_type})
         for key in _usable(keys, "somatic_cnv", warnings):
             for row in _capped(token, somatic_cnv_query(tenant_db, key, genes),

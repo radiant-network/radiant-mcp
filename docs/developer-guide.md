@@ -251,8 +251,10 @@ flowchart LR
     catalog -.-> views
     enums2 -. "test_schema_catalog" .-> qa
     fields -. "test_api_fields" .-> types
+    queries2 -. "test_patient_list<br/>(array filter fields)" .-> types
     links -. "test_portal_links (by hand)" .-> routes
     client -. "generated from" .-> swagger
+    client -. "test_portal_api<br/>(every operation called exists)" .-> client
 ```
 
 - **SQL** (`tests/unit/test_curated_sql_schema.py`). Every builder of `queries/`
@@ -266,16 +268,43 @@ flowchart LR
 - **Portal search fields** (`test_api_fields.py`). The fields the tools let the
   agent filter and sort on must match `CanBeFiltered` / `CanBeSorted` of the
   backend's Go field lists.
+- **Patient list** (`test_patient_list.py`). `survival_curve` reads
+  `v_pcx_30_patient_list` itself (`queries/patients.py`), mirroring the portal's
+  `search_patients`: the array filter fields must be the portal's `IsArray`
+  ones, and the schema check resolves every filter field in the query.
 - **Portal links** (`portal_links.py`). They mirror the frontend routes and the
   case variants tab parameters. No checkout checks them: update the module and
   its tests when the portal renames a route.
 - **Portal API client.** `radiant_python` is installed from a portal commit;
-  bumping that commit can rename models or methods.
+  bumping that commit can rename models or methods. `test_portal_api.py` checks
+  that every operation the code calls exists in the pinned client.
+
+These checks read names (tables, columns, fields, operations), not meaning. The
+rules copied from the other modules have no test and must be kept equal by hand
+when their owner changes them:
+
+- the germline and somatic carrier rules (`queries/quality.py`, thresholds in
+  `domain/rules.py`): `qualifies` in the ETL's
+  `germline_snv_staging_variant_freq_insert.sql` and
+  `somatic_snv_staging_variant_freq_insert.sql`;
+- the age groups of the patient list (`queries/patients.py`):
+  `ageAtInitialDxGroupSQL` in the portal's `pcx_patients.go`;
+- the filter semantics of the patient list (`IN`, `arrays_overlap` for an
+  array field): the portal's `types/filter.go`;
+- the portal links (`portal_links.py`): the frontend routes, above.
 
 CI (`.github/workflows/test.yml`) checks out the ETL and portal `main` branches
 next to the repo and requires both (`RADIANT_REQUIRE_ETL=1`,
-`RADIANT_REQUIRE_PORTAL=1`). Locally, point `RADIANT_ETL_DIR` and
-`RADIANT_PORTAL_DIR` at checkouts on `main`; without them those tests are skipped.
+`RADIANT_REQUIRE_PORTAL=1`). It checks out **only some paths** (`sparse-checkout`):
+the ETL's `radiant/dags/sql`, `radiant/data_qa/macros` and `radiant_tables.py`;
+the portal's view scripts, migrations, `backend/internal/types` and
+`starrocks_tenant.go`. A test that reads another file passes locally and fails
+in CI: add the path to the workflow in the same change.
+
+Locally, point `RADIANT_ETL_DIR` and `RADIANT_PORTAL_DIR` at checkouts on
+`main`; without them those tests are skipped. A checkout on another branch gives
+false failures; an archive of `main` avoids touching it:
+`git -C ../radiant-portal archive origin/main | tar -x -C /tmp/portal-main`.
 
 ## Adding a tool
 
@@ -292,8 +321,10 @@ next to the repo and requires both (`RADIANT_REQUIRE_ETL=1`,
    Return `ok(data, warnings=..., truncated=..., portal_url=...)`, raise
    `invalid()` / `not_found()`, and let the API and StarRocks errors propagate.
 4. Put new SQL in `queries/` as `(sql, Params)`, bind every value, filter
-   occurrences on `part`, and add the builder to `test_curated_sql_schema.py`
-   and `test_query_params.py`.
+   occurrences on `part`, and add the builder to `_queries()` of
+   `test_curated_sql_schema.py`, with arguments that cover its branches:
+   `test_every_builder_is_covered` fails until it is there, whatever its module,
+   and `test_query_params.py` checks the same list for placeholders and literals.
 5. Register the function in `tools/__init__.py`: `API_TOOLS` when it needs the
    portal API, the always-on list otherwise. Update `test_registration.py` and
    the tool count in `test_results.py`.

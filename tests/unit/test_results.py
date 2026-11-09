@@ -101,3 +101,12 @@ def test_an_api_error_keeps_its_status_and_body():
     error = failure(api_exception(400, '{"message":"unknown field: foo"}')).error
     assert error.message == "Radiant API error 400: error"
     assert error.details == {"status": 400, "body": '{"message":"unknown field: foo"}'}
+
+
+def test_a_tls_error_to_the_portal_is_logged_not_returned(caplog):
+    # The generated client wraps urllib3's SSLError as an ApiException of status 0.
+    from radiant_python.exceptions import ApiException
+
+    error = failure(ApiException(status=0, reason="SSLError\nHTTPSConnectionPool(host='portal.internal')")).error
+    assert error.code == "upstream" and "portal.internal" not in error.message
+    assert "portal.internal" in caplog.text
