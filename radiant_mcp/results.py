@@ -143,6 +143,11 @@ def failure(exc: Exception) -> ToolOutput:
         if exc.kind == "expired":
             return error("auth_required", str(exc))
         return error("upstream", f"StarRocks error: {exc}")
+    if isinstance(exc, ApiException) and not exc.status:
+        # Status 0: the generated client's wrapping of a transport error (urllib3 SSLError).
+        # Its reason is the raw TLS text, which can name internal hosts: logged, not returned.
+        logger.warning("Radiant API unreachable: %s", exc.reason)
+        return error("upstream", "The Radiant API did not answer (TLS error); retry once.")
     if isinstance(exc, ApiException):
         details: dict[str, Any] = {"status": exc.status}
         body = (exc.body.decode() if isinstance(exc.body, bytes) else str(exc.body)) if exc.body else ""

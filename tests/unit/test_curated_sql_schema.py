@@ -14,6 +14,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.qualify import qualify
 
+from radiant_mcp.api_fields import PATIENT_FILTER_FIELDS
 from radiant_mcp.domain.criteria import Criteria
 from radiant_mcp.domain.data_types import COHORT_DATA_TYPES
 from radiant_mcp.queries import carriers, charts, genes, hits, patients, sequencing
@@ -70,9 +71,10 @@ def _queries():
         yield f"charts.oncoprint[{data_type}]", charts.oncoprint_query(TENANT, data_type, GENES, 0.01, ["HIGH"])
     yield "charts.oncoprint[no filter]", charts.oncoprint_query(TENANT, "germline_snv", GENES, None, [])
     yield "patients.patient_list", patients.patient_list_query(TENANT, {}, 50001)
-    yield "patients.patient_list[filters]", patients.patient_list_query(
-        TENANT, {"cns_integrated_diagnosis": ["Medulloblastoma"], "age_at_initial_dx_group": "childhood",
-                 "chemotherapy_agents": ["vincristine"], "got_radiation_ever": True, "patient_name": "Doe"}, 50001)
+    # Every filter field the portal accepts must resolve in the subquery, or survival_curve
+    # fails at run time on a field api_fields allows.
+    yield "patients.patient_list[every filter]", patients.patient_list_query(
+        TENANT, {field: ["x"] for field in PATIENT_FILTER_FIELDS}, 50001)
 
 
 QUERIES = list(_queries())

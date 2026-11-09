@@ -251,6 +251,16 @@ def test_a_token_that_expired_during_the_call_asks_to_sign_in_again(starrocks_se
     assert len(starrocks_server.connections) == 1
 
 
+def test_a_token_about_to_expire_counts_as_expired(starrocks_server):
+    # StarRocks checks it again with its own clock: a login landing just after exp would be
+    # denied as a missing grant.
+    import time
+
+    with pytest.raises(starrocks.StarRocksError) as exc:
+        starrocks.query(jwt("bob", exp=int(time.time()) + 5), "SELECT 1")
+    assert exc.value.kind == "expired" and starrocks_server.connections == []
+
+
 @pytest.mark.parametrize("errno, sqlstate, msg, code", [
     # The agent wrote the statement: a syntax error or an unknown column is its to fix.
     (1064, "42000", "Getting syntax error at line 1", "invalid_input"),

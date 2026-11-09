@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 # Extra seconds the socket waits beyond query_timeout, so StarRocks' own
 # timeout error normally arrives first.
 _READ_TIMEOUT_MARGIN = 5
+# A token this close to its exp counts as expired: StarRocks validates it again with its own
+# clock, and would deny a login that lands just after exp as a missing grant.
+_EXPIRY_MARGIN = 30
 
 _DB_NAME = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 
@@ -128,7 +131,7 @@ def _expired(token: str) -> bool:
     """The token was valid when the call arrived, but a tool chains statements for
     minutes: past ``exp``, StarRocks would deny the login as if the grants were missing."""
     exp = _claims(token).get("exp")
-    return isinstance(exp, (int, float)) and exp <= time.time()
+    return isinstance(exp, (int, float)) and exp <= time.time() + _EXPIRY_MARGIN
 
 
 def _tls(ca_file: str | None) -> dict:

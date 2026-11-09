@@ -16,7 +16,6 @@ from ...queries.carriers import carrier_patients_query
 from ...queries.patients import PATIENT_LIST_ROW_LIMIT, patient_list_query
 from ...queries.sequencing import genotyped_patients_query
 from ...results import ToolFailure, ToolOutput, failure, invalid, not_found, ok, respond
-from ...services.cases import merge_criteria
 from ...services.genes import not_found_message, resolve_genes
 from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, unknown_filter_fields
 from ._common import DAYS_PER_YEAR
@@ -158,13 +157,14 @@ class _PatientReader:
         self.capped = False
         self.without_key = 0
 
-    def by_key(self, filters: dict) -> dict[str, dict]:
-        """The patients matching ``filters`` (capped), by patient key."""
+    def by_key(self, *filter_sets: dict) -> dict[str, dict]:
+        """The patients matching every filter set (capped), by patient key."""
         try:
-            rows = _sql.run(self.token, *patient_list_query(self.tenant, filters, PATIENT_LIST_ROW_LIMIT + 1))
+            rows = _sql.run(self.token, *patient_list_query(self.tenant, [f for f in filter_sets if f], PATIENT_LIST_ROW_LIMIT + 1))
         except _sql.SqlError as exc:
-            # A tenant without the clinical views: unknown table (any other error is a real one).
-            if exc.errno not in (1049, 1146) and "unknown table" not in str(exc).lower():
+            # A tenant without the clinical views: unknown database (StarRocks 5501) or table
+            # (5502), the MySQL numbers too. Any other error is a real one.
+            if exc.errno not in (5501, 5502, 1049, 1146) and "unknown table" not in str(exc).lower():
                 raise
             raise ToolFailure("unavailable", f"No clinical data for tenant {self.tenant}: its patient views "
                                              "could not be read.", tenant=self.tenant) from exc
@@ -217,9 +217,8 @@ def _resolve_group(token: str, tenant: str, spec: GroupSpec, cohort: dict[str, d
         return found, {"patient_keys": len(spec.patient_keys),
                        "not_found_or_not_in_cohort": len(spec.patient_keys) - len(found)}
     if spec.filters is not None:
-        # One search with the cohort and group criteria together: the API ANDs them.
-        merged = merge_criteria(cohort_filters, spec.filters)
-        matched = reader.by_key(merged) if merged is not None else {}
+        # One statement with the cohort and group conditions AND-ed (not merged: see patient_list_query).
+        matched = reader.by_key(cohort_filters, spec.filters)
         if cohort is None:
             return matched, {"filters": spec.filters}
         inside = {k: p for k, p in matched.items() if k in cohort}

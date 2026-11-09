@@ -46,13 +46,21 @@ def age_at_initial_dx_group_sql(p: _sql.Params) -> str:
     return f"CASE {whens} ELSE {p(AGE_AT_INITIAL_DX_ELSE)} END"
 
 
-def patient_list_query(tenant: str, filters: dict[str, Any], limit: int) -> tuple[str, _sql.Params]:
+def patient_list_query(tenant: str, filters: dict[str, Any] | list[dict[str, Any]],
+                       limit: int) -> tuple[str, _sql.Params]:
     """``(patient_key, survival_days, vital_status, radiant_patient_id, case_count)`` of the
-    patients matching ``filters`` (search_patients filters, AND-ed), by patient key."""
+    patients matching ``filters`` (search_patients filters, AND-ed), by patient key.
+
+    ``filters`` can be several filter sets (a cohort's and a group's): every condition of
+    every set is AND-ed. Merging them into one set would intersect the values of a field in
+    both, which is wrong for an array field: "received vincristine or cisplatin" AND "received
+    carboplatin" is not "received an agent in neither list".
+    """
     p = _sql.Params()
     tenant_db = _sql.tenant_db(tenant)
     where = []
-    for field, value in filters.items():
+    filter_sets = [filters] if isinstance(filters, dict) else filters
+    for field, value in ((f, v) for filter_set in filter_sets for f, v in filter_set.items()):
         # The field is written into the SQL: only the portal's filter fields.
         _sql.one_of(field, PATIENT_FILTER_FIELDS, "patient filter field")
         values = list(value) if isinstance(value, (list, tuple)) else [value]
