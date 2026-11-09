@@ -96,14 +96,16 @@ else
   fail "Health endpoint did not return healthy: $HEALTH"
 fi
 
-# 3. OAuth protected resource metadata
+# 3. OAuth protected resource metadata: the route at the app root (oauth.py), the one the
+#    provider advertises, not fastmcp's own under /mcp.
 echo
 echo "--- Test: OAuth protected resource metadata ---"
-METADATA_STATUS=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" "${MCP_URL}/mcp/.well-known/oauth-protected-resource")
-if [ "$METADATA_STATUS" = "200" ]; then
-  pass "OAuth protected resource metadata returns 200"
+METADATA=$(curl -s --max-time 5 "${MCP_URL}/.well-known/oauth-protected-resource")
+# The resource is MCP_BASE_URL + /mcp, which can differ from MCP_URL inside compose.
+if echo "$METADATA" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['resource'].endswith('/mcp') and d['authorization_servers']" 2>/dev/null; then
+  pass "OAuth protected resource metadata at the root advertises the /mcp resource and Keycloak"
 else
-  fail "OAuth protected resource metadata returned $METADATA_STATUS (expected 200)"
+  fail "OAuth protected resource metadata at the root returned: $METADATA"
 fi
 
 # 4. Get JWT token from Keycloak

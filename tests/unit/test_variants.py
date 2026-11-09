@@ -23,7 +23,7 @@ def test_details_keep_key_transcripts_and_report_failed_sections(fake_api, run):
     assert [t["transcript_id"] for t in gene["transcripts"]] == ["T2"] and gene["other_transcripts"] == 4
     assert result["data"]["internal_frequencies"] == {"pc_all": 3}
     assert result["warnings"] == ["clinvar: Radiant API error 500: error"]
-    assert "occurrence" not in result
+    assert "occurrence" not in result["data"]
 
 
 def test_details_accept_a_numeric_locus_id(fake_api, run):

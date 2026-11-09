@@ -1,9 +1,10 @@
-"""Every curated query of the hit and cohort tools binds exactly its placeholders, and the rules use stored values."""
+"""Every curated query binds exactly its placeholders, and the rules use stored values."""
 
 import re
 
 import pytest
 from conftest import CNV_KEY, SNV_KEY, bound_value
+from test_curated_sql_schema import QUERIES
 
 from radiant_mcp.domain import rules as _rules
 from radiant_mcp.domain.criteria import build_criteria
@@ -52,10 +53,19 @@ def _all_queries():
         yield f"with_term {c.data_type}", carrier_queries.carriers_with_term_query("demo", c, "HP:0001250", 10)
 
 
-@pytest.mark.parametrize("name, query", list(_all_queries()), ids=lambda v: v if isinstance(v, str) else "")
+# Constants of the SQL itself, not values: split_part(transcript_id, '.', 1) drops the version,
+# array_join(..., ',') joins the consequences.
+_SQL_CONSTANTS = ("'.'", "','")
+
+
+# The hit and cohort queries with every filter, plus every builder of the schema check
+# (test_curated_sql_schema: test_every_builder_is_covered keeps that list complete).
+@pytest.mark.parametrize("name, query", list(_all_queries()) + QUERIES, ids=lambda v: v if isinstance(v, str) else "")
 def test_each_query_binds_exactly_its_placeholders(name, query):
     sql, params = query
     assert _placeholders(sql) == set(params.values), name
+    for constant in _SQL_CONSTANTS:
+        sql = sql.replace(constant, "")
     assert "'" not in sql, f"{name}: a literal value is written into the SQL"
 
 
