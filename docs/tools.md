@@ -61,6 +61,10 @@ compute their own answers, and follow these rules:
   and at least 3 reads show the variant. The second-hit search keeps the
   calls that fail this rule, marked as low quality, so a real but poorly
   covered event is not hidden. family_venn does not apply it.
+- **Somatic call quality.** A somatic variant call counts as a carrier only
+  when it passes the portal's somatic frequency rule: the variant passes the
+  caller's filters and at least 2 tumor reads show it. The second-hit search
+  only requires the caller's filters.
 - **Which variants are "in" a gene.** A variant belongs to a gene when it has
   a consequence on one of that gene's transcripts, not only on the transcript
   the annotation picked. A variant inside an intron counts. A variant only

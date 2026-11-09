@@ -64,7 +64,8 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
     result: dict[str, Any] = {
         "tenant": tenant_code, "genes": resolved, "unknown_genes": unknown, "data_types": data_types,
         "altered_cases": len(cases), "cases_shown": len(shown), "altered_cases_per_gene": per_gene,
-        "filters": {"max_gnomad_af": max_gnomad_af, "vep_impact": vep_impact or None},
+        "filters": {"max_gnomad_af": max_gnomad_af, "vep_impact": vep_impact or None,
+                    "applied_to": "SNV data types only"},
         "classes": "truncating > splice (acceptor / donor) > missense > inframe > other for SNVs; CNV type "
                    "for CNVs; 'multiple' when a case has several classes in a gene",
     }
@@ -75,6 +76,8 @@ def _oncoprint(api: RadiantApi, token: str, genes: list[str], data_types: list[s
         if "germline_snv" in data_types and max_gnomad_af is None and not vep_impact:
             warnings.append("no frequency or impact filter: common germline polymorphisms are counted; "
                             "pass max_gnomad_af (e.g. 0.01) or vep_impact for rare or damaging variants")
+    if "somatic_snv_tn" in data_types:
+        result["somatic_snv_quality"] = _rules.SOMATIC_QUALITY_DEFINITION
     cut = None
     if truncated:
         cut = Truncation(reason=f"More than {ONCOPRINT_ROW_LIMIT} rows: the cases with the highest case ids are "
@@ -100,10 +103,11 @@ async def oncoprint(
     CNVs; 'multiple' when a case has several classes in a gene. A germline
     case counts the proband's variants only. Returns the image plus the
     altered cases per gene, over every altered case, not only those shown.
-    Germline SNV calls follow the platform's carrier quality rule (FILTER
-    PASS, GQ >= 20, alternate depth >= 3) but have no rarity or impact filter
-    by default: pass max_gnomad_af or vep_impact to leave out common
-    polymorphisms.
+    SNV calls follow the platform's carrier quality rule (germline: FILTER
+    PASS, GQ >= 20, alternate depth >= 3; somatic: FILTER PASS, tumor
+    alternate depth >= 2). Germline SNVs have no rarity or impact filter by
+    default: pass max_gnomad_af or vep_impact to leave out common
+    polymorphisms. Both filters apply to the SNV data types only.
 
     Args:
         genes: 1 to 20 official HGNC symbols (or Ensembl gene ids); aliases are
@@ -125,6 +129,9 @@ async def oncoprint(
             if not 0 < af <= 1:
                 raise _sql.InvalidInput("max_gnomad_af must be in (0, 1]")
         impacts = _sql.all_of(canonical_values("vep_impact", vep_impact or []), ENUMS["vep_impact"], "vep_impact")
+        used = [name for name, value in (("max_gnomad_af", af), ("vep_impact", impacts)) if value]
+        if used and not any(_data_types.is_snv(t) for t in types):
+            raise _sql.InvalidInput(f"{', '.join(used)} only apply to SNV data types")
     except _sql.InvalidInput as exc:
         return respond(failure(exc))
     return await _api.run(_oncoprint, genes, types, tenant, af, impacts)

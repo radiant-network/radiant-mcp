@@ -31,7 +31,6 @@ SOMATIC_CASE_DATA_TYPES = ("somatic_snv_tn", "somatic_snv_to", "somatic_cnv")
 CASE_DATA_TYPES = GERMLINE_CASE_DATA_TYPES + SOMATIC_CASE_DATA_TYPES
 COHORT_SNV_DATA_TYPES: tuple[str, ...] = get_args(CohortSnvDataType)
 COHORT_DATA_TYPES: tuple[str, ...] = get_args(CohortDataType)
-SOMATIC_SNV_CASE_DATA_TYPES = ("somatic_snv_tn", "somatic_snv_to")
 
 
 def is_snv(data_type: str) -> bool:

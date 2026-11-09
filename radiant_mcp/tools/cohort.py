@@ -166,8 +166,9 @@ async def cohort_carriers(
             absent from gnomAD (e.g. 0.01).
         zygosity: SNV only, e.g. ["HOM"] (tumor zygosity for somatic).
         cnv_types: CNV only, among LOSS, GAIN, CNLOH, GAINLOH (default all).
-            CNVs are always PASS; somatic SNVs too; germline SNV calls follow the
-            platform's carrier quality rule (PASS, GQ >= 20, alternate depth >= 3).
+            CNVs are always PASS; SNV calls follow the platform's carrier quality rule
+            (germline: PASS, GQ >= 20, alternate depth >= 3; somatic: PASS, tumor
+            alternate depth >= 2).
         limit: Max carriers listed (1–200, default 50); counts cover all.
         tenant: Tenant code (auto-resolved when the user has only one).
     """
@@ -212,8 +213,9 @@ async def genotype_phenotype(
             absent from gnomAD (e.g. 0.01).
         zygosity: SNV only, e.g. ["HOM"] (tumor zygosity for somatic).
         cnv_types: CNV only, among LOSS, GAIN, CNLOH, GAINLOH (default all).
-            CNVs are always PASS; somatic SNVs too; germline SNV calls follow the
-            platform's carrier quality rule (PASS, GQ >= 20, alternate depth >= 3).
+            CNVs are always PASS; SNV calls follow the platform's carrier quality rule
+            (germline: PASS, GQ >= 20, alternate depth >= 3; somatic: PASS, tumor
+            alternate depth >= 2).
         limit: Max phenotypes listed (1–100, default 30).
         tenant: Tenant code (auto-resolved when the user has only one).
     """

@@ -47,7 +47,7 @@ def _lollipop(api: RadiantApi, token: str, criteria_: Criteria, tenant: str | No
     for row, _ in positioned:
         per_transcript[row["transcript_id"]] = per_transcript.get(row["transcript_id"], 0) + 1
     transcript = max(per_transcript, key=per_transcript.get)
-    points = [charts.Lollipop(position, row["aa_change"], int(row["carriers"]), consequence_class(row["kind"].split(",")))
+    points = [charts.Lollipop(position, row["aa_change"], int(row["carriers"]), consequence_class((row["kind"] or "").split(",")))
               for row, position in positioned if row["transcript_id"] == transcript]
     left_out = len(positioned) - len(points)
     png = charts.lollipop(points, f"{criteria_.gene} — variants of the carriers",

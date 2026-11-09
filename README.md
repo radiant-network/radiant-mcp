@@ -69,7 +69,7 @@ this component holds no StarRocks credentials.
 | `RADIANT_API_CONNECT_TIMEOUT` | No | `5` | Seconds to open a connection to the Radiant API |
 | `RADIANT_PORTAL_URL` | No | - | Radiant portal base URL. When set, the tools return a `portal_url` for every case, patient, occurrence and variant |
 | `RADIANT_SHARED_DB` | No | `radiant` | StarRocks database of the shared tables (annotations, `staging_sequencing_experiment`) |
-| `MCP_MAX_CONCURRENT_CALLS` | No | `20` | Tool calls running at once, for all users together |
+| `MCP_MAX_CONCURRENT_CALLS` | No | `20` | Tool calls running at once, for all users together (some tools open up to 3 connections or requests each, so StarRocks and the portal can see up to 3x this) |
 | `MCP_QUEUE_TIMEOUT` | No | `10` | Seconds a tool call waits for a free slot before failing with `upstream` ("busy, retry") |
 | `FORWARDED_ALLOW_IPS` | No | `*` | Proxies whose `X-Forwarded-*` headers are trusted (needed behind a TLS-terminating load balancer) |
 
@@ -80,8 +80,8 @@ Every variable is validated at startup: a missing `KEYCLOAK_REALM_URL` or a malf
 > and `STARROCKS_PORT` only tell it *where* to connect.
 
 > **Client timeout.** The timeouts above apply to one SQL statement or one API
-> request, not to a whole tool call: `cohort_carriers` runs 2 API calls and up to
-> 5 statements in sequence. Give the MCP client a timeout well above
+> request, not to a whole tool call: `cohort_carriers` runs 2 API calls, then 2
+> statements in sequence and up to 3 summary statements side by side. Give the MCP client a timeout well above
 > `STARROCKS_QUERY_TIMEOUT` (e.g. `timeout: 180000` ms for the server in LibreChat's
 > `mcpServers`), or a slow call is cut client-side before StarRocks' own error
 > (which tells the agent to narrow the query) comes back.

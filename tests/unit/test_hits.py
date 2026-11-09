@@ -111,6 +111,21 @@ def test_second_hit_somatic(fake_api, fake_sql, run, monkeypatch):
     assert bound_value(sql, values, "task_type = ") == "radiant_germline_annotation"
 
 
+def test_a_variant_of_two_germline_sequencings_is_listed_once(fake_api, fake_sql, run, monkeypatch):
+    # WES and WGS of the same patient: the same P/LP variant once, the qualifying call kept.
+    _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
+    fake_sql.on("staging_sequencing_experiment", [{"case_id": 9, "seq_id": 11, "task_id": 22, "part": 915},
+                                                  {"case_id": 9, "seq_id": 12, "task_id": 23, "part": 916}])
+    fake_sql.on("germline__snv__occurrence", lambda values: [{
+        "gene": "TP53", "locus_id": 3, "zygosity": "HET", "clinvar_interpretation": '["Pathogenic"]',
+        "low_quality": 0 if 916 in values.values() else 1}])
+    fake_sql.on("somatic__snv__occurrence", [{"gene": "TP53", "locus_id": 5}])
+    [gene] = run(second_hit(1, tenant="demo"))["data"]["genes"]
+    assert len(gene["germline"]) == 1 and gene["germline"][0]["low_quality"] is False
+    assert "seq_id=12" in gene["germline"][0]["portal_url"]
+
+
 def test_the_germline_variant_called_in_the_tumor_is_not_a_second_hit(fake_api, fake_sql, run, monkeypatch):
     _case_api(fake_api, "somatic", {"somatic_snv_tn": [{"id": 40}]})
     monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 40): 7}, None))
