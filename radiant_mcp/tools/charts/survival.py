@@ -13,15 +13,16 @@ from ...domain.criteria import Criteria, build_criteria
 from ...domain.data_types import CohortDataType
 from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.carriers import carrier_patients_query
+from ...queries.patients import PATIENT_LIST_ROW_LIMIT, patient_list_query
 from ...queries.sequencing import genotyped_patients_query
-from ...results import ToolOutput, failure, invalid, not_found, ok, respond
-from ...services.cases import merge_criteria, search_criteria
+from ...results import ToolFailure, ToolOutput, failure, invalid, not_found, ok, respond
+from ...services.cases import merge_criteria
 from ...services.genes import not_found_message, resolve_genes
-from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, no_clinical_data, unknown_filter_fields
+from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, unknown_filter_fields
 from ._common import DAYS_PER_YEAR
 
+# Patient keys a group may list.
 MAX_SURVIVAL_PATIENTS = 5000
-_PAGE = 100
 
 
 _GROUP_SOURCES = ("patient_keys", "filters", "carriers")
@@ -146,43 +147,32 @@ def parse_groups(groups: Any, others_label: str | None) -> list[GroupSpec]:
 
 
 class _PatientReader:
-    """Reads patient lists, and records what they left out."""
+    """Reads patient lists from the clinical patient view, and records what they left out.
 
-    def __init__(self, api: RadiantApi, tenant: str) -> None:
-        self.api, self.tenant = api, tenant
+    One statement per list, under the caller's JWT (the view applies their grants), instead
+    of the portal search paged by 100: a 5000-patient cohort took 50 calls per list.
+    """
+
+    def __init__(self, token: str, tenant: str) -> None:
+        self.token, self.tenant = token, tenant
         self.capped = False
         self.without_key = 0
 
     def by_key(self, filters: dict) -> dict[str, dict]:
         """The patients matching ``filters`` (capped), by patient key."""
         try:
-            patients, total = _all_patients(self.api, self.tenant, filters)
-        except Exception as exc:  # noqa: BLE001
-            no_data = no_clinical_data(self.tenant, exc)
-            if no_data is None:
+            rows = _sql.run(self.token, *patient_list_query(self.tenant, filters, PATIENT_LIST_ROW_LIMIT + 1))
+        except _sql.SqlError as exc:
+            # A tenant without the clinical views: unknown table (any other error is a real one).
+            if exc.errno not in (1049, 1146) and "unknown table" not in str(exc).lower():
                 raise
-            raise no_data from exc
-        self.capped = self.capped or total > MAX_SURVIVAL_PATIENTS
+            raise ToolFailure("unavailable", f"No clinical data for tenant {self.tenant}: its patient views "
+                                             "could not be read.", tenant=self.tenant) from exc
+        patients, cut = _sql.cut(rows, PATIENT_LIST_ROW_LIMIT)
+        self.capped = self.capped or cut
         keyed = {p["patient_key"]: p for p in patients if p.get("patient_key")}
         self.without_key += len(patients) - len(keyed)
         return keyed
-
-
-def _all_patients(api: RadiantApi, tenant: str, filters: dict) -> tuple[list[dict], int]:
-    """Every patient of the list matching ``filters`` (capped), and the total count."""
-    from radiant_python.models.list_body_with_criteria import ListBodyWithCriteria
-
-    patients: list[dict] = []
-    total = None
-    while total is None or len(patients) < min(total, MAX_SURVIVAL_PATIENTS):
-        body = ListBodyWithCriteria(search_criteria=search_criteria(filters), limit=_PAGE, offset=len(patients))
-        resp = api.call("patients", "search_patients", tenant=tenant, list_body_with_criteria=body) or {}
-        total = resp.get("count", 0)
-        page = resp.get("list", [])
-        if not page:
-            break
-        patients.extend(page)
-    return patients[:MAX_SURVIVAL_PATIENTS], total or 0
 
 
 def _survival_group(name: str, patients: list[dict]) -> tuple[charts.SurvivalGroup, int]:
@@ -265,7 +255,7 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
                     cohort_filters: dict | None, sequenced_only: bool, others_label: str | None,
                     title: str) -> ToolOutput:
     tenant_code = resolve_tenant(api, tenant)
-    reader = _PatientReader(api, tenant_code)
+    reader = _PatientReader(token, tenant_code)
     cohort: dict[str, dict] | None = None
     unsequenced = 0
     try:
@@ -331,9 +321,8 @@ def _survival_curve(api: RadiantApi, token: str, tenant: str | None, specs: list
                                  test=overlapping == 0)
     truncated = None
     if reader.capped:
-        truncated = (f"A patient list stopped at {MAX_SURVIVAL_PATIENTS} patients, in the portal's order "
-                     "(patients whose PHI the user can read first, then by organization): the cohort is not "
-                     "representative of the tenant; narrow it with cohort_filters.")
+        truncated = (f"A patient list stopped at {PATIENT_LIST_ROW_LIMIT} patients (in patient key order): the "
+                     "cohort is incomplete and not representative of the tenant; narrow it with cohort_filters.")
     if reader.without_key:
         warnings.append(f"{reader.without_key} patients have no patient key yet and are in no group")
     result: dict[str, Any] = {
@@ -395,7 +384,7 @@ async def survival_curve(
     log-rank p-value (``logrank_skipped`` says why when there is none: the
     groups overlap, a single group, no death...), the patients left out (not
     found, outside the cohort, no survival data, no patient key), ``warnings``
-    and ``truncated`` (a cohort cut at 5000 patients). State these when reporting.
+    and ``truncated`` (a cohort cut at 50000 patients). State these when reporting.
 
     Args:
         groups: 2 to 6 groups, or 1 to 5 with others_label (which adds one), see above.

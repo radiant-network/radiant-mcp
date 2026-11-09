@@ -286,8 +286,10 @@ nothing about a tumor gene).
 
 Returns the chart and, per group, the number of patients, deaths and the
 median survival, the log-rank p-value (or why there is none: overlapping
-groups, no death...) and the patients left out and why. Cohorts are read up
-to 5,000 patients; beyond that the answer says the cohort was cut.
+groups, no death...) and the patients left out and why. The patients are
+read from the portal's clinical patient list, with the same filters and your
+own rights, in one query per group; up to 50,000 patients, beyond that the
+answer says the cohort was cut.
 
 ### oncoprint
 

@@ -16,7 +16,7 @@ from sqlglot.optimizer.qualify import qualify
 
 from radiant_mcp.domain.criteria import Criteria
 from radiant_mcp.domain.data_types import COHORT_DATA_TYPES
-from radiant_mcp.queries import carriers, charts, genes, hits, sequencing
+from radiant_mcp.queries import carriers, charts, genes, hits, patients, sequencing
 from radiant_mcp.schema_catalog import SHARED_DB, TENANT_DB
 
 TENANT = "t1"
@@ -69,6 +69,10 @@ def _queries():
     for data_type in COHORT_DATA_TYPES:
         yield f"charts.oncoprint[{data_type}]", charts.oncoprint_query(TENANT, data_type, GENES, 0.01, ["HIGH"])
     yield "charts.oncoprint[no filter]", charts.oncoprint_query(TENANT, "germline_snv", GENES, None, [])
+    yield "patients.patient_list", patients.patient_list_query(TENANT, {}, 50001)
+    yield "patients.patient_list[filters]", patients.patient_list_query(
+        TENANT, {"cns_integrated_diagnosis": ["Medulloblastoma"], "age_at_initial_dx_group": "childhood",
+                 "chemotherapy_agents": ["vincristine"], "got_radiation_ever": True, "patient_name": "Doe"}, 50001)
 
 
 QUERIES = list(_queries())
@@ -106,10 +110,16 @@ def test_query_uses_only_existing_tables_and_columns(schema, name, query):
 
 def test_every_builder_is_covered():
     """A new ``*_query`` builder in ``radiant_mcp.queries`` must be added to ``_queries``."""
+    import importlib
     import inspect
+    import pkgutil
+
+    import radiant_mcp.queries
 
     covered = {name.split("[")[0] for name, _ in QUERIES}
-    for module in (sequencing, hits, carriers, charts, genes):
+    # Every module of the package, so a new one cannot be forgotten.
+    for info in pkgutil.iter_modules(radiant_mcp.queries.__path__):
+        module = importlib.import_module(f"radiant_mcp.queries.{info.name}")
         for fn_name, fn in inspect.getmembers(module, inspect.isfunction):
             if fn.__module__ == module.__name__ and fn_name.endswith("_query") and not fn_name.startswith("_"):
                 short = f"{module.__name__.rsplit('.', 1)[1]}.{fn_name.removesuffix('_query')}"
