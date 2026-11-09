@@ -13,6 +13,16 @@ def test_shorthand_filters_become_in_leaves():
     ]
 
 
+def test_one_filter_object_without_its_list_is_one_filter():
+    # Seen in QA: read as the shorthand, it filtered on fields named `field` and `value`.
+    assert normalize_filters({"field": "transmission_mode", "value": ["autosomal_dominant_de_novo"]}) == [
+        {"field": "transmission_mode", "op": "in", "value": ["autosomal_dominant_de_novo"]},
+    ]
+    assert normalize_filters({"field": "clinvar", "op": "all", "value": ["pathogenic"]}) == [
+        {"field": "clinvar", "op": "all", "value": ["Pathogenic"]},
+    ]
+
+
 def test_acmg_classification_is_matched_case_insensitively():
     leaves = normalize_filters([{"field": "exomiser_acmg_classification", "value": ["PATHOGENIC", "LIKELY_PATHOGENIC"]}])
     assert leaves[0]["value"] == ["pathogenic", "likely_pathogenic"]

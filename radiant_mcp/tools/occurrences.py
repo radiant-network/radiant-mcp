@@ -56,12 +56,16 @@ class FilterError(ValueError):
 def normalize_filters(filters: Filters) -> list[dict]:
     """Validate the tool's filters and return ``[{field, op, value: [...]}, ...]``.
 
-    Accepts ``[{"field", "op", "value"}, ...]`` (``op`` defaults to ``in``) or
-    the shorthand ``{field: value | [values]}`` (all ``in``). Enum values are
-    mapped onto their stored spelling (see ``enums``).
+    Accepts ``[{"field", "op", "value"}, ...]`` (``op`` defaults to ``in``), one
+    such object alone, or the shorthand ``{field: value | [values]}`` (all ``in``).
+    Enum values are mapped onto their stored spelling (see ``enums``).
     """
     if not filters:
         return []
+    # One filter object without its list: read as the shorthand, it would filter on
+    # fields named `field` and `value`, which the portal rejects.
+    if isinstance(filters, dict) and isinstance(filters.get("field"), str):
+        filters = [filters]
     if isinstance(filters, dict):
         filters = [{"field": f, "op": "in", "value": v} for f, v in filters.items()]
     if not isinstance(filters, list):
@@ -238,7 +242,8 @@ async def prioritize_snv(
         data_type: germline_snv (default), somatic_snv_tn or somatic_snv_to.
         filters: AND-ed list of ``{"field", "op", "value"}``. ``op`` is one of
             in (default), not-in, <, >, <=, >=, between ([min, max]), all
-            (array contains all). Shorthand: ``{"field": value_or_list}``.
+            (array contains all). One such object alone is accepted too.
+            Shorthand: ``{"field": value_or_list}``.
             Useful fields, any data type: symbol, vep_impact
             (HIGH/MODERATE/LOW/MODIFIER), consequence, clinvar (Pathogenic,
             Likely_pathogenic, ...), gnomad_v3_af, germline_pf_wgs, filter,
