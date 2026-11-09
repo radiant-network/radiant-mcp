@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.1.0](https://github.com/radiant-network/radiant-mcp/compare/v1.0.3...v1.1.0) (2026-11-09)
+
+
+### Features
+
+* **survival:** read patient lists in one SQL statement instead of paging the portal ([#71](https://github.com/radiant-network/radiant-mcp/issues/71)) ([83687a6](https://github.com/radiant-network/radiant-mcp/commit/83687a67e3f9114b7ec040fba3c63d42fe43d016))
+
+
+### Bug Fixes
+
+* **cohort,tools:** count the consequence summary on the most severe impact, run the summaries in parallel, share the list cut and the case type, and build the nearby list from the rules ([#65](https://github.com/radiant-network/radiant-mcp/issues/65)) ([ee4b116](https://github.com/radiant-network/radiant-mcp/commit/ee4b116afd1a1f20ed9be432f3aa2861da45c2d0))
+* expired token and auth failures, second_hit gene join, error codes, CNV types and misleading tests ([#68](https://github.com/radiant-network/radiant-mcp/issues/68)) ([dd250d4](https://github.com/radiant-network/radiant-mcp/commit/dd250d4d101d56cec901bfe35893c39069e22a95))
+* **occurrences:** read one filter object without its list as one filter, not as the field shorthand ([#67](https://github.com/radiant-network/radiant-mcp/issues/67)) ([52b49d7](https://github.com/radiant-network/radiant-mcp/commit/52b49d7dbd125622c2422ee270017e28b9414b75))
+* P/LP counted only for its gene, no per-carrier SNV list, complete cases in a cut oncoprint, test hygiene ([#69](https://github.com/radiant-network/radiant-mcp/issues/69)) ([f75ddc0](https://github.com/radiant-network/radiant-mcp/commit/f75ddc0398803ccfaecea7ffd480c223e5ff9299))
+* **patients,auth,cohort:** skip identifier matches without a patient key, narrow the expiry margin to 5 s, tell TLS from client errors, link somatic CNV carriers to cnv-to, and cover the first-hit branch ([#73](https://github.com/radiant-network/radiant-mcp/issues/73)) ([087a714](https://github.com/radiant-network/radiant-mcp/commit/087a7147d3aa19ab6cfcbb9619d37087fc196870))
+* portal redirects, capped autocomplete, keyless patients, cut summaries, docs and tests ([#74](https://github.com/radiant-network/radiant-mcp/issues/74)) ([68e33ed](https://github.com/radiant-network/radiant-mcp/commit/68e33edd6af92411156d2a7c12ab85944588bcd0))
+* read_query after USE/SET, oncoprint gene membership, second_hit impact on the gene, family case data types ([#63](https://github.com/radiant-network/radiant-mcp/issues/63)) ([4c0bc3e](https://github.com/radiant-network/radiant-mcp/commit/4c0bc3e08edbc0d6f460d22e2b098d4800e086a2))
+* somatic carrier rule, identifier search counts, oncoprint filters and review low findings ([#66](https://github.com/radiant-network/radiant-mcp/issues/66)) ([0b58320](https://github.com/radiant-network/radiant-mcp/commit/0b58320016b3af76b092c0c4d01620425a411985))
+* **survival,hits:** AND the cohort and group filters, keep first-hit loci out of other genes' second hits, and harden auth, TLS and missing-view errors ([#72](https://github.com/radiant-network/radiant-mcp/issues/72)) ([2843e73](https://github.com/radiant-network/radiant-mcp/commit/2843e73d3139818f7fab06943c6d34edb229e48d))
+
+
+### Performance Improvements
+
+* **cases,genes:** run the case task lookups side by side and resolve every gene of a tool in one portal search ([#70](https://github.com/radiant-network/radiant-mcp/issues/70)) ([2e0b184](https://github.com/radiant-network/radiant-mcp/commit/2e0b184d640b8947231d7f0cdf7bc6403a1b262b))
+
 ## [1.0.3](https://github.com/radiant-network/radiant-mcp/compare/v1.0.2...v1.0.3) (2026-11-08)
 
 
