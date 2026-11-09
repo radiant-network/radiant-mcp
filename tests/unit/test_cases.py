@@ -183,3 +183,8 @@ def test_an_autocomplete_at_its_cap_makes_the_count_a_lower_bound(fake_api, run)
     assert result["truncated"] is not None
     search = fake_api.kwargs("search_cases")["list_body_with_criteria"]
     assert len(search.search_criteria[0].value) == 100
+
+
+def test_a_case_filter_without_a_value_is_rejected_before_any_call(fake_api, run):
+    result = run(search_cases(filters={"status_code": []}, tenant="t"))
+    assert result["error"]["code"] == "invalid_input" and fake_api.calls == []

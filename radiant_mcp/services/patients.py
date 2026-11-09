@@ -56,7 +56,9 @@ def no_clinical_data(tenant: str, exc: Exception) -> ToolFailure | None:
     read, or None when ``exc`` is an ordinary error."""
     if _route_missing(exc):
         reason = "the portal's patient view is not enabled"
-    elif is_status(exc, 500, 502, 503, 504):
+    elif is_status(exc, 500):
+        # The portal answers 500 when the tenant's patient views do not exist. A 502, 503 or
+        # 504 is a gateway or an outage, not the tenant's data: upstream, retried once.
         reason = ("the tenant's patient views could not be read (they may not exist for this tenant, "
                   "or the portal had a transient error: retry once before concluding)")
     else:

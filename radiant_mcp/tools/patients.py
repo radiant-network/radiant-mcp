@@ -17,7 +17,7 @@ from ..api_fields import PATIENT_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import patient_url, with_url
 from ..results import ToolOutput, describe, error, invalid, ok, respond
-from ..services.cases import merge_criteria, merge_searches, search_criteria
+from ..services.cases import empty_filter_fields, merge_criteria, merge_searches, search_criteria
 from ..services.patients import (
     PATIENT_KEY,
     PATIENT_SEARCH_FILTER_FIELDS,
@@ -54,6 +54,9 @@ def _search_patients(
     bad = unknown_filter_fields(filters)
     if bad:
         raise invalid(f"Unknown filter field(s): {', '.join(bad)}", allowed=list(PATIENT_SEARCH_FILTER_FIELDS))
+    empty = empty_filter_fields(filters)
+    if empty:
+        raise invalid(f"Filter field(s) without a value: {', '.join(empty)}; give a value or a non-empty list")
     if sort_by is not None and sort_by not in PATIENT_SEARCH_SORT_FIELDS:
         raise invalid(f"Unknown sort field: {sort_by}", allowed=list(PATIENT_SEARCH_SORT_FIELDS))
     sort_order = (sort_order or "asc").lower()
@@ -106,7 +109,10 @@ def _search_patients(
             result = {"tenant": tenant_code, "count": count, "offset": offset}
             more = count - offset - len(listed)
             if more > 0:
-                cut = f"{more} more patients: page with `offset` or narrow the filters."
+                # The page read had len(listed) rows, keyless ones included: page from there,
+                # not from offset + returned, or the next page repeats patients.
+                result["next_offset"] = offset + len(listed)
+                cut = f"{more} more patients: page with `offset` = `next_offset`, or narrow the filters."
     except Exception as exc:  # noqa: BLE001
         no_data = no_clinical_data(tenant_code, exc)
         if no_data is None:
@@ -173,7 +179,9 @@ async def search_patients(
         tenant: Tenant code. Optional — auto-resolved when the user belongs to
             a single tenant; otherwise the response lists the choices.
         limit: Max patients to return (1–100, default 20).
-        offset: Pagination offset (default 0, ignored with ``query``).
+        offset: Pagination offset (default 0, ignored with ``query``). When more
+            patients exist, use the returned ``next_offset``: ``count`` and the
+            pages include patients without a patient key yet, which are not listed.
             With ``query``, ``count`` is the number of distinct patients found;
             when some were not returned, ``truncated`` is set and
             ``count_at_least`` (a lower bound) replaces ``count``.

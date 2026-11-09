@@ -184,8 +184,17 @@ def test_family_venn_duo_with_filters(fake_api, fake_sql, run, monkeypatch):
 
 def test_family_venn_needs_a_parent(fake_api, fake_sql, run, monkeypatch):
     _trio_api(fake_api, monkeypatch, roles=("proband",))
-    assert "no sequenced parent" in run(family_venn(1, tenant="demo"))["error"]["message"]
+    assert "no parent with a loaded germline SNV analysis" in run(family_venn(1, tenant="demo"))["error"]["message"]
     assert fake_sql.queries == []
+
+
+def test_family_venn_says_why_a_parent_was_left_out(fake_api, fake_sql, run, monkeypatch):
+    # The father is sequenced but his analysis is not imported yet: say so, not just "no parent".
+    _trio_api(fake_api, monkeypatch, roles=("proband", "father"))
+    monkeypatch.setattr(case_service, "lookup_parts", lambda token, case_id: ({(10, 20): 5, (13, 20): None}, None))
+    result = run(family_venn(1, tenant="demo"))
+    assert result["error"]["code"] == "invalid_input"
+    assert any("father" in w and "not imported yet" in w for w in result["error"]["details"]["warnings"])
 
 
 # -- survival_curve ------------------------------------------------------------------
@@ -340,8 +349,9 @@ def test_survival_without_clinical_data(fake_api, fake_sql, run, error):
 
 def test_survival_reports_another_starrocks_error_as_an_error(fake_api, fake_sql, run):
     # A column the view lost is a bug to see, not "no clinical data".
-    fake_sql.on("v_pcx_30_patient_list", _sql.SqlError("5502 (42602): Column 'vital_status' cannot be resolved.",
-                                                       "invalid", 5503))
+    # StarRocks sends 5502 (42602) for any analysis error, not only an unknown table.
+    fake_sql.on("v_pcx_30_patient_list", _sql.SqlError("5502 (42602): Getting analyzing error. Detail message: "
+                                                       "Column 'vital_status' cannot be resolved.", "invalid", 5502))
     result = run(survival_curve(groups=[{"label": "A", "filters": {"vital_status": "alive"}},
                                         {"label": "B", "filters": {"vital_status": "deceased"}}], tenant="x"))
     assert result["error"]["code"] != "unavailable"

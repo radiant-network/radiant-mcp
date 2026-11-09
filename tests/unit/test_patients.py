@@ -165,3 +165,27 @@ def test_a_patient_without_a_key_is_left_out_of_a_filter_search_too(fake_api, ru
     result = run(search_patients(filters={"vital_status": "alive"}, tenant="radiant"))
     assert [p["patient_key"] for p in result["data"]["patients"]] == [KEY] and result["data"]["returned"] == 1
     assert any("no patient key yet" in w for w in result["warnings"])
+
+
+@pytest.mark.parametrize("status, code", [(500, "unavailable"), (502, "upstream"), (503, "upstream"),
+                                          (504, "upstream")])
+def test_only_a_500_means_no_clinical_data(fake_api, run, status, code):
+    # The portal answers 500 when the tenant's patient views do not exist; a gateway error or
+    # an outage is not the tenant's data.
+    fake_api.on("patients", "search_patients", api_exception(status))
+    assert run(search_patients(filters={"vital_status": "alive"}, tenant="radiant"))["error"]["code"] == code
+
+
+@pytest.mark.parametrize("filters", [{"vital_status": []}, {"vital_status": None}, {"vital_status": ["alive", None]}])
+def test_a_filter_without_a_value_is_rejected_before_any_call(fake_api, run, filters):
+    # The portal would build `vital_status IN ()`, a StarRocks 500.
+    result = run(search_patients(filters=filters, tenant="radiant"))
+    assert result["error"]["code"] == "invalid_input" and "without a value" in result["error"]["message"]
+    assert fake_api.calls == []
+
+
+def test_a_filter_page_gives_the_next_offset_past_keyless_patients(fake_api, run):
+    fake_api.on("patients", "search_patients", {"count": 10, "list": [_patient(KEY), {"patient_id": "MRN2"}]})
+    data = run(search_patients(filters={"vital_status": "alive"}, tenant="radiant", limit=2))["data"]
+    # Two rows read, one listed: the next page starts after both.
+    assert data["returned"] == 1 and data["next_offset"] == 2

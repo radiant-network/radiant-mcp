@@ -40,7 +40,15 @@ def test_lookup_terms(fake_api, run):
     ])
     result = run(lookup_terms("mondo", " dravet ", tenant="demo", limit=500))
     assert result["data"]["terms"] == [{"id": "MONDO:0100135", "name": "Dravet syndrome"}]
-    assert fake_api.kwargs("mondo_term_auto_complete") == {"tenant": "demo", "prefix": "dravet", "limit": "50"}
+    # One past the cap of 50, to tell a cut list.
+    assert fake_api.kwargs("mondo_term_auto_complete") == {"tenant": "demo", "prefix": "dravet", "limit": "51"}
+    assert result.get("truncated") is None
+
+
+def test_lookup_terms_says_when_it_cut_the_list(fake_api, run):
+    fake_api.on("hpo", "hpo_term_auto_complete", [{"source": {"id": f"HP:{i:07d}", "name": "x"}} for i in range(3)])
+    result = run(lookup_terms("hpo", "seiz", tenant="demo", limit=2))
+    assert len(result["data"]["terms"]) == 2 and "raise `limit`" in result["truncated"]["reason"]
 
 
 def test_lookup_terms_validates(fake_api, run):

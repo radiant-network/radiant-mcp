@@ -11,7 +11,7 @@ from ..api_fields import CASE_SORT_FIELDS as CASE_SEARCH_SORT_FIELDS
 from ..portal_api import SEARCH_MAX_LIMIT, RadiantApi, clamp, resolve_tenant
 from ..portal_links import case_url, with_url
 from ..results import ToolOutput, error, invalid, ok, respond
-from ..services.cases import case_context, merge_criteria, merge_searches, search_criteria
+from ..services.cases import case_context, empty_filter_fields, merge_criteria, merge_searches, search_criteria
 
 # Autocomplete match types that are integer ids AND directly filterable fields.
 _AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
@@ -48,6 +48,9 @@ def _search_cases(
     bad = sorted(set(filters) - set(CASE_SEARCH_FILTER_FIELDS))
     if bad:
         raise invalid(f"Unknown filter field(s): {', '.join(bad)}", allowed=list(CASE_SEARCH_FILTER_FIELDS))
+    empty = empty_filter_fields(filters)
+    if empty:
+        raise invalid(f"Filter field(s) without a value: {', '.join(empty)}; give a value or a non-empty list")
     if sort_by not in CASE_SEARCH_SORT_FIELDS:
         raise invalid(f"Unknown sort field: {sort_by}", allowed=list(CASE_SEARCH_SORT_FIELDS))
     sort_order = (sort_order or "desc").lower()
