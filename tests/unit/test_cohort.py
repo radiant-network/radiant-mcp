@@ -264,3 +264,12 @@ def test_a_carrier_row_lists_cnv_types_but_not_snvs():
     cnv_sql, _ = carrier_queries.carriers_query(
         "demo", build_criteria("germline_cnv", "DMD", None, None, None, None, None), 51)
     assert "array_agg(DISTINCT car.type) AS cnv_types" in cnv_sql
+
+
+def test_somatic_cnv_carriers_link_to_the_cnv_sub_tab_like_every_tool(fake_api, fake_sql, run):
+    echo_gene_search(fake_api)
+    fake_sql.on("cases_any_member", [{"cases": 1, "cases_any_member": 1, "patients": 1, "variants": 1}])
+    fake_sql.on("variant_count", [{"case_id": 7, "patient_id": 70, "seq_id": 71, "task_id": 72, "variant_count": 1,
+                                   "cnv_types": '["LOSS"]', "first_variant_id": 9}])
+    [carrier] = run(cohort_carriers("CDKN2A", data_type="somatic_cnv", tenant="demo"))["data"]["carriers"]
+    assert carrier["portal_url"].endswith("seq_id=71&task_id=72&variant_section=cnv-to")

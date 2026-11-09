@@ -76,6 +76,7 @@ def _search_patients(
         return api.call("patients", "search_patients", tenant=tenant_code, list_body_with_criteria=body) or {}
 
     cut = None
+    keyless = 0
     try:
         if query:
             # One search per matched identifier type (criteria are AND-ed by
@@ -88,7 +89,7 @@ def _search_patients(
             for m in matches:
                 if m.get("type") in _AUTOCOMPLETE_FIELDS:
                     by_field.setdefault(m["type"], []).append(m.get("value"))
-            patients, counts, more = merge_searches(by_field, lambda extra: _search(extra, 0), "patient_key", limit)
+            patients, counts, more, keyless = merge_searches(by_field, lambda extra: _search(extra, 0), "patient_key", limit)
             result: dict[str, Any] = {"tenant": tenant_code, "query": query, **counts}
             if more:
                 cut = "More patients match than were returned: use a longer identifier prefix or add filters."
@@ -109,6 +110,9 @@ def _search_patients(
     result["returned"] = len(patients)
     result["patients"] = [with_url(p, patient_url(tenant_code, p.get("patient_key"))) for p in patients]
     warnings = []
+    if keyless:
+        warnings.append(f"{keyless} matching patient record(s) have no patient key yet (not in the portal's key "
+                        "table): not listed")
     if include_filter_values:
         try:
             result["filter_values"] = api.call("patients", "patients_filters", tenant=tenant_code)

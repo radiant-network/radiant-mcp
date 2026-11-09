@@ -149,3 +149,12 @@ def test_a_refused_token_fails_the_patient_context_instead_of_one_section(fake_a
     fake_api.on("patients", "patient_treatments", api_exception(401))
     result = run(get_patient_context(KEY, tenant="radiant", sections=["treatments"]))
     assert result["ok"] is False and result["error"]["code"] == "auth_required"
+
+
+def test_a_matching_patient_without_a_key_is_left_out_with_a_warning(fake_api, run):
+    # A patient not in the portal's key table yet has a NULL patient_key (dropped by compact).
+    fake_api.on("patients", "autocomplete_patients", [{"type": "patient_id", "value": "MRN1"}])
+    fake_api.on("patients", "search_patients", {"count": 2, "list": [_patient(KEY), {"patient_id": "MRN1"}]})
+    result = run(search_patients(query="MRN", tenant="radiant"))
+    assert result["ok"] is True and [p["patient_key"] for p in result["data"]["patients"]] == [KEY]
+    assert any("no patient key yet" in w for w in result["warnings"])

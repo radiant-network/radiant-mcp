@@ -111,7 +111,7 @@ def _search_cases(
             by_field.setdefault("mrn", []).append(value)
 
     # Merged on case_id: a case matched by two identifier types counts once.
-    cases, counts, cut = merge_searches(by_field, lambda extra: _search(extra, 0), "case_id", limit)
+    cases, counts, cut, _ = merge_searches(by_field, lambda extra: _search(extra, 0), "case_id", limit)
     data: dict[str, Any] = {"tenant": tenant_code, "query": query, "autocomplete_matches": matches, **counts,
                             "returned": len(cases), "cases": _linked(cases)}
     truncated = "More cases match than were returned: use a longer identifier prefix or add filters." if cut else None

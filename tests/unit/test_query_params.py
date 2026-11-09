@@ -42,6 +42,7 @@ def _all_queries():
     yield "germline_keys", hit_queries.germline_keys_query("radiant", "demo", 100)
     yield "germline_plp", hit_queries.germline_plp_query("demo_tenant", SNV_KEY)
     yield "somatic_snv", hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1", "TP53"])
+    yield "somatic_snv first hits", hit_queries.somatic_snv_query("demo_tenant", SNV_KEY, ["BRCA1", "TP53"], ["3"])
     yield "somatic_cnv", hit_queries.somatic_cnv_query("demo_tenant", CNV_KEY, ["BRCA1"])
     for c in criteria:
         yield f"totals {c.data_type}", carrier_queries.totals_query("demo", c)
