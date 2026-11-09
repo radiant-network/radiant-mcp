@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # End-to-end integration test for the OAuth 2.1 + JWT flow:
-#   Keycloak (IdP) → radiant-mcp (OAuth proxy) → StarRocks (JWT auth)
+#   Keycloak (IdP) → radiant-mcp (resource server, forwards the JWT) → StarRocks (JWT auth)
 #
 # Run from host:   KEYCLOAK_URL=http://localhost:8080 MCP_URL=http://localhost:8000 ./test-oauth-flow.sh
 # Run via compose:  docker compose --profile test run --rm test-runner

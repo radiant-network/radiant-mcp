@@ -14,7 +14,7 @@ from ...domain.data_types import CohortDataType
 from ...portal_api import RadiantApi, resolve_tenant
 from ...queries.carriers import carrier_patients_query
 from ...queries.sequencing import genotyped_patients_query
-from ...results import ToolOutput, failure, invalid, ok, respond
+from ...results import ToolOutput, failure, invalid, not_found, ok, respond
 from ...services.cases import merge_criteria, search_criteria
 from ...services.genes import not_found_message, resolve_gene
 from ...services.patients import PATIENT_KEY, PATIENT_SEARCH_FILTER_FIELDS, no_clinical_data, unknown_filter_fields
@@ -250,7 +250,8 @@ def _resolve_genes(api: RadiantApi, tenant: str, specs: list[GroupSpec]) -> list
         if spec.criteria is not None:
             gene = resolve_gene(api, tenant, spec.criteria.gene)
             if gene is None:
-                raise _sql.InvalidInput(f"group {spec.label!r}: {not_found_message(spec.criteria.gene)}")
+                # not_found, like the other gene tools.
+                raise not_found(f"group {spec.label!r}: {not_found_message(spec.criteria.gene)}")
             resolved = spec.model_copy()
             resolved._criteria = replace(spec.criteria, gene=_sql.symbol(gene["symbol"]))
             spec = resolved

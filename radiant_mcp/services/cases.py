@@ -3,9 +3,12 @@
 ``get_case_context`` returns it, and ``second_hit`` and ``family_venn`` build
 on it. Each key carries its StarRocks ``part`` / ``variant_part``. TEMPORARY:
 ``part`` is read from ``staging_sequencing_experiment`` (``lookup_parts``)
-until the Radiant API returns it with each task.
+until the Radiant API returns it with each task. ``merge_searches`` merges the
+identifier searches of ``search_cases`` and ``search_patients``.
 """
 
+from collections.abc import Callable
+from typing import Any
 
 from .. import sql as _sql
 from ..domain.data_types import CASE_DATA_TYPES, GERMLINE_CASE_DATA_TYPES, SOMATIC_CASE_DATA_TYPES
@@ -44,6 +47,27 @@ def merge_criteria(filters: dict, extra: dict) -> dict | None:
                 return None
         merged[field] = list(values)
     return merged
+
+
+def merge_searches(by_field: dict[str, list], search: Callable[[dict], dict], key: str,
+                   limit: int) -> tuple[list[dict], dict[str, int], bool]:
+    """One search per matched identifier type (the API AND-s criteria), merged on ``key``.
+
+    Returns the first ``limit`` rows, ``{"count": n}`` or, when rows were left out,
+    ``{"count_at_least": n}`` (a row can match several types: past one page the exact
+    total is unknown), and whether rows were left out. Pages of several searches
+    cannot be merged, so there is no offset.
+    """
+    merged: dict[Any, dict] = {}
+    totals = []
+    for field, values in by_field.items():
+        resp = search({field: values})
+        totals.append(resp.get("count", 0))
+        for row in resp.get("list", []):
+            merged.setdefault(row[key], row)
+    if any(total > limit for total in totals) or len(merged) > limit:
+        return list(merged.values())[:limit], {"count_at_least": max([len(merged), *totals])}, True
+    return list(merged.values()), {"count": len(merged)}, False
 
 
 def lookup_parts(token: str, case_id: int) -> tuple[dict[tuple[int, int], int | None], str | None]:

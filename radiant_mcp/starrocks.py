@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
@@ -47,6 +48,7 @@ _READ_TIMEOUT_MARGIN = 5
 _DB_NAME = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 
 AUTH_REQUIRED = "Authentication required: no JWT in request context"
+AUTH_EXPIRED = "Authentication expired: the token expired during the call; sign in again"
 
 
 # MySQL error numbers for access denied, and for an unknown database, column or
@@ -65,8 +67,8 @@ class StarRocksError(RuntimeError):
     """The connection or the statement failed.
 
     ``kind`` says whose fault it is: ``denied`` (the caller's grants),
-    ``invalid`` (the statement or a name), or ``failed`` (StarRocks itself: down,
-    timed out, internal error).
+    ``invalid`` (the statement or a name), ``expired`` (the caller's token), or
+    ``failed`` (StarRocks itself: down, timed out, internal error).
     """
 
     def __init__(self, message: str, kind: str = "failed", errno: int | None = None) -> None:
@@ -109,15 +111,24 @@ def database_name(value: str) -> str:
     return value
 
 
-def _username(token: str) -> str:
-    """The JWT ``sub`` claim, which is the StarRocks user name.
-
-    The token is not verified here: the auth provider already checked it
-    against Keycloak's JWKS, and StarRocks checks it again.
-    """
+def _claims(token: str) -> dict:
+    """The JWT payload, not verified here: the auth provider already checked it
+    against Keycloak's JWKS, and StarRocks checks it again."""
     payload = token.split(".")[1]
     payload += "=" * (-len(payload) % 4)
-    return json.loads(base64.urlsafe_b64decode(payload)).get("sub", "unknown")
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
+def _username(token: str) -> str:
+    """The JWT ``sub`` claim, which is the StarRocks user name."""
+    return _claims(token).get("sub", "unknown")
+
+
+def _expired(token: str) -> bool:
+    """The token was valid when the call arrived, but a tool chains statements for
+    minutes: past ``exp``, StarRocks would deny the login as if the grants were missing."""
+    exp = _claims(token).get("exp")
+    return isinstance(exp, (int, float)) and exp <= time.time()
 
 
 def _tls(ca_file: str | None) -> dict:
@@ -138,6 +149,8 @@ def connect(token: str | None, database: str | None = None, max_rows: int | None
     """
     if not token:
         raise StarRocksError(AUTH_REQUIRED)
+    if _expired(token):
+        raise StarRocksError(AUTH_EXPIRED, "expired")
     if database is not None:
         database_name(database)
 

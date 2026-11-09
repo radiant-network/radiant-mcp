@@ -18,7 +18,7 @@ def test_search_by_identifier_merges_autocomplete_matches(fake_api, run):
     # The same patient matches by identifier and by name: it is returned once.
     fake_api.on("patients", "search_patients", {"count": 1, "list": [_patient(KEY)]})
     result = run(search_patients(query="MRN", tenant="radiant"))
-    assert result["data"]["count"] == 1 and result["data"]["returned"] == 1 and "more_results" not in result
+    assert result["data"]["count"] == 1 and result["data"]["returned"] == 1 and result.get("truncated") is None
     assert result["data"]["patients"][0]["portal_url"] == f"{PORTAL}/radiant/patient/entity/{KEY}"
     fields = sorted(kw["list_body_with_criteria"].search_criteria[0].var_field
                     for api, op, kw in fake_api.calls if op == "search_patients")
@@ -97,16 +97,23 @@ def test_context_loads_the_sections_and_links_them(fake_api, run):
     assert result["data"]["case_ids"] == [8]
 
 
-def test_context_accepts_an_upper_case_key(fake_api, run):
-    fake_api.on("patients", "patient_entity", _patient(KEY))
-    run(get_patient_context(KEY.upper(), tenant="radiant", sections=[]))
-    assert fake_api.kwargs("patient_entity")["patient_key"] == KEY
+@pytest.fixture
+def no_default_sections(monkeypatch):
+    # An empty `sections` loads the default ones: without them the patient entity is the only call.
+    from radiant_mcp.tools import patients
+    monkeypatch.setattr(patients, "DEFAULT_SECTIONS", ())
 
 
-def test_context_strips_a_pasted_key(fake_api, run):
+def test_context_accepts_an_upper_case_key(fake_api, run, no_default_sections):
     fake_api.on("patients", "patient_entity", _patient(KEY))
-    run(get_patient_context(KEY + "\n", tenant="radiant", sections=[]))
-    assert fake_api.kwargs("patient_entity")["patient_key"] == KEY
+    result = run(get_patient_context(KEY.upper(), tenant="radiant", sections=[]))
+    assert fake_api.kwargs("patient_entity")["patient_key"] == KEY and result["warnings"] == []
+
+
+def test_context_strips_a_pasted_key(fake_api, run, no_default_sections):
+    fake_api.on("patients", "patient_entity", _patient(KEY))
+    result = run(get_patient_context(KEY + "\n", tenant="radiant", sections=[]))
+    assert fake_api.kwargs("patient_entity")["patient_key"] == KEY and result["warnings"] == []
 
 
 def test_context_for_an_unknown_patient(fake_api, run):

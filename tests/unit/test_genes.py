@@ -20,7 +20,7 @@ def test_gene_info(fake_api, fake_sql, run):
     assert result["data"]["hpo_terms_count"] == 150 and len(result["data"]["hpo_terms"]) == 100
     assert result["data"]["gnomad_constraint"][0]["pli"] == 1.0
     assert "tenant_gene_panels" not in result
-    assert result["warnings"] == ["tenant_panels: Unknown table gene_panel_mv"]
+    assert result["warnings"] == ["tenant_panels: StarRocks error: Unknown table gene_panel_mv"]
     [(sql, values)] = fake_sql.matching("ensembl_exon_by_gene")
     assert bound_value(sql, values, "e.gene_id = ") == "ENSG1"
 

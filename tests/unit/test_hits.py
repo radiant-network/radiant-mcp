@@ -379,3 +379,10 @@ def test_an_unknown_impact_stays_unknown():
 
 def test_the_impact_order_is_the_stored_vep_impact_values():
     assert IMPACTS == tuple(ENUMS["vep_impact"]) == ("HIGH", "MODERATE", "LOW", "MODIFIER")
+
+
+def test_consequence_rows_without_a_gene_never_take_the_row_budget():
+    # A regulatory consequence has no symbol: sorted first, it would use up the 200 rows.
+    key = {"seq_id": 1, "task_id": 2, "part": 3, "variant_part": 0}
+    sql, _ = hit_queries.germline_plp_query("demo_tenant", key)
+    assert "cf.symbol IS NOT NULL" in sql

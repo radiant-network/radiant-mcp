@@ -105,8 +105,8 @@ open http://localhost:3080
    `KeycloakAuthProvider` (no DCR/discovery), and `starrocks.py` runs the queries under
    the user identity.
 6. **Negative check:** a Keycloak user with no matching StarRocks user should
-   fail at the query step — proving the per-user pass-through is live and it is
-   not falling back to the static `root` credential.
+   fail at the query step — proving the per-user pass-through is live (the server
+   holds no StarRocks credential to fall back on).
 
 ## Gotchas
 

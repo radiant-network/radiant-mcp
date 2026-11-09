@@ -16,8 +16,8 @@ from radiant_mcp import starrocks
 from radiant_mcp.tools import query
 
 
-def jwt(sub: str) -> str:
-    payload = base64.urlsafe_b64encode(json.dumps({"sub": sub}).encode()).decode().rstrip("=")
+def jwt(sub: str, **claims) -> str:
+    payload = base64.urlsafe_b64encode(json.dumps({"sub": sub, **claims}).encode()).decode().rstrip("=")
     return f"header.{payload}.signature"
 
 
@@ -238,6 +238,17 @@ def test_read_query_reports_starrocks_errors_and_missing_jwt(starrocks_server, m
     starrocks_server.error = DatabaseError(msg="Access denied for user bob", errno=1227, sqlstate="42000")
     assert call_as(monkeypatch, "bob", query.read_query, "SELECT 1")["error"] == {
         "code": "forbidden", "message": "StarRocks denied access: 1227 (42000): Access denied for user bob"}
+
+
+def test_a_token_that_expired_during_the_call_asks_to_sign_in_again(starrocks_server, monkeypatch):
+    # Checked once on arrival, a token can expire while a tool chains statements: StarRocks
+    # would deny the login as a missing grant, and the agent would blame the tenant.
+    monkeypatch.setattr(_api, "get_jwt_token", lambda: jwt("bob", exp=1))
+    error = envelope(asyncio.run(query.read_query("SELECT 1")))["error"]
+    assert error["code"] == "auth_required" and "expired" in error["message"]
+    assert starrocks_server.connections == []
+    starrocks.query(jwt("bob", exp=4102444800), "SELECT 1")  # 2100: still valid
+    assert len(starrocks_server.connections) == 1
 
 
 @pytest.mark.parametrize("errno, sqlstate, msg, code", [

@@ -9,7 +9,7 @@ from .. import portal_api as _api
 from .. import sql as _sql
 from ..portal_api import RadiantApi, clamp, resolve_tenant
 from ..queries.genes import LIST_LIMITS, gene_queries
-from ..results import ToolOutput, Truncation, error, failure, not_found, ok, respond
+from ..results import ToolOutput, Truncation, describe, error, failure, not_found, ok, respond
 from ..services.genes import not_found_message, resolve_gene
 
 ONTOLOGIES = {
@@ -34,7 +34,7 @@ def _gene_info(api: RadiantApi, token: str, gene: str, tenant: str | None) -> To
         try:
             return name, _sql.run(token, sql, params), None
         except _sql.SqlError as exc:
-            return name, None, f"{name}: {exc}"
+            return name, None, f"{name}: {describe(exc)}"
 
     result: dict[str, Any] = {
         "tenant": tenant_code,

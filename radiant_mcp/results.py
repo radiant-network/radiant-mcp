@@ -140,6 +140,8 @@ def failure(exc: Exception) -> ToolOutput:
         logger.debug("StarRocks error message: %s", exc)
         if exc.kind == "denied":
             return error("forbidden", f"StarRocks denied access: {exc}")
+        if exc.kind == "expired":
+            return error("auth_required", str(exc))
         return error("upstream", f"StarRocks error: {exc}")
     if isinstance(exc, ApiException):
         details: dict[str, Any] = {"status": exc.status}

@@ -71,7 +71,7 @@ this component holds no StarRocks credentials.
 | `RADIANT_SHARED_DB` | No | `radiant` | StarRocks database of the shared tables (annotations, `staging_sequencing_experiment`) |
 | `MCP_MAX_CONCURRENT_CALLS` | No | `20` | Tool calls running at once, for all users together (some tools open up to 3 connections or requests each, so StarRocks and the portal can see up to 3x this) |
 | `MCP_QUEUE_TIMEOUT` | No | `10` | Seconds a tool call waits for a free slot before failing with `upstream` ("busy, retry") |
-| `FORWARDED_ALLOW_IPS` | No | `*` | Proxies whose `X-Forwarded-*` headers are trusted (needed behind a TLS-terminating load balancer) |
+| `FORWARDED_ALLOW_IPS` | No | `*` | Proxies whose `X-Forwarded-*` headers are trusted (needed behind a TLS-terminating load balancer). With `*`, anyone who reaches the container directly can set the client IP and scheme it sees: keep the container reachable only through the load balancer, or set the load balancer's addresses here |
 
 Every variable is validated at startup: a missing `KEYCLOAK_REALM_URL` or a malformed value (a non-numeric port, a negative timeout) stops the server with one line per variable.
 
