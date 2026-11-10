@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/radiant-network/radiant-mcp/compare/v1.1.0...v1.1.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **starrocks:** run logins one at a time so a connection never reads another call's token file ([#75](https://github.com/radiant-network/radiant-mcp/issues/75)) ([9b497ee](https://github.com/radiant-network/radiant-mcp/commit/9b497ee3f3d1274748c3e073701a494184ea7a7a))
+
 ## [1.1.0](https://github.com/radiant-network/radiant-mcp/compare/v1.0.3...v1.1.0) (2026-11-09)
 
 
