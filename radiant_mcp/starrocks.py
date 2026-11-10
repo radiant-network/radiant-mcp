@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
@@ -49,6 +50,12 @@ _READ_TIMEOUT_MARGIN = 5
 # right before each connection, so the margin only covers the connect and a little clock
 # skew; a larger one would turn away tokens that still work (10% of a 300 s token at 30 s).
 _EXPIRY_MARGIN = 5
+
+# The C extension hands the token file to the OpenID plugin with mysql_plugin_options(), a
+# setting of the process-wide plugin, not of the connection: two logins at once (parallel
+# summary queries, or two users) would read whichever file was set last, another call's token
+# or one already removed (errno 1, "Unknown MySQL error"). Logins run one at a time.
+_LOGIN_LOCK = threading.Lock()
 
 _DB_NAME = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 
@@ -159,6 +166,21 @@ def connect(token: str | None, database: str | None = None, max_rows: int | None
     if database is not None:
         database_name(database)
 
+    settings = get_settings()
+    timeout = settings.starrocks_query_timeout
+    with _LOGIN_LOCK:
+        conn = _login(token, settings, timeout, database, max_rows)
+
+    try:
+        yield conn
+    finally:
+        # A close failure must not hide the result.
+        with suppress(Exception):
+            conn.close()
+
+
+def _login(token: str, settings: Any, timeout: float, database: str | None, max_rows: int | None) -> Any:
+    """Open the connection; the caller holds ``_LOGIN_LOCK`` (see there)."""
     # The plugin reads the token from a file: 0600, removed once connected.
     fd, token_path = tempfile.mkstemp(suffix=".jwt")
     try:
@@ -167,10 +189,8 @@ def connect(token: str | None, database: str | None = None, max_rows: int | None
     finally:
         os.close(fd)
 
-    settings = get_settings()
-    timeout = settings.starrocks_query_timeout
     try:
-        conn = mysql.connector.connect(
+        return mysql.connector.connect(
             host=settings.starrocks_host,
             port=settings.starrocks_port,
             user=_username(token),
@@ -197,13 +217,6 @@ def connect(token: str | None, database: str | None = None, max_rows: int | None
     finally:
         with suppress(OSError):
             os.unlink(token_path)
-
-    try:
-        yield conn
-    finally:
-        # A close failure must not hide the result.
-        with suppress(Exception):
-            conn.close()
 
 
 def query(

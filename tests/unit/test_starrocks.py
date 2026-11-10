@@ -5,6 +5,9 @@ import base64
 import json
 import os
 import stat
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -131,6 +134,30 @@ def test_connects_as_the_jwt_subject_with_timeouts(starrocks_server, configure):
     assert content == token and mode == 0o600
     assert not os.path.exists(path)
     assert conn.closed
+
+
+def test_parallel_logins_run_one_at_a_time_each_with_its_own_token(monkeypatch):
+    # The OpenID plugin's token file is a process-wide setting: overlapping logins would
+    # read another call's token, or a file already removed.
+    active, overlaps, seen = [0], [], []
+    lock = threading.Lock()
+
+    def connect(**kwargs):
+        with lock:
+            active[0] += 1
+            overlaps.append(active[0])
+        time.sleep(0.02)
+        seen.append((kwargs["user"], Path(kwargs["openid_token_file"]).read_text()))
+        with lock:
+            active[0] -= 1
+        return FakeConnection(kwargs, {}, None)
+
+    monkeypatch.setattr(starrocks.mysql.connector, "connect", connect)
+    tokens = [jwt(f"user{i}") for i in range(6)]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(lambda token: starrocks.query(token, "SELECT 1"), tokens))
+    assert max(overlaps) == 1
+    assert sorted(seen) == sorted((f"user{i}", token) for i, token in enumerate(tokens))
 
 
 def test_the_certificate_is_not_verified_by_default(starrocks_server):
