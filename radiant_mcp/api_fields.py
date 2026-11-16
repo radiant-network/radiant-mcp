@@ -80,14 +80,16 @@ SOMATIC_SNV_SORT_FIELDS = (
     "variant_class", "vep_impact",
 )
 GERMLINE_CNV_SORT_FIELDS = (
-    "bc", "cn", "end", "germline_pc_wgs", "germline_pc_wgs_affected", "germline_pc_wgs_not_affected",
+    "bc", "cn", "end", "exomiser_acmg_classification", "exomiser_acmg_evidence",
+    "exomiser_gene_combined_score", "exomiser_moi", "exomiser_rank", "exomiser_variant_score", "father_bc",
+    "father_cn", "father_sm", "germline_pc_wgs", "germline_pc_wgs_affected", "germline_pc_wgs_not_affected",
     "germline_pc_wxs", "germline_pc_wxs_affected", "germline_pc_wxs_not_affected", "germline_pf_wgs",
     "germline_pf_wgs_affected", "germline_pf_wgs_not_affected", "germline_pf_wxs",
     "germline_pf_wxs_affected", "germline_pf_wxs_not_affected", "germline_pn_wgs",
     "germline_pn_wgs_affected", "germline_pn_wgs_not_affected", "germline_pn_wxs",
     "germline_pn_wxs_affected", "germline_pn_wxs_not_affected", "gnomad_ac", "gnomad_af", "gnomad_sc",
-    "gnomad_sf", "gnomad_sn", "length", "nb_genes", "nb_snv", "quality", "seq_id", "sm", "start", "svlen",
-    "task_id", "type",
+    "gnomad_sf", "gnomad_sn", "length", "mother_bc", "mother_cn", "mother_sm", "nb_genes", "nb_snv",
+    "quality", "seq_id", "sm", "start", "svlen", "task_id", "type",
 )
 SOMATIC_CNV_SORT_FIELDS = (
     "ascn_as", "bc", "cn", "cnf", "cnq", "end", "gnomad_ac", "gnomad_af", "gnomad_sc", "gnomad_sf",
