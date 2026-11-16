@@ -1,3 +1,4 @@
+import pytest
 from conftest import PORTAL, api_exception, bound_value
 
 from radiant_mcp.services import cases as case_service
@@ -114,6 +115,21 @@ def test_search_cases_finds_a_case_by_sample_id(fake_api, run):
         searched.append(_criteria_of(list_body_with_criteria)) or {"count": 1, "list": [{"case_id": 7}]}))
     result = run(search_cases(query="S12345", tenant="t"))
     assert searched == [{"proband_submitter_sample_ids": ["S12345"]}]
+    assert [c["case_id"] for c in result["data"]["cases"]] == [7]
+
+
+@pytest.mark.parametrize("match, criteria", [
+    ({"type": "run_name", "value": "1617"}, {"run_name": ["1617"]}),
+    ({"type": "sequencing_experiment_id", "value": "1047"}, {"sequencing_experiment_id": [1047]}),
+    ({"type": "unknown_type", "value": "GM1"}, {"mrn": ["GM1"]}),
+], ids=["run", "sequencing", "unknown-type-as-mrn"])
+def test_search_cases_routes_each_match_type_to_its_filter(fake_api, run, match, criteria):
+    searched = []
+    fake_api.on("cases", "autocomplete_cases", [match])
+    fake_api.on("cases", "search_cases", lambda list_body_with_criteria, **_: (
+        searched.append(_criteria_of(list_body_with_criteria)) or {"count": 1, "list": [{"case_id": 7}]}))
+    result = run(search_cases(query=match["value"], tenant="t"))
+    assert searched == [criteria]
     assert [c["case_id"] for c in result["data"]["cases"]] == [7]
 
 
