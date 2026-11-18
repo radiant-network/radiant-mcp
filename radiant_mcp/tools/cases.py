@@ -16,7 +16,7 @@ from ..services.cases import case_context, empty_filter_fields, merge_criteria, 
 # Autocomplete match types that are integer ids AND directly filterable fields.
 _AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
 # Autocomplete match types that are filterable fields with string values.
-_AUTOCOMPLETE_TEXT_FIELDS = ("proband_submitter_sample_ids",)
+_AUTOCOMPLETE_TEXT_FIELDS = ("proband_submitter_sample_ids", "run_name")
 
 
 def _list_tenants(api: RadiantApi, _token: str) -> ToolOutput:
@@ -94,8 +94,9 @@ def _search_cases(
     #
     # Autocomplete match types (backend CasesRepository.SearchById):
     #   case_id, patient_id, sequencing_experiment_id (internal integer
-    #   ids), proband_submitter_sample_ids (the proband's sample ids) and
-    #   the patient's submitter_patient_id_type (e.g. "mrn") for submitter
+    #   ids), proband_submitter_sample_ids (the proband's sample ids),
+    #   run_name (the runs of every sequencing of the case) and the
+    #   patient's submitter_patient_id_type (e.g. "mrn") for submitter
     #   patient ids. Anything else is still a submitter patient id, so it
     #   goes through the `mrn` filter (alias of patient.submitter_patient_id).
     # One match past the cap tells a cut autocomplete from a complete one of exactly the cap.
