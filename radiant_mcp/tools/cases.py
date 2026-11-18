@@ -205,8 +205,8 @@ async def search_cases(
             AND-ed; several values for one field are OR-ed (``in``). Allowed
             fields: case_id, submitter_case_id, patient_id, mrn (submitter
             patient id), submitter_patient_id, proband_submitter_sample_ids,
-            run_name (the sequencing run of any member of the case: proband,
-            parents, siblings or fetus), sequencing_experiment_id,
+            run_name (the run of any sequencing of the case: any member, normal
+            or tumor sample), sequencing_experiment_id,
             case_type_code (germline/somatic),
             status_code, priority_code, case_category_code,
             analysis_catalog_code, panel_code, project_code, project_name,
@@ -215,7 +215,7 @@ async def search_cases(
             organization_code, proband_life_status_code, created_on, updated_on.
         query: Free-text prefix matched against case id, internal patient id,
             submitter patient id (MRN), the proband's sample ids and run names
-            (the run of any member of the case). Resolved via autocomplete,
+            (the run of any sequencing of the case). Resolved via autocomplete,
             then the matching cases are returned. Combine with ``filters`` to
             narrow: a filter on the same field as a match keeps the values
             both allow.

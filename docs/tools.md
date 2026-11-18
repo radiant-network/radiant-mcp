@@ -102,8 +102,8 @@ uses it when it needs to ask you which tenant you mean.
 
 Finds cases, either from an identifier you give (case number, medical record
 number, sample id of the proband, run) or from criteria ("active prenatal
-cases", "cases on panel RGDI"). A run finds every case one of whose members
-(proband, parent, sibling, fetus) was sequenced on it. Returns a short summary
+cases", "cases on panel RGDI"). A run finds every case with a sequencing on it,
+whatever the member or the sample (normal or tumor). Returns a short summary
 of each case: type, status, priority, panel, main condition, project, proband.
 Up to 100 cases per answer; the total is given, or a lower bound when a search
 by identifier was cut.
