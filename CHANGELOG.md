@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/radiant-network/radiant-mcp/compare/v1.1.1...v1.2.0) (2026-11-19)
+
+
+### Features
+
+* **cases:** RAD-320 route run suggestions to the run filter ([#80](https://github.com/radiant-network/radiant-mcp/issues/80)) ([5e4797c](https://github.com/radiant-network/radiant-mcp/commit/5e4797c0d7778049cf63a6225f0c88a4b65e558f))
+* **cases:** RAD-322 Add run_name and assignee_id to the case filter fields ([#81](https://github.com/radiant-network/radiant-mcp/issues/81)) ([3b8eefe](https://github.com/radiant-network/radiant-mcp/commit/3b8eefe7cb22ef5e8abd3383b236b16498ef7eb4))
+
+
+### Bug Fixes
+
+* **deps:** bump dnspython to 2.9.2 (GHSA-vvf4-9x63-8xvv) ([#78](https://github.com/radiant-network/radiant-mcp/issues/78)) ([bce743b](https://github.com/radiant-network/radiant-mcp/commit/bce743b6f72fb82102ec7567ad372111ec792320))
+
 ## [1.1.1](https://github.com/radiant-network/radiant-mcp/compare/v1.1.0...v1.1.1) (2026-11-10)
 
 
