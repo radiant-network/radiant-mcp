@@ -135,13 +135,18 @@ def test_search_cases_intersects_a_filter_with_a_match_on_the_same_field(fake_ap
     assert searched == [{"patient_id": [5], "case_id": [12]}]
 
 
-def test_search_cases_filters_on_run_name(fake_api, run):
+@pytest.mark.parametrize("filters, criteria", [
+    ({"run_name": "1KGP-DRAGEN-4.4.7-NA12878"}, {"run_name": ["1KGP-DRAGEN-4.4.7-NA12878"]}),
+    ({"assignee_id": ["3f1c2a9e-7b4d-4e1a-9c2f-5d8e6a7b1c0d", "not-assign"]},
+     {"assignee_id": ["3f1c2a9e-7b4d-4e1a-9c2f-5d8e6a7b1c0d", "not-assign"]}),
+], ids=["run", "assignee-or-not-assigned"])
+def test_search_cases_filters_on_a_case_semi_join_field(fake_api, run, filters, criteria):
     searched = []
     fake_api.on("cases", "search_cases", lambda list_body_with_criteria, **_: (
         searched.append(_criteria_of(list_body_with_criteria)) or {"count": 1, "list": [{"case_id": 7}]}))
-    result = run(search_cases(filters={"run_name": "1KGP-DRAGEN-4.4.7-NA12878"}, tenant="t"))
+    result = run(search_cases(filters=filters, tenant="t"))
     assert "error" not in result
-    assert searched == [{"run_name": ["1KGP-DRAGEN-4.4.7-NA12878"]}]
+    assert searched == [criteria]
     assert [c["case_id"] for c in result["data"]["cases"]] == [7]
 
 

@@ -206,8 +206,9 @@ async def search_cases(
             fields: case_id, submitter_case_id, patient_id, mrn (submitter
             patient id), submitter_patient_id, proband_submitter_sample_ids,
             run_name (the run of any sequencing of the case: any member, normal
-            or tumor sample), sequencing_experiment_id,
-            case_type_code (germline/somatic),
+            or tumor sample), sequencing_experiment_id, assignee_id (user id
+            of one of the case's assignees; ``not-assign`` for a case with no
+            assignee), case_type_code (germline/somatic),
             status_code, priority_code, case_category_code,
             analysis_catalog_code, panel_code, project_code, project_name,
             case_group, primary_condition_id, primary_condition_name,
