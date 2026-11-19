@@ -95,10 +95,11 @@ def _search_cases(
     # Autocomplete match types (backend CasesRepository.SearchById):
     #   case_id, patient_id, sequencing_experiment_id (internal integer
     #   ids), proband_submitter_sample_ids (the proband's sample ids),
-    #   run_name (the runs of every sequencing of the case) and the
-    #   patient's submitter_patient_id_type (e.g. "mrn") for submitter
-    #   patient ids. Anything else is still a submitter patient id, so it
-    #   goes through the `mrn` filter (alias of patient.submitter_patient_id).
+    #   run_name (the runs of every sequencing of the case) and
+    #   submitter_patient_id for submitter patient ids (the patient's
+    #   submitter_patient_id_type, e.g. "mrn", before RAD-329). Anything else
+    #   is still a submitter patient id, so it goes through the `mrn` filter
+    #   (alias of patient.submitter_patient_id).
     # One match past the cap tells a cut autocomplete from a complete one of exactly the cap.
     matches, more_matches = _sql.cut(api.call(
         "cases", "autocomplete_cases", tenant=tenant_code, prefix=query, limit=str(SEARCH_MAX_LIMIT + 1),
@@ -190,7 +191,7 @@ async def search_cases(
 
     Use this to find a case ID before calling ``get_case_context``, or to list
     cases matching criteria ("active prenatal cases", "cases for panel RGDI",
-    "the case for patient MRN 12345").
+    "the case for patient MRN 12345", "the cases of run 1617").
 
     Returns ``count`` (total matches; with ``query``, the distinct cases
     found, replaced by ``count_at_least``, a lower bound, when some were not
@@ -204,15 +205,18 @@ async def search_cases(
             AND-ed; several values for one field are OR-ed (``in``). Allowed
             fields: case_id, submitter_case_id, patient_id, mrn (submitter
             patient id), submitter_patient_id, proband_submitter_sample_ids,
-            sequencing_experiment_id, case_type_code (germline/somatic),
+            run_name (the run of any sequencing of the case: any member, normal
+            or tumor sample), sequencing_experiment_id, assignee_id (user id
+            of one of the case's assignees; ``not-assign`` for a case with no
+            assignee), case_type_code (germline/somatic),
             status_code, priority_code, case_category_code,
             analysis_catalog_code, panel_code, project_code, project_name,
             case_group, primary_condition_id, primary_condition_name,
             prescriber, ordering_organization_code, diagnosis_lab_code,
             organization_code, proband_life_status_code, created_on, updated_on.
         query: Free-text prefix matched against case id, internal patient id,
-            submitter patient id (MRN), internal sequencing experiment id
-            (seq_id) and the proband's sample ids. Resolved via autocomplete,
+            submitter patient id (MRN), the proband's sample ids and run names
+            (the run of any sequencing of the case). Resolved via autocomplete,
             then the matching cases are returned. Combine with ``filters`` to
             narrow: a filter on the same field as a match keeps the values
             both allow.

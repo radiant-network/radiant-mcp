@@ -112,8 +112,9 @@ def _criteria_of(body) -> dict:
     ({"type": "proband_submitter_sample_ids", "value": "S12345"}, {"proband_submitter_sample_ids": ["S12345"]}),
     ({"type": "run_name", "value": "1617"}, {"run_name": ["1617"]}),
     ({"type": "sequencing_experiment_id", "value": "1047"}, {"sequencing_experiment_id": [1047]}),
+    ({"type": "submitter_patient_id", "value": "HG00096"}, {"mrn": ["HG00096"]}),
     ({"type": "unknown_type", "value": "GM1"}, {"mrn": ["GM1"]}),
-], ids=["sample", "run", "sequencing", "unknown-type-as-mrn"])
+], ids=["sample", "run", "sequencing", "submitter-patient-id-as-mrn", "unknown-type-as-mrn"])
 def test_search_cases_routes_each_match_type_to_its_filter(fake_api, run, match, criteria):
     searched = []
     fake_api.on("cases", "autocomplete_cases", [match])
@@ -132,6 +133,21 @@ def test_search_cases_intersects_a_filter_with_a_match_on_the_same_field(fake_ap
     run(search_cases(query="12", filters={"patient_id": [5]}, tenant="t"))
     # patient_id 12 and the filter patient_id 5 have nothing in common: no search for that match.
     assert searched == [{"patient_id": [5], "case_id": [12]}]
+
+
+@pytest.mark.parametrize("filters, criteria", [
+    ({"run_name": "1KGP-DRAGEN-4.4.7-NA12878"}, {"run_name": ["1KGP-DRAGEN-4.4.7-NA12878"]}),
+    ({"assignee_id": ["3f1c2a9e-7b4d-4e1a-9c2f-5d8e6a7b1c0d", "not-assign"]},
+     {"assignee_id": ["3f1c2a9e-7b4d-4e1a-9c2f-5d8e6a7b1c0d", "not-assign"]}),
+], ids=["run", "assignee-or-not-assigned"])
+def test_search_cases_filters_on_a_case_semi_join_field(fake_api, run, filters, criteria):
+    searched = []
+    fake_api.on("cases", "search_cases", lambda list_body_with_criteria, **_: (
+        searched.append(_criteria_of(list_body_with_criteria)) or {"count": 1, "list": [{"case_id": 7}]}))
+    result = run(search_cases(filters=filters, tenant="t"))
+    assert "error" not in result
+    assert searched == [criteria]
+    assert [c["case_id"] for c in result["data"]["cases"]] == [7]
 
 
 def test_search_cases_rejects_a_retired_field(fake_api, run):
