@@ -58,6 +58,14 @@ def test_only_the_task_type_of_the_data_type_counts():
     assert _kept(rows, "germline_cnv") == {(1, 10, 5)}
 
 
+def test_somatic_cnvs_come_from_the_tumor_only_alignment_task():
+    # RAD-272: the ETL loads the `scnv` VCF of alignment_somatic_variant_calling only.
+    rows = [(1, 20, 1, "tumor_only_variant_calling", "tumoral"),
+            (1, 20, 2, "alignment_somatic_variant_calling", "tumoral"),
+            (1, 20, 3, SOMATIC, "tumoral")]
+    assert _kept(rows, "somatic_cnv") == {(1, 20, 2)}
+
+
 def test_a_deleted_task_is_ignored():
     assert _kept([(1, 10, 1, GERMLINE), (1, 10, 2, GERMLINE, None, True)], "germline_snv") == {(1, 10, 1)}
 
