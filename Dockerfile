@@ -16,6 +16,9 @@ RUN uv sync --frozen --no-dev
 # Runtime stage - minimal image
 FROM python:3.11-slim
 
+# The upgrade takes the Debian security fixes that the python base image does not have
+# yet. curl (the compose healthcheck) brings krb5 through libcurl: its CVEs are fixed
+# by rebuilding the image once Debian publishes the patched packages (RAD-389).
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 # The app runs from /app/.venv; the base image's setuptools/wheel are unused and
 # carry vendored CVEs (wheel, jaraco.context), so drop them along with pip.
