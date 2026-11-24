@@ -208,7 +208,10 @@ async def search_cases(
             run_name (the run of any sequencing of the case: any member, normal
             or tumor sample), sequencing_experiment_id, assignee_id (user id
             of one of the case's assignees; ``not-assign`` for a case with no
-            assignee), case_type_code (germline/somatic),
+            assignee), case_type (``germline``: a germline case with one
+            member, ``germline_family``: a germline case with several members
+            or none recorded, ``somatic``; for every germline case, filter on
+            both ``germline`` and ``germline_family``),
             status_code, priority_code, case_category_code,
             analysis_catalog_code, panel_code, project_code, project_name,
             case_group, primary_condition_id, primary_condition_name,
