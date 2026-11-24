@@ -150,6 +150,15 @@ def test_search_cases_filters_on_a_case_semi_join_field(fake_api, run, filters, 
     assert [c["case_id"] for c in result["data"]["cases"]] == [7]
 
 
+def test_search_cases_filters_on_the_case_type(fake_api, run):
+    searched = []
+    fake_api.on("cases", "search_cases", lambda list_body_with_criteria, **_: (
+        searched.append(_criteria_of(list_body_with_criteria)) or {"count": 1, "list": [{"case_id": 7}]}))
+    result = run(search_cases(filters={"case_type": ["germline", "germline_family"]}, tenant="t"))
+    assert "error" not in result
+    assert searched == [{"case_type": ["germline", "germline_family"]}]
+
+
 def test_search_cases_rejects_a_retired_field(fake_api, run):
     result = run(search_cases(filters={"resolution_status_code": "solved"}, tenant="t"))
     assert "Unknown filter field" in result["error"]["message"] and "project_name" in result["error"]["details"]["allowed"]
