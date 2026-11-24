@@ -111,10 +111,10 @@ def _criteria_of(body) -> dict:
 @pytest.mark.parametrize("match, criteria", [
     ({"type": "proband_submitter_sample_ids", "value": "S12345"}, {"proband_submitter_sample_ids": ["S12345"]}),
     ({"type": "run_name", "value": "1617"}, {"run_name": ["1617"]}),
-    ({"type": "sequencing_experiment_id", "value": "1047"}, {"sequencing_experiment_id": [1047]}),
+    ({"type": "sequencing_experiment_id", "value": "1047"}, {"mrn": ["1047"]}),
     ({"type": "submitter_patient_id", "value": "HG00096"}, {"mrn": ["HG00096"]}),
     ({"type": "unknown_type", "value": "GM1"}, {"mrn": ["GM1"]}),
-], ids=["sample", "run", "sequencing", "submitter-patient-id-as-mrn", "unknown-type-as-mrn"])
+], ids=["sample", "run", "sequencing-no-longer-routed", "submitter-patient-id-as-mrn", "unknown-type-as-mrn"])
 def test_search_cases_routes_each_match_type_to_its_filter(fake_api, run, match, criteria):
     searched = []
     fake_api.on("cases", "autocomplete_cases", [match])
