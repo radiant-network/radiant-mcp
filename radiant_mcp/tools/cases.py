@@ -14,7 +14,7 @@ from ..results import ToolOutput, error, invalid, ok, respond
 from ..services.cases import case_context, empty_filter_fields, merge_criteria, merge_searches, search_criteria
 
 # Autocomplete match types that are integer ids AND directly filterable fields.
-_AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id", "sequencing_experiment_id")
+_AUTOCOMPLETE_INT_FIELDS = ("case_id", "patient_id")
 # Autocomplete match types that are filterable fields with string values.
 _AUTOCOMPLETE_TEXT_FIELDS = ("proband_submitter_sample_ids", "run_name")
 
@@ -93,8 +93,8 @@ def _search_cases(
     # types can't share a single request.
     #
     # Autocomplete match types (backend CasesRepository.SearchById):
-    #   case_id, patient_id, sequencing_experiment_id (internal integer
-    #   ids), proband_submitter_sample_ids (the proband's sample ids),
+    #   case_id, patient_id (internal integer ids),
+    #   proband_submitter_sample_ids (the proband's sample ids),
     #   run_name (the runs of every sequencing of the case) and
     #   submitter_patient_id for submitter patient ids (the patient's
     #   submitter_patient_id_type, e.g. "mrn", before RAD-329). Anything else
