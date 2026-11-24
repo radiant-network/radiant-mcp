@@ -72,7 +72,8 @@ TASK_TYPES = {
     "germline_snv": GERMLINE_SNV_TASK_TYPE,
     "germline_cnv": "alignment_germline_variant_calling",
     "somatic_snv_tn": "radiant_somatic_annotation",
-    "somatic_cnv": "tumor_only_variant_calling",
+    # The tumor-only Dragen run carries the somatic CNV VCF (`scnv`) since RAD-272.
+    "somatic_cnv": "alignment_somatic_variant_calling",
 }
 # staging_sequencing_experiment.ingested_at of a task whose occurrences are not loaded
 # yet: the ETL inserts the row at the epoch and sets the time once the partition is
