@@ -230,7 +230,7 @@ async def search_cases(
         sort_by: Sort field (default ``updated_on``). Allowed: case_id,
             proband_id, submitter_proband_id, proband_first_name,
             proband_last_name, proband_jhn, proband_life_status_code,
-            priority_code, status_code, case_type_code, case_category_code,
+            priority_code, status_code, case_type, case_category_code,
             analysis_catalog_code, panel_code, panel_name, project_code,
             project_name, primary_condition_id, primary_condition_name,
             prescriber, ordering_organization_code, organization_code,
