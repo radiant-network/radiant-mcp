@@ -10,14 +10,14 @@ the agent gets an error instead of rows in an unexpected order. They mirror
 
 # POST /{tenant}/cases/search (CasesFields)
 CASE_FILTER_FIELDS = (
-    "analysis_catalog_code", "assignee_id", "case_category_code", "case_group", "case_id", "case_type", "case_type_code",
-    "created_on", "diagnosis_lab_code", "mrn", "ordering_organization_code", "organization_code", "panel_code",
+    "analysis_catalog_code", "assignee_id", "case_category_code", "case_group", "case_id", "case_type", "created_on",
+    "diagnosis_lab_code", "mrn", "ordering_organization_code", "organization_code", "panel_code",
     "patient_id", "prescriber", "primary_condition_id", "primary_condition_name", "priority_code",
     "proband_life_status_code", "proband_submitter_sample_ids", "project_code", "project_name", "run_name",
     "sequencing_experiment_id", "status_code", "submitter_case_id", "submitter_patient_id", "updated_on",
 )
 CASE_SORT_FIELDS = (
-    "analysis_catalog_code", "case_category_code", "case_id", "case_type_code", "created_on",
+    "analysis_catalog_code", "case_category_code", "case_id", "case_type", "created_on",
     "diagnosis_lab_code", "ordering_organization_code", "organization_code", "panel_code", "panel_name",
     "prescriber", "primary_condition_id", "primary_condition_name", "priority_code", "proband_first_name",
     "proband_id", "proband_jhn", "proband_last_name", "proband_life_status_code", "project_code",
