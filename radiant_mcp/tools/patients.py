@@ -172,7 +172,9 @@ async def search_patients(
         filters: Mapping of field → value or list of values. Several fields are
             AND-ed; several values for one field are OR-ed. Allowed fields:
             age_at_initial_dx_group, chemotherapy_agents,
-            cns_integrated_diagnosis, diagnosis_type_cohort,
+            cns_diagnosis_category (broad category of the initial diagnosis,
+            e.g. Medulloblastoma, Low-Grade Glioma), cns_integrated_diagnosis
+            (detailed WHO diagnosis), diagnosis_type_cohort,
             got_radiation_ever, organization_code, patient_id,
             patient_name, vital_status. Values are matched exactly: call once
             with ``include_filter_values=True`` to get the accepted values.
@@ -186,7 +188,8 @@ async def search_patients(
             when some were not returned, ``truncated`` is set and
             ``count_at_least`` (a lower bound) replaces ``count``.
         sort_by: Optional sort field: birth_year, can_read_phi,
-            cns_integrated_diagnosis, diagnosis_type_cohort, gender,
+            cns_diagnosis_category, cns_integrated_diagnosis,
+            diagnosis_type_cohort, gender,
             organization_code, patient_id, survival_days, vital_status.
             Default: the portal's list order. With ``query``, each identifier
             type is searched and sorted on its own and the lists are joined, so

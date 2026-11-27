@@ -26,12 +26,12 @@ CASE_SORT_FIELDS = (
 
 # POST /{tenant}/patients/search (PcxPatientListFields)
 PATIENT_FILTER_FIELDS = (
-    "age_at_initial_dx_group", "chemotherapy_agents", "cns_integrated_diagnosis", "diagnosis_type_cohort",
-    "got_radiation_ever", "organization_code", "patient_id", "patient_name", "vital_status",
+    "age_at_initial_dx_group", "chemotherapy_agents", "cns_diagnosis_category", "cns_integrated_diagnosis",
+    "diagnosis_type_cohort", "got_radiation_ever", "organization_code", "patient_id", "patient_name", "vital_status",
 )
 PATIENT_SORT_FIELDS = (
-    "birth_year", "can_read_phi", "cns_integrated_diagnosis", "diagnosis_type_cohort", "gender",
-    "organization_code", "patient_id", "survival_days", "vital_status",
+    "birth_year", "can_read_phi", "cns_diagnosis_category", "cns_integrated_diagnosis", "diagnosis_type_cohort",
+    "gender", "organization_code", "patient_id", "survival_days", "vital_status",
 )
 
 # Occurrence list endpoints of the case variants tab, per field list.

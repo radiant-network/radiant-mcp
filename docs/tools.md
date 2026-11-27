@@ -114,12 +114,12 @@ by identifier was cut.
 ### search_patients
 
 Finds patients of the portal's patient list, by identifier or name, or by
-clinical criteria (diagnosis, vital status, age group at diagnosis,
-radiation, chemotherapy agents). Returns identifiers, demographics, vital
-status, initial diagnosis and survival. Names are hidden when you are not
-allowed to see them. Patients not yet in the portal's key table have no
-patient key: they are left out, with a warning, and paging uses the returned
-next offset. A tenant with no clinical data says so.
+clinical criteria (diagnosis category or detailed diagnosis, vital status, age
+group at diagnosis, radiation, chemotherapy agents). Returns identifiers,
+demographics, vital status, initial diagnosis and survival. Names are hidden
+when you are not allowed to see them. Patients not yet in the portal's key
+table have no patient key: they are left out, with a warning, and paging uses
+the returned next offset. A tenant with no clinical data says so.
 
 *Example:* "Deceased patients with a medulloblastoma."
 

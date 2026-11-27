@@ -362,7 +362,9 @@ async def survival_curve(
     Each group is ``{"label": ..., <one source>}``, the source being one of:
     - ``patient_keys``: a list of patient keys (UUIDs), e.g. the patients a
       describe_schema("clinical") query returned for a treatment protocol;
-    - ``filters``: search_patients filters, e.g. {"cns_integrated_diagnosis": [...]};
+    - ``filters``: search_patients filters, e.g. {"cns_diagnosis_category": ["Low-Grade Glioma"]};
+      filter a diagnosis group on cns_diagnosis_category, and use
+      cns_integrated_diagnosis only for specific WHO subtypes;
     - ``carriers``: cohort_carriers criteria, e.g. {"gene": "TP53",
       "data_type": "somatic_snv_tn", "vep_impact": ["HIGH"]}.
 
@@ -374,7 +376,7 @@ async def survival_curve(
     types, of every one of them, so a patient missing one type leaves every
     group; otherwise those with a Radiant case. Example: medulloblastoma treated on a protocol vs the other
     medulloblastoma patients = groups=[{"label": "ACNS0334 Regimen B",
-    "patient_keys": [...]}], cohort_filters={"cns_integrated_diagnosis": [...]},
+    "patient_keys": [...]}], cohort_filters={"cns_diagnosis_category": ["Medulloblastoma"]},
     others_label="Other protocols". Carriers vs non-carriers =
     groups=[{"label": "TP53 carriers", "carriers": {...}}],
     sequenced_only=True, others_label="Non-carriers".

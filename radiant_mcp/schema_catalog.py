@@ -282,7 +282,8 @@ PATIENT_LIST = Table(
     {
         "patient_key": "patient page key (UUID)", "organization_code": "enrolling institution",
         "radiant_patient_id": "Radiant patient id; NULL when not sequenced",
-        "diagnosis_type_cohort": "diagnosis cohort", "cns_integrated_diagnosis": "CNS integrated diagnosis",
+        "diagnosis_type_cohort": "diagnosis cohort", "cns_diagnosis_category": "CNS diagnosis category (initial event)",
+        "cns_integrated_diagnosis": "CNS integrated diagnosis",
         "vital_status": "'alive' or 'deceased'", "age_at_initial_dx_days": "age at initial diagnosis (days)",
         "survival_days": "days from initial diagnosis to the vital status", "got_radiation_ever": "ever irradiated",
         "chemotherapy_agents": "chemotherapy agents received (array)", "case_count": "Radiant cases",
@@ -472,7 +473,7 @@ TOPICS: dict[str, Topic] = {
              "  AND k.patient_id_type = mt.patient_id_type AND k.patient_id = mt.patient_id\n"
              "JOIN <tenant>_tenant.v_pcx_30_patient_list pl ON pl.patient_key = k.patient_key\n"
              "WHERE mt.protocol_name_and_arm = '<arm from the query above>'\n"
-             "  AND pl.cns_integrated_diagnosis LIKE '%edulloblastoma%';"),
+             "  AND pl.cns_diagnosis_category = 'Medulloblastoma';"),
         ),
     ),
 }

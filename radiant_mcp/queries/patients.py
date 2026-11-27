@@ -22,9 +22,9 @@ _COLUMNS = ("patient_key", "survival_days", "vital_status", "radiant_patient_id"
 # Filter fields that are arrays in the view (types.PcxPatientListFields, IsArray).
 ARRAY_FILTER_FIELDS = ("chemotherapy_agents",)
 # The view columns the filters and the virtual columns read.
-_SOURCE_COLUMNS = ("patient_id", "organization_code", "diagnosis_type_cohort", "cns_integrated_diagnosis",
-                   "vital_status", "got_radiation_ever", "chemotherapy_agents", "can_read_phi", "given_name",
-                   "family_name", "age_at_initial_dx_days")
+_SOURCE_COLUMNS = ("patient_id", "organization_code", "diagnosis_type_cohort", "cns_diagnosis_category",
+                   "cns_integrated_diagnosis", "vital_status", "got_radiation_ever", "chemotherapy_agents",
+                   "can_read_phi", "given_name", "family_name", "age_at_initial_dx_days")
 
 # The portal's ageAtInitialDxGroupSQL, condition by condition: (condition, group), then the ELSE group.
 AGE_AT_INITIAL_DX_GROUPS = (
