@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0](https://github.com/radiant-network/radiant-mcp/compare/v1.1.1...v1.2.0) (2026-11-27)
+
+
+### Features
+
+* **cases:** RAD-320 route run suggestions to the run filter ([#80](https://github.com/radiant-network/radiant-mcp/issues/80)) ([5e4797c](https://github.com/radiant-network/radiant-mcp/commit/5e4797c0d7778049cf63a6225f0c88a4b65e558f))
+* **cases:** RAD-322 Add run_name and assignee_id to the case filter fields ([#81](https://github.com/radiant-network/radiant-mcp/issues/81)) ([3b8eefe](https://github.com/radiant-network/radiant-mcp/commit/3b8eefe7cb22ef5e8abd3383b236b16498ef7eb4))
+* **cases:** RAD-325 Remove the sequencing ID route from search_cases ([#85](https://github.com/radiant-network/radiant-mcp/issues/85)) ([c786660](https://github.com/radiant-network/radiant-mcp/commit/c786660355fc06c106e0b64649df94a37dd1bb45))
+* **cases:** RAD-385 filter search_cases on the case type ([#86](https://github.com/radiant-network/radiant-mcp/issues/86)) ([c04afd4](https://github.com/radiant-network/radiant-mcp/commit/c04afd47ab2f13abb339a055ae0d584e544dbc34))
+* **cases:** RAD-398 replace case_type_code with case_type in the case search fields ([#88](https://github.com/radiant-network/radiant-mcp/issues/88)) ([6d506b5](https://github.com/radiant-network/radiant-mcp/commit/6d506b5739eeb2567ed97484a8782804774cf95c))
+* **cohort:** RAD-397 Read somatic CNV tasks from alignment_somatic_variant_calling ([#84](https://github.com/radiant-network/radiant-mcp/issues/84)) ([ea1e633](https://github.com/radiant-network/radiant-mcp/commit/ea1e6337264d6ee30acc23f62035567234be111c))
+
+
+### Bug Fixes
+
+* **deps:** bump dnspython to 2.9.2 (GHSA-vvf4-9x63-8xvv) ([#78](https://github.com/radiant-network/radiant-mcp/issues/78)) ([bce743b](https://github.com/radiant-network/radiant-mcp/commit/bce743b6f72fb82102ec7567ad372111ec792320))
+* **docker:** RAD-389 rebuild the image for the krb5 CVEs ([#83](https://github.com/radiant-network/radiant-mcp/issues/83)) ([a6e1000](https://github.com/radiant-network/radiant-mcp/commit/a6e10000495a57f51d7e0771bf89f7af4bc50937))
+
 ## [1.1.1](https://github.com/radiant-network/radiant-mcp/compare/v1.1.0...v1.1.1) (2026-11-10)
 
 
